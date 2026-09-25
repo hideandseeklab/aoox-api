@@ -1,0 +1,146 @@
+# Distribution stack: postgres + api + web, using published images.
+#
+#   cp .env.dist.example .env.dist   # fill in the secrets
+#   docker compose -f docker-compose.dist.yml --env-file .env.dist up -d
+#
+# To build the images locally instead (both repos checked out side by side):
+#   docker compose -f docker-compose.dist.yml -f docker-compose.build.yml --env-file .env.dist up -d --build
+#
+# First run: open http://localhost:3000 and create the owner account on /setup,
+# or set ADMIN_EMAIL/ADMIN_PASSWORD in .env.dist for non-interactive onboarding.
+#
+# Own domain (https, http redirected) for the panel itself: add the
+# docker-compose.domain.yml override — see its header. Published ports keep
+# working for IP-based access either way.
+#
+# Web terminal: a container cannot open a shell on the host directly, so the
+# API SSHes to it. The API generates its own keypair into
+# ./secrets on first use; Settings -> Terminal shows the one-line command that
+# authorizes it on the host. Set TERMINAL_SSH_USER in .env.dist.
+
+name: aoox
+
+# The panel's own containers rotate their logs too (same policy as the containers the API starts).
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: ${CONTAINER_LOG_MAX_SIZE:-10m}
+    max-file: "${CONTAINER_LOG_MAX_FILE:-3}"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      POSTGRES_USER: aoox
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env.dist}
+      POSTGRES_DB: aoox
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U aoox -d aoox']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    image: ${API_IMAGE:-hideandseeklab/aoox-api:latest}
+    restart: unless-stopped
+    logging: *logging
+    # Node as PID 1 does not reap the shells spawned by the terminal feature.
+    init: true
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USERNAME: aoox
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_NAME: aoox
+      DB_MIGRATIONS_RUN: 'true'
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env.dist (openssl rand -hex 32)}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
+      WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:3000}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      ADMIN_NAME: ${ADMIN_NAME:-}
+      TERMINAL_SSH_HOST: ${TERMINAL_SSH_HOST:-}
+      TERMINAL_SSH_PORT: ${TERMINAL_SSH_PORT:-22}
+      TERMINAL_SSH_USER: ${TERMINAL_SSH_USER:-}
+      TERMINAL_SSH_PRIVATE_KEY_FILE: ${TERMINAL_SSH_PRIVATE_KEY_FILE:-}
+      TERMINAL_SSH_KEY_DIR: /run/secrets/aoox
+      TERMINAL_SSH_PASSPHRASE: ${TERMINAL_SSH_PASSPHRASE:-}
+      TERMINAL_SSH_PASSWORD: ${TERMINAL_SSH_PASSWORD:-}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?set ENCRYPTION_KEY in .env.dist (openssl rand -hex 32)}
+      # Self-hosted registry container is started by the API on the host engine.
+      REGISTRY_PORT: ${REGISTRY_PORT:-5000}
+      REGISTRY_PUBLIC_HOST: ${REGISTRY_PUBLIC_HOST:-localhost}
+      REGISTRY_INTERNAL_URL: http://host.docker.internal:${REGISTRY_PORT:-5000}
+      # Traefik reverse proxy (container started by the API on the host engine)
+      PROXY_HTTP_PORT: ${PROXY_HTTP_PORT:-80}
+      PROXY_HTTPS_PORT: ${PROXY_HTTPS_PORT:-443}
+      PROXY_ACME_EMAIL: ${PROXY_ACME_EMAIL:-}
+      PROXY_ACME_STAGING: ${PROXY_ACME_STAGING:-false}
+      # Log rotation for containers started by the API (json-file max-size/max-file)
+      METRICS_RETENTION_DAYS: ${METRICS_RETENTION_DAYS:-30}
+      # Railpack builds (BuildKit container started by the API on the host engine)
+      RAILPACK_VERSION: ${RAILPACK_VERSION:-0.39.0}
+      BUILDKIT_VERSION: ${BUILDKIT_VERSION:-v0.27.0}
+      BUILDKIT_CACHE_KEEP_GB: ${BUILDKIT_CACHE_KEEP_GB:-10}
+      CONTAINER_LOG_MAX_SIZE: ${CONTAINER_LOG_MAX_SIZE:-10m}
+      CONTAINER_LOG_MAX_FILE: ${CONTAINER_LOG_MAX_FILE:-3}
+      # Public IP app domains must point at (DNS check); auto-detected when empty.
+      PUBLIC_IP: ${PUBLIC_IP:-}
+      STORAGE_PATH: ${STORAGE_PATH:-}
+    # The api container runs as the unprivileged `node` user; add the gid that
+    # owns the docker socket on the host (stat -c %g /var/run/docker.sock).
+    group_add:
+      - '${DOCKER_GID:-0}'
+    volumes:
+      # Auto-generated SSH key for the web terminal (written by uid 1000, the
+      # `node` user; chown ./secrets if the API reports EACCES).
+      - ./secrets:/run/secrets/aoox
+      # Docker engine access: needed to run the registry (and, later, deployments).
+      - /var/run/docker.sock:/var/run/docker.sock
+    # Lets TERMINAL_SSH_HOST=host.docker.internal work on Linux too.
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
+    ports:
+      - '${API_PORT:-3001}:3001'
+    networks:
+      - default
+      - aoox
+
+  web:
+    image: ${WEB_IMAGE:-hideandseeklab/aoox-web:latest}
+    restart: unless-stopped
+    logging: *logging
+    depends_on:
+      - api
+    environment:
+      # Server-side calls go over the compose network...
+      API_URL: http://api:3001
+      # ...while the browser (terminal socket) needs the externally reachable URL.
+      PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:3001}
+      # Session cookie is Secure only when WEB_ORIGIN is https:// (override with COOKIE_SECURE).
+      WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:3000}
+      COOKIE_SECURE: ${COOKIE_SECURE:-}
+    ports:
+      - '${WEB_PORT:-3000}:3000'
+    networks:
+      - default
+      - aoox
+
+networks:
+  # Shared with the proxy (Traefik reaches web/api by name on it) and every app
+  # container. The explicit name matters: without it compose would create
+  # "aoox_aoox"; ProxyService.ensureNetwork then finds it existing.
+  aoox:
+    name: aoox
+
+volumes:
+  postgres_data:

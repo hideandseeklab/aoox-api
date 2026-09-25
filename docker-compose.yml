@@ -1,0 +1,22 @@
+name: aoox
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: aoox_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USERNAME:-aoox}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-aoox}
+      POSTGRES_DB: ${DB_NAME:-aoox}
+    ports:
+      - '${DB_PORT:-5432}:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:
+    # Distinct from the dist stack's auto-named `aoox_postgres_data` (both
+    # compose files share `name: aoox` for Docker Desktop grouping) so
+    # running both stacks on the same host never shares — or wipes — data.
+    name: aoox-dev_postgres_data

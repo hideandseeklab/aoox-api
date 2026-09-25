@@ -1,0 +1,9 @@
+# Override for building images from source instead of pulling them.
+# Expects aoox-web checked out next to this repo.
+services:
+  api:
+    build:
+      context: .
+  web:
+    build:
+      context: ../aoox-web

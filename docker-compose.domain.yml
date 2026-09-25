@@ -1,0 +1,49 @@
+# Override: serve the panel on your own domain through the built-in proxy.
+#
+#   1. DNS: point WEB_DOMAIN and API_DOMAIN at this host.
+#   2. .env.dist: set WEB_DOMAIN, API_DOMAIN, PROXY_ACME_EMAIL, and switch
+#      WEB_ORIGIN / PUBLIC_API_URL to the https URLs (see .env.dist.example).
+#   3. docker compose -f docker-compose.dist.yml -f docker-compose.domain.yml --env-file .env.dist up -d
+#   4. Provision the proxy from Settings (if not already). Certificates are
+#      issued on first request; http then redirects to https.
+#
+# Labels follow ProxyService.buildLabels (same router shape as app domains).
+
+services:
+  web:
+    labels:
+      traefik.enable: 'true'
+      traefik.http.services.aoox-web.loadbalancer.server.port: '3000'
+      # web: 301 to https (Traefik drops :443 itself)
+      traefik.http.routers.aoox-web.rule: Host(`${WEB_DOMAIN:?set WEB_DOMAIN in .env.dist}`)
+      traefik.http.routers.aoox-web.entrypoints: web
+      traefik.http.routers.aoox-web.service: aoox-web
+      traefik.http.routers.aoox-web.middlewares: aoox-web-https@docker
+      traefik.http.middlewares.aoox-web-https.redirectscheme.scheme: https
+      traefik.http.middlewares.aoox-web-https.redirectscheme.permanent: 'true'
+      traefik.http.middlewares.aoox-web-https.redirectscheme.port: '${PROXY_HTTPS_PORT:-443}'
+      # websecure: Let's Encrypt via the `le` resolver (needs PROXY_ACME_EMAIL)
+      traefik.http.routers.aoox-web-secure.rule: Host(`${WEB_DOMAIN:?set WEB_DOMAIN in .env.dist}`)
+      traefik.http.routers.aoox-web-secure.entrypoints: websecure
+      traefik.http.routers.aoox-web-secure.service: aoox-web
+      traefik.http.routers.aoox-web-secure.tls: 'true'
+      traefik.http.routers.aoox-web-secure.tls.certresolver: le
+
+  api:
+    labels:
+      traefik.enable: 'true'
+      traefik.http.services.aoox-api.loadbalancer.server.port: '3001'
+      # web: 301 to https (Traefik drops :443 itself)
+      traefik.http.routers.aoox-api.rule: Host(`${API_DOMAIN:?set API_DOMAIN in .env.dist}`)
+      traefik.http.routers.aoox-api.entrypoints: web
+      traefik.http.routers.aoox-api.service: aoox-api
+      traefik.http.routers.aoox-api.middlewares: aoox-api-https@docker
+      traefik.http.middlewares.aoox-api-https.redirectscheme.scheme: https
+      traefik.http.middlewares.aoox-api-https.redirectscheme.permanent: 'true'
+      traefik.http.middlewares.aoox-api-https.redirectscheme.port: '${PROXY_HTTPS_PORT:-443}'
+      # websecure: Let's Encrypt via the `le` resolver (needs PROXY_ACME_EMAIL)
+      traefik.http.routers.aoox-api-secure.rule: Host(`${API_DOMAIN:?set API_DOMAIN in .env.dist}`)
+      traefik.http.routers.aoox-api-secure.entrypoints: websecure
+      traefik.http.routers.aoox-api-secure.service: aoox-api
+      traefik.http.routers.aoox-api-secure.tls: 'true'
+      traefik.http.routers.aoox-api-secure.tls.certresolver: le
