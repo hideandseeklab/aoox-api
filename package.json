@@ -1,6 +1,6 @@
 {
   "name": "aoox-api",
-  "version": "0.1.0-alpha.0",
+  "version": "0.1.0-alpha.1",
   "description": "Self-hosted PaaS backend (NestJS)",
   "author": "hideandseeklab <hideandseek.developer@gmail.com>",
   "private": true,
