@@ -2,9 +2,12 @@ import {
   Column,
   CreateDateColumn,
   Entity,
+  JoinColumn,
+  ManyToOne,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
+import { BackupDestination } from '../backup-destination/backup-destination.entity';
 
 export type RegistryType = 'self-hosted' | 'external';
 
@@ -47,6 +50,19 @@ export class Registry {
    */
   @Column({ type: 'varchar', nullable: true })
   domain: string | null;
+
+  /**
+   * S3-compatible bucket the self-hosted registry stores image data in
+   * (reuses the same `BackupDestination` credentials used for database/volume
+   * backups) — null means local disk (`aoox_registry_data` volume), the
+   * default. Set once at provision time; always null for external registries.
+   */
+  @Column({ name: 'storage_destination_id', type: 'uuid', nullable: true })
+  storageDestinationId: string | null;
+
+  @ManyToOne(() => BackupDestination, { onDelete: 'SET NULL' })
+  @JoinColumn({ name: 'storage_destination_id' })
+  storageDestination: BackupDestination | null;
 
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;

@@ -3,10 +3,14 @@ import {
   Injectable,
   ServiceUnavailableException,
 } from '@nestjs/common';
+import { BackupDestinationService } from '../../backup-destination/backup-destination.service';
 import { DockerService } from '../../docker/docker.service';
 import { RegistryService } from '../registry.service';
 import { SelfHostedRegistryService } from '../self-hosted-registry.service';
-import { ProvisionSelfHostedResponseDto } from './provision-self-hosted.dto';
+import {
+  ProvisionSelfHostedDto,
+  ProvisionSelfHostedResponseDto,
+} from './provision-self-hosted.dto';
 
 @Injectable()
 export class ProvisionSelfHostedService {
@@ -14,9 +18,12 @@ export class ProvisionSelfHostedService {
     private readonly docker: DockerService,
     private readonly selfHosted: SelfHostedRegistryService,
     private readonly registries: RegistryService,
+    private readonly destinations: BackupDestinationService,
   ) {}
 
-  async execute(): Promise<ProvisionSelfHostedResponseDto> {
+  async execute(
+    dto: ProvisionSelfHostedDto,
+  ): Promise<ProvisionSelfHostedResponseDto> {
     if (!(await this.docker.ping())) {
       throw new ServiceUnavailableException('Docker engine is not reachable');
     }
@@ -29,7 +36,11 @@ export class ProvisionSelfHostedService {
       );
     }
 
-    const { username, password } = await this.selfHosted.provision();
+    const destination = dto.destinationId
+      ? (await this.destinations.resolve(dto.destinationId)).config
+      : null;
+
+    const { username, password } = await this.selfHosted.provision(destination);
     const entity = this.registries.repo.create({
       name: 'Local registry',
       type: 'self-hosted',
@@ -38,6 +49,7 @@ export class ProvisionSelfHostedService {
       passwordEncrypted: this.registries.encryptPassword(password),
       imagePrefix: null,
       domain: null,
+      storageDestinationId: dto.destinationId ?? null,
     });
     const saved = await this.registries.repo.save(entity);
     return { registry: this.registries.toDto(saved), username, password };

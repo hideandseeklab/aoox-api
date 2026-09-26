@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { BackupDestinationModule } from '../backup-destination/backup-destination.module';
 import { DockerModule } from '../docker/docker.module';
 import { ProxyModule } from '../proxy/proxy.module';
 import { CreateRegistryController } from './create-registry/create-registry.controller';
@@ -33,7 +34,12 @@ import { TestRegistryController } from './test-registry/test-registry.controller
 import { TestRegistryService } from './test-registry/test-registry.service';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Registry]), DockerModule, ProxyModule],
+  imports: [
+    TypeOrmModule.forFeature([Registry]),
+    DockerModule,
+    ProxyModule,
+    BackupDestinationModule,
+  ],
   controllers: [
     // Static routes before ':id' routes so "self-hosted" is not read as an id.
     SelfHostedStatusController,

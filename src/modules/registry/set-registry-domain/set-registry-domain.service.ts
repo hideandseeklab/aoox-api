@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
+import { BackupDestinationService } from '../../backup-destination/backup-destination.service';
 import { ProxyService } from '../../proxy/proxy.service';
 import { RegistryDto, RegistryService } from '../registry.service';
 import { SelfHostedRegistryService } from '../self-hosted-registry.service';
@@ -16,6 +17,7 @@ export class SetRegistryDomainService {
     private readonly registries: RegistryService,
     private readonly selfHosted: SelfHostedRegistryService,
     private readonly proxy: ProxyService,
+    private readonly destinations: BackupDestinationService,
   ) {}
 
   async execute(id: string, dto: SetRegistryDomainDto): Promise<RegistryDto> {
@@ -49,7 +51,10 @@ export class SetRegistryDomainService {
       );
     }
 
-    await this.selfHosted.setDomain(labels);
+    const destination = registry.storageDestinationId
+      ? (await this.destinations.resolve(registry.storageDestinationId)).config
+      : null;
+    await this.selfHosted.setDomain(labels, destination);
 
     registry.domain = domain;
     registry.url = domain ?? this.selfHosted.publicUrl;

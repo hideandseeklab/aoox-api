@@ -2,8 +2,10 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { hash } from 'bcryptjs';
 import { randomBytes } from 'crypto';
+import type { DestinationConfig } from '../backup-destination/backup-destination.service';
 import { composeLabels, DockerService } from '../docker/docker.service';
 import { APP_NETWORK } from '../proxy/proxy.service';
+import { registryS3Env } from './registry-s3-env';
 
 /** Names are fixed: there is exactly one self-hosted registry per install. */
 export const REGISTRY_CONTAINER = 'aoox-registry';
@@ -61,13 +63,19 @@ export class SelfHostedRegistryService {
   }
 
   /** Creates volumes, writes the htpasswd file, starts the container. Returns the generated password. */
-  async provision(): Promise<{ username: string; password: string }> {
+  async provision(
+    destination: DestinationConfig | null = null,
+  ): Promise<{ username: string; password: string }> {
     const password = randomBytes(24).toString('base64url');
     // Distribution only accepts bcrypt entries in htpasswd.
     const htpasswd = `${REGISTRY_USERNAME}:${await hash(password, 10)}\n`;
 
     await this.docker.ensureImage(REGISTRY_IMAGE);
-    for (const name of [REGISTRY_DATA_VOLUME, REGISTRY_AUTH_VOLUME]) {
+    // Auth is always local, even with S3 storage — htpasswd isn't "registry data".
+    const volumes = destination
+      ? [REGISTRY_AUTH_VOLUME]
+      : [REGISTRY_DATA_VOLUME, REGISTRY_AUTH_VOLUME];
+    for (const name of volumes) {
       await this.docker.engine.createVolume(name);
     }
 
@@ -81,8 +89,11 @@ export class SelfHostedRegistryService {
     });
     if (code !== 0) throw new Error(`writing htpasswd failed (exit ${code})`);
 
-    await this.createContainer();
-    this.logger.log(`Self-hosted registry started on ${this.publicUrl}`);
+    await this.createContainer({}, destination);
+    this.logger.log(
+      `Self-hosted registry started on ${this.publicUrl}` +
+        (destination ? ` (S3: ${destination.bucket})` : ''),
+    );
     return { username: REGISTRY_USERNAME, password };
   }
 
@@ -91,17 +102,23 @@ export class SelfHostedRegistryService {
    * domain — same idea as an application's domain change (recreate, no
    * rebuild). Volumes and the htpasswd file are untouched, so credentials and
    * pushed images survive. Caller updates `Registry.domain`/`url` afterward.
+   * `destination` must be passed again (whatever the registry already uses —
+   * storage backend never changes here, only labels do).
    */
-  async setDomain(labels: Record<string, string>): Promise<void> {
+  async setDomain(
+    labels: Record<string, string>,
+    destination: DestinationConfig | null,
+  ): Promise<void> {
     const c = await this.docker.findContainerByName(REGISTRY_CONTAINER);
     if (!c) throw new Error('Self-hosted registry is not provisioned');
     await this.docker.engine.removeContainer(c.Id, true);
-    await this.createContainer(labels);
+    await this.createContainer(labels, destination);
   }
 
   /** Joins the `aoox` network (for Traefik) and publishes the host port either way. */
   private async createContainer(
-    extraLabels: Record<string, string> = {},
+    extraLabels: Record<string, string>,
+    destination: DestinationConfig | null,
   ): Promise<void> {
     await this.docker.ensureNetwork(APP_NETWORK);
     const id = await this.docker.engine.createContainer(
@@ -112,6 +129,7 @@ export class SelfHostedRegistryService {
           'REGISTRY_AUTH_HTPASSWD_REALM=aoox',
           'REGISTRY_AUTH_HTPASSWD_PATH=/auth/htpasswd',
           'REGISTRY_STORAGE_DELETE_ENABLED=true',
+          ...(destination ? registryS3Env(destination) : []),
         ],
         Labels: {
           'aoox.component': 'registry',
@@ -125,7 +143,9 @@ export class SelfHostedRegistryService {
           NetworkMode: APP_NETWORK,
           PortBindings: { '5000/tcp': [{ HostPort: String(this.port) }] },
           Binds: [
-            `${REGISTRY_DATA_VOLUME}:/var/lib/registry`,
+            ...(destination
+              ? []
+              : [`${REGISTRY_DATA_VOLUME}:/var/lib/registry`]),
             `${REGISTRY_AUTH_VOLUME}:/auth:ro`,
           ],
         },

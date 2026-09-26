@@ -21,6 +21,14 @@ Versions below 1.0.0 may include breaking changes in a minor release.
   `REGISTRY_PUBLIC_HOST` + `insecure-registries` dance — `docker push`/`login` trust it out of the
   box, including from other Swarm nodes. Requires the proxy already provisioned with
   `PROXY_ACME_EMAIL` set.
+- Update check/apply for the panel itself (`GET`/`POST /instance/update/apply`, owner only):
+  compares `aoox-api`/`aoox-web` image digests against the registry (same digest-comparison
+  approach as application auto-update, never mixed with local `docker inspect` values) and applies
+  the update with `docker compose pull && up -d` through a helper container. Requires `INSTALL_DIR`.
+- Optional S3 storage for the self-hosted registry (`POST /registries/self-hosted` accepts a
+  `destinationId`, reusing the same `BackupDestination` credentials as database/volume backups):
+  image data goes straight to the bucket instead of the local `aoox_registry_data` volume. Set once
+  at provision time; not changeable afterward without removing and re-provisioning.
 - CI (`.github/workflows/ci.yml`): lint + build + unit tests on every pull request and push to
   `main` — previously the only workflow ran on version tags (Docker publish), so a broken PR could
   merge unnoticed.

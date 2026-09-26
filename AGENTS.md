@@ -217,6 +217,15 @@ NestJS 11 backend for aoox (self-hosted PaaS).
   `aoox registry domain --set <host>` / `--clear` (cari registry `self-hosted` otomatis, tidak perlu id). Dashboard: field "Domain kustom" di kartu Registry lokal.
   Efek samping yang diinginkan: `SwarmStatus.registry.reachableFromNodes` (cek regex `registry.url` bukan `localhost`) otomatis jadi `true` begitu domain aktif, tanpa perlu ubah
   `swarm.service.ts` sama sekali.
+- **Storage S3 opsional untuk registry lokal** (`Registry.storageDestinationId`, FK `backup_destinations` `SET NULL`, hanya diisi saat provisioning — tidak bisa diganti tanpa
+  hapus+provision ulang): default tetap disk lokal (volume `aoox_registry_data`) seperti sebelumnya; kalau `POST /registries/self-hosted` diberi `destinationId`, reuse kredensial
+  `BackupDestination` yang sama dipakai backup database/volume (`BackupDestinationService.resolve()`) dan set driver storage image `registry:3` ke S3 lewat
+  `registry-s3-env.ts` (`registryS3Env()`, pure & di-unit-test — `REGISTRY_STORAGE=s3` + `REGISTRY_STORAGE_S3_{ACCESSKEY,SECRETKEY,REGION,BUCKET,SECURE,FORCEPATHSTYLE}`,
+  `REGIONENDPOINT` hanya kalau ada endpoint kustom/MinIO, `ROOTDIRECTORY` dari `prefix`). Volume data (`aoox_registry_data`) **tidak dibuat/di-mount sama sekali** saat pakai S3 —
+  cuma volume auth (htpasswd) yang tetap lokal, karena autentikasi bukan "data registry". `createContainer()` (dipakai `provision()` **dan** `setDomain()`) menerima
+  `destination: DestinationConfig | null` di kedua tempat supaya ganti domain tidak "lupa" backend S3 yang sudah dipilih — `SetRegistryDomainService` resolve ulang
+  `registry.storageDestinationId` sebelum recreate. Dashboard: pilihan "Lokal" vs tujuan S3 di dialog konfirmasi sebelum tombol Provision (tidak bisa diubah setelahnya dari UI).
+  Belum: migrasi data dari lokal ke S3 (atau sebaliknya) untuk registry yang sudah terlanjur di-provision.
 - Route dengan nama repo bergaris miring memakai wildcard Express 5 (`*repository`) yang tiba sebagai array → di-`@Transform` jadi string di DTO.
 - Hapus tag = hapus manifest (tag lain dengan digest sama ikut hilang); disk kembali setelah GC.
 - **Kredensial untuk klien luar** (`get-registry-credentials/`, `GET /registries/:id/credentials`, `@Roles('owner','admin')` — sama dengan `delete-registry`): membalas `{url, username, password}` dengan password **terdekripsi**, pola yang sama dengan `database-credentials` (dipisah dari `GET /registries` supaya list tidak pernah membawa rahasia). Dipakai `aoox deploy` di CLI (`../aoox-cli`) untuk `docker login` sebelum `docker push` — `url` di sini APA ADANYA dari kolom `registries.url` (untuk registry self-hosted = `SelfHostedRegistryService.publicUrl`, sudah menghormati `REGISTRY_PUBLIC_HOST`), bukan `apiBaseUrl()` yang dipakai API sendiri untuk memanggil registry (itu bisa `REGISTRY_INTERNAL_URL`, tidak terjangkau dari luar container API).
@@ -711,6 +720,28 @@ NestJS 11 backend for aoox (self-hosted PaaS).
   `GET/PATCH /instance/backup-settings` (+`InstanceBackupSchedulerService.reschedule`; terjadwal → `prune(keep)` hanya yang scheduled). Gagal → notifikasi `backupFailure`.
   Web: `instance-backup-card.tsx` di Settings → Infrastruktur (owner), proxy unduh `/api/instance-backups/[id]/download`, restore dari file lewat server action multipart.
   Belum: restore selektif per tabel, backup file mount/volume registry ikut serta, restore lintas versi (jalankan migrasi setelah restore).
+
+## Update instance (aoox itu sendiri)
+
+- `src/modules/instance-update/` — cek & terapkan update untuk image `aoox-api`/`aoox-web` milik panel sendiri (bukan aplikasi yang di-deploy user — itu sudah ada
+  `ImageDigestService`/`ImageUpdateWatcherService` terpisah). Sebelumnya cuma bisa manual (`docker compose pull && up -d` lewat SSH, didokumentasikan di docs/instalasi).
+- **Perbandingan digest, bukan versi/tag**: `remoteDigestFor()` memakai ulang `parseImageRef` (application module) + `fetchRemoteDigest` (registry module, `HEAD /v2/.../manifests/<tag>`)
+  yang sudah dipakai `ImageDigestService` untuk auto-update image aplikasi — **selalu Docker Hub** (`hideandseeklab/aoox-api`/`aoox-web` publik, tanpa kredensial), tag dari env
+  `API_IMAGE`/`WEB_IMAGE` (default `:latest`, sama dengan `docker-compose.dist.yml`). **Sengaja tidak membandingkan local `docker inspect`/`RepoDigests` dengan digest registry** —
+  pelajaran yang sama dengan auto-update aplikasi ("beda representasi bisa memicu loop redeploy"): baseline **selalu** disimpan dari `fetchRemoteDigest()` yang sama dipakai untuk
+  cek berikutnya, bukan dicampur dengan nilai dari sumber lain. `InstanceUpdateState` (tabel `instance_update_state`, row tunggal `default`): `apiDigest`/`webDigest`/`checkedAt`.
+  **Cek pertama kali** (baseline `null`) tidak bisa tahu apakah versi yang berjalan sudah basi — hanya menyimpan digest saat ini sebagai baseline dan melaporkan `updateAvailable: false`
+  (`currentDigest: null` di response, dibedakan dari "sudah terbaru" di UI); jujur soal keterbatasan ini daripada berpura-pura tahu.
+- **Apply** (`POST /instance/update/apply`, owner, throttle 3/menit, 202): pola yang sama persis dengan `panel-domain` — butuh `INSTALL_DIR`, fire digest baru + simpan sebagai
+  baseline lalu `setTimeout` 1,5 detik supaya response HTTP sempat terkirim sebelum container `web`/`api` di-recreate. Helper `docker:29-cli` (bind `INSTALL_DIR` host langsung +
+  docker socket, pola sama dengan `panel-domain.service.ts`) menjalankan `docker compose -f docker-compose.dist.yml --env-file .env.dist pull` lalu `up -d` — **tanpa** perlu
+  menyebut `-f docker-compose.override.yml`/`docker-compose.domain.yml` secara eksplisit karena file override domain (kalau ada, dari fitur Domain panel) sudah otomatis
+  ter-include Compose lewat nama filenya sendiri. Tidak menyentuh `docker-compose.domain.yml` manual (butuh `-f` eksplisit, di luar cakupan fitur ini).
+- `GET /instance/update` (owner) juga membalas `currentVersion` (dibaca dari `package.json` di `process.cwd()` — image runner meng-copy `package.json` ke `/app/`, lihat Dockerfile)
+  untuk ditampilkan, bukan dipakai untuk logika pembanding update (channel alpha belum tentu naik linear per tag, digest tetap sumber kebenaran).
+- CLI: `aoox update` (cek) / `aoox update --apply` (terapkan). Web: `instance-update-card.tsx` di Settings → Infrastruktur (owner), tombol "Cek update" (server action, bukan cuma
+  render awal) dan "Terapkan update" (disabled kalau `INSTALL_DIR` kosong atau tidak ada update).
+  Belum: notifikasi otomatis saat ada update tersedia (beda dari `ImageUpdateWatcherService` aplikasi yang jalan `@Cron`), rollback otomatis kalau `docker compose up` gagal setelah pull.
 
 ## Docker Swarm (tahap 1–2: single node, app sebagai service)
 
