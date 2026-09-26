@@ -9,9 +9,11 @@
 # First run: open http://localhost:3000 and create the owner account on /setup,
 # or set ADMIN_EMAIL/ADMIN_PASSWORD in .env.dist for non-interactive onboarding.
 #
-# Own domain (https, http redirected) for the panel itself: add the
-# docker-compose.domain.yml override — see its header. Published ports keep
-# working for IP-based access either way.
+# Own domain (https, http redirected) for the panel itself: either add the
+# docker-compose.domain.yml override manually — see its header — or set
+# INSTALL_DIR below and use Settings -> "Domain panel" once the panel is up
+# (owner only; writes docker-compose.override.yml here and restarts web/api).
+# Published ports keep working for IP-based access either way.
 #
 # Web terminal: a container cannot open a shell on the host directly, so the
 # API SSHes to it. The API generates its own keypair into
@@ -96,6 +98,12 @@ services:
       # Public IP app domains must point at (DNS check); auto-detected when empty.
       PUBLIC_IP: ${PUBLIC_IP:-}
       STORAGE_PATH: ${STORAGE_PATH:-}
+      # Absolute path, on this host, of the folder holding this file — required
+      # only for Settings -> "Domain panel" (lets the API write
+      # docker-compose.override.yml and re-run `docker compose up` here without
+      # SSH). Leave empty to keep configuring the panel's own domain manually
+      # via docker-compose.domain.yml (see its header).
+      INSTALL_DIR: ${INSTALL_DIR:-}
     # The api container runs as the unprivileged `node` user; add the gid that
     # owns the docker socket on the host (stat -c %g /var/run/docker.sock).
     group_add:

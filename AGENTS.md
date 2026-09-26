@@ -356,9 +356,19 @@ NestJS 11 backend for aoox (self-hosted PaaS).
   `redirectscheme`, `port` = `PROXY_HTTPS_PORT`) — redirect hanya dibuat bila ACME aktif, supaya tanpa `PROXY_ACME_EMAIL` (dev) host https tetap bisa diakses http, bukan
   diarahkan ke sertifikat self-signed Traefik. Ubah domain → `DeploymentRunnerService.applyRuntimeConfig(app)` (recreate container dengan `currentImage`, tanpa build);
   container lama baru mendapat label baru setelah redeploy/ubah domain.
-- Domain untuk panel sendiri: override **`docker-compose.domain.yml`** (`-f docker-compose.dist.yml -f docker-compose.domain.yml`) memasang label yang sama ke service `web`/`api`
-  (`WEB_DOMAIN`/`API_DOMAIN` wajib, butuh `PROXY_ACME_EMAIL`; `WEB_ORIGIN`/`PUBLIC_API_URL` harus diganti ke https). `docker-compose.dist.yml` mendeklarasikan network
-  `aoox` (`name:` eksplisit) dan memasukkan `web`/`api` ke sana selain `default`, sehingga Traefik bisa menjangkaunya. Port 3000/3001 tetap dipublikasikan untuk akses via IP.
+- Domain untuk panel sendiri, dua jalur: (1) **manual** — override `docker-compose.domain.yml` (`-f docker-compose.dist.yml -f docker-compose.domain.yml`) memasang label yang sama ke
+  service `web`/`api` (`WEB_DOMAIN`/`API_DOMAIN` wajib, butuh `PROXY_ACME_EMAIL`; `WEB_ORIGIN`/`PUBLIC_API_URL` harus diganti ke https); (2) **dari dashboard** —
+  `src/modules/panel-domain/` (`GET`/`PATCH /instance/domain`, owner saja): `PanelDomainSettings` (row tunggal `panel_domain_settings`) menyimpan `webHost`/`apiHost`/`acmeEmail`;
+  `PATCH` men-throttle 5/menit, butuh env `INSTALL_DIR` (path absolut folder `docker-compose.dist.yml` di host — belum ada default, harus diisi manual di `.env.dist`) lalu
+  `apply()` di-jadwalkan `setTimeout` 1,5 detik (agar response HTTP sempat terkirim sebelum container ini sendiri di-recreate): helper `docker:29-cli` (pola sama dengan
+  `compose-runner`) mem-bind `INSTALL_DIR` host langsung (bukan volume) ke path yang sama di helper, `putArchive` menulis `docker-compose.override.yml` (nama **berbeda** dari
+  `docker-compose.domain.yml` manual — `override.yml` otomatis ikut ter-`-f` oleh Compose di setiap `up` berikutnya tanpa flag tambahan, jadi domain bertahan lewat restart/`aoox update`),
+  lalu skrip `sed`/`grep` meng-upsert `WEB_DOMAIN`/`API_DOMAIN`/`PROXY_ACME_EMAIL`/`WEB_ORIGIN`/`PUBLIC_API_URL`/`COOKIE_SECURE` di `.env.dist` sebelum `docker compose up -d`.
+  Label Traefik dari `renderPanelOverride()` (`panel-domain.util.ts`, pure & di-unit-test) memakai ulang `ProxyService.buildLabels` langsung untuk router `aoox-web`/`aoox-api`
+  (port 3000/3001) — bukan template YAML terpisah seperti jalur manual. `docker-compose.dist.yml` mendeklarasikan network `aoox` (`name:` eksplisit) dan memasukkan `web`/`api`
+  ke sana selain `default`, sehingga Traefik bisa menjangkaunya. Port 3000/3001 tetap dipublikasikan untuk akses via IP di kedua jalur. `aoox-cli`: `aoox domain set --web --api
+  [--acme-email]` memanggil endpoint yang sama (butuh `aoox login` dulu). Belum: validasi DNS sebelum apply (beda dari domain aplikasi yang punya `check-domain-dns`), rollback
+  otomatis kalau `docker compose up` gagal setelah domain diganti (container lama sudah kadung diganti argumennya, bukan blue/green seperti app).
 - **Cek DNS** (`check-domain-dns/`, `GET /applications/:id/domains/:domainId/dns`, throttle 30/menit, tidak disimpan): `dns.promises` resolve4/6 (+CNAME untuk tampilan)
   dibandingkan dengan IP yang diharapkan: app di server remote → `Server.host` (literal IP atau di-resolve), selain itu `PUBLIC_IP` env, atau auto-deteksi via `https://api.ipify.org`
   (cache 10 menit; gagal → status `unknown`, bukan error). Status `ok|mismatch|unresolved|unknown` (`evaluate()` pure, di-unit-test) + `message`. Tidak memblokir `add-domain` —

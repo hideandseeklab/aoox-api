@@ -8,6 +8,18 @@ Versions below 1.0.0 may include breaking changes in a minor release.
 
 ## [Unreleased]
 
+## [0.1.0-alpha.1] - 2026-09-26
+
+### Added
+
+- Custom domain for the panel itself (`GET`/`PATCH /instance/domain`, owner only): applies a
+  Traefik-labeled `docker-compose.override.yml` and updates `.env.dist` through a helper container,
+  so the dashboard/API can move off `IP:port` onto their own domain without SSH. Requires the new
+  `INSTALL_DIR` env var.
+- CI (`.github/workflows/ci.yml`): lint + build + unit tests on every pull request and push to
+  `main` — previously the only workflow ran on version tags (Docker publish), so a broken PR could
+  merge unnoticed.
+
 ## [0.1.0-alpha.0] - 2026-09-25
 
 ### Added
@@ -28,5 +40,6 @@ Versions below 1.0.0 may include breaking changes in a minor release.
 - Monitoring with metrics history, disk cleanup tooling, and project/instance export-import for
   backup and migration between hosts.
 
-[Unreleased]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-alpha.0...HEAD
+[Unreleased]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-alpha.1...HEAD
+[0.1.0-alpha.1]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-alpha.0...v0.1.0-alpha.1
 [0.1.0-alpha.0]: https://github.com/hideandseeklab/aoox-api/releases/tag/v0.1.0-alpha.0
