@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { DockerModule } from '../docker/docker.module';
+import { ProxyModule } from '../proxy/proxy.module';
 import { CreateRegistryController } from './create-registry/create-registry.controller';
 import { CreateRegistryService } from './create-registry/create-registry.service';
 import { DeleteRegistryController } from './delete-registry/delete-registry.controller';
@@ -26,11 +27,13 @@ import { RemoveSelfHostedService } from './remove-self-hosted/remove-self-hosted
 import { SelfHostedRegistryService } from './self-hosted-registry.service';
 import { SelfHostedStatusController } from './self-hosted-status/self-hosted-status.controller';
 import { SelfHostedStatusService } from './self-hosted-status/self-hosted-status.service';
+import { SetRegistryDomainController } from './set-registry-domain/set-registry-domain.controller';
+import { SetRegistryDomainService } from './set-registry-domain/set-registry-domain.service';
 import { TestRegistryController } from './test-registry/test-registry.controller';
 import { TestRegistryService } from './test-registry/test-registry.service';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Registry]), DockerModule],
+  imports: [TypeOrmModule.forFeature([Registry]), DockerModule, ProxyModule],
   controllers: [
     // Static routes before ':id' routes so "self-hosted" is not read as an id.
     SelfHostedStatusController,
@@ -45,6 +48,7 @@ import { TestRegistryService } from './test-registry/test-registry.service';
     ListTagsController,
     DeleteTagController,
     GetRegistryCredentialsController,
+    SetRegistryDomainController,
   ],
   providers: [
     RegistryService,
@@ -61,6 +65,7 @@ import { TestRegistryService } from './test-registry/test-registry.service';
     ListTagsService,
     DeleteTagService,
     GetRegistryCredentialsService,
+    SetRegistryDomainService,
   ],
   exports: [RegistryService, SelfHostedRegistryService],
 })

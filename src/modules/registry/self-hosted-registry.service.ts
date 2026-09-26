@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { hash } from 'bcryptjs';
 import { randomBytes } from 'crypto';
 import { composeLabels, DockerService } from '../docker/docker.service';
+import { APP_NETWORK } from '../proxy/proxy.service';
 
 /** Names are fixed: there is exactly one self-hosted registry per install. */
 export const REGISTRY_CONTAINER = 'aoox-registry';
@@ -80,6 +81,29 @@ export class SelfHostedRegistryService {
     });
     if (code !== 0) throw new Error(`writing htpasswd failed (exit ${code})`);
 
+    await this.createContainer();
+    this.logger.log(`Self-hosted registry started on ${this.publicUrl}`);
+    return { username: REGISTRY_USERNAME, password };
+  }
+
+  /**
+   * Recreates the container with (or without) Traefik labels for a custom
+   * domain — same idea as an application's domain change (recreate, no
+   * rebuild). Volumes and the htpasswd file are untouched, so credentials and
+   * pushed images survive. Caller updates `Registry.domain`/`url` afterward.
+   */
+  async setDomain(labels: Record<string, string>): Promise<void> {
+    const c = await this.docker.findContainerByName(REGISTRY_CONTAINER);
+    if (!c) throw new Error('Self-hosted registry is not provisioned');
+    await this.docker.engine.removeContainer(c.Id, true);
+    await this.createContainer(labels);
+  }
+
+  /** Joins the `aoox` network (for Traefik) and publishes the host port either way. */
+  private async createContainer(
+    extraLabels: Record<string, string> = {},
+  ): Promise<void> {
+    await this.docker.ensureNetwork(APP_NETWORK);
     const id = await this.docker.engine.createContainer(
       {
         Image: REGISTRY_IMAGE,
@@ -92,11 +116,13 @@ export class SelfHostedRegistryService {
         Labels: {
           'aoox.component': 'registry',
           ...composeLabels('registry'),
+          ...extraLabels,
         },
         ExposedPorts: { '5000/tcp': {} },
         HostConfig: {
           RestartPolicy: { Name: 'unless-stopped' },
           LogConfig: this.docker.logConfig,
+          NetworkMode: APP_NETWORK,
           PortBindings: { '5000/tcp': [{ HostPort: String(this.port) }] },
           Binds: [
             `${REGISTRY_DATA_VOLUME}:/var/lib/registry`,
@@ -107,8 +133,6 @@ export class SelfHostedRegistryService {
       REGISTRY_CONTAINER,
     );
     await this.docker.engine.startContainer(id);
-    this.logger.log(`Self-hosted registry started on ${this.publicUrl}`);
-    return { username: REGISTRY_USERNAME, password };
   }
 
   /** Stops and removes the container; volumes are kept unless `purge`. */

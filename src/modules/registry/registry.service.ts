@@ -14,6 +14,7 @@ export interface RegistryDto {
   url: string;
   username: string | null;
   imagePrefix: string | null;
+  domain: string | null;
   createdAt: Date;
 }
 
@@ -37,6 +38,7 @@ export class RegistryService {
       url: r.url,
       username: r.username,
       imagePrefix: r.imagePrefix,
+      domain: r.domain,
       createdAt: r.createdAt,
     };
   }

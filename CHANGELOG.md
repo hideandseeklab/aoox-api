@@ -16,6 +16,11 @@ Versions below 1.0.0 may include breaking changes in a minor release.
   Traefik-labeled `docker-compose.override.yml` and updates `.env.dist` through a helper container,
   so the dashboard/API can move off `IP:port` onto their own domain without SSH. Requires the new
   `INSTALL_DIR` env var.
+- Custom domain for the self-hosted registry (`PATCH /registries/:id/domain`, owner/admin): routes
+  it through the built-in proxy with a real Let's Encrypt certificate instead of the manual
+  `REGISTRY_PUBLIC_HOST` + `insecure-registries` dance — `docker push`/`login` trust it out of the
+  box, including from other Swarm nodes. Requires the proxy already provisioned with
+  `PROXY_ACME_EMAIL` set.
 - CI (`.github/workflows/ci.yml`): lint + build + unit tests on every pull request and push to
   `main` — previously the only workflow ran on version tags (Docker publish), so a broken PR could
   merge unnoticed.

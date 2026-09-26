@@ -40,6 +40,14 @@ export class Registry {
   @Column({ name: 'image_prefix', type: 'varchar', nullable: true })
   imagePrefix: string | null;
 
+  /**
+   * Custom domain for the self-hosted registry, routed through the built-in
+   * proxy (Traefik) with ACME — null means it's reached via `url` (host:port)
+   * directly. Always null for external registries.
+   */
+  @Column({ type: 'varchar', nullable: true })
+  domain: string | null;
+
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;
 

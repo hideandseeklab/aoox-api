@@ -37,6 +37,7 @@ export class ProvisionSelfHostedService {
       username,
       passwordEncrypted: this.registries.encryptPassword(password),
       imagePrefix: null,
+      domain: null,
     });
     const saved = await this.registries.repo.save(entity);
     return { registry: this.registries.toDto(saved), username, password };

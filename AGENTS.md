@@ -205,7 +205,18 @@ NestJS 11 backend for aoox (self-hosted PaaS).
   `self-hosted-registry.service.ts` menjalankan `registry:3` (htpasswd bcrypt via container sekali jalan, volume `aoox_registry_{data,auth}`,
   `REGISTRY_STORAGE_DELETE_ENABLED=true`). `registry-client.ts` = OCI Distribution API v2 (catalog, tags, manifest digest, delete).
 - Flow: `create-registry/`, `list-registries/`, `delete-registry/`, `test-registry/`, `provision-self-hosted/`, `remove-self-hosted/`,
-  `self-hosted-status/`, `list-repositories/`, `list-tags/`, `delete-tag/`, `garbage-collect/`. Manajemen = `@Roles('owner','admin')` (`RolesGuard`), provisioning/GC = owner.
+  `self-hosted-status/`, `list-repositories/`, `list-tags/`, `delete-tag/`, `garbage-collect/`, `set-registry-domain/`. Manajemen = `@Roles('owner','admin')` (`RolesGuard`), provisioning/GC = owner.
+- **Domain kustom untuk registry lokal** (`set-registry-domain/`, `PATCH /registries/:id/domain`, `@Roles('owner','admin')`, hanya untuk `type: 'self-hosted'`): registry sebelumnya
+  sama sekali tidak terhubung ke Traefik (murni port host, HTTP polos, TLS/`insecure-registries` sepenuhnya tanggung jawab operator). Sekarang bisa direcreate dengan label
+  `ProxyService.buildLabels('aoox-registry', 5000, [{host, https:true}], ...)` (dipakai langsung sebagai static method, pola sama dengan `panel-domain.util.ts`) dan join network
+  `aoox` (`APP_NETWORK`) — mensyaratkan proxy sudah `running` **dan** `acmeEmail` terisi (400 kalau belum, karena tanpa ACME sertifikat default Traefik tidak dipercaya `docker push`).
+  `SelfHostedRegistryService.createContainer()` (private, dipakai `provision()` dan `setDomain()`) selalu `ensureNetwork(APP_NETWORK)` + `NetworkMode: APP_NETWORK` sekarang —
+  port host tetap dipublikasikan juga, jadi akses IP:port tidak hilang. Set domain → `registry.domain` + `registry.url` (jadi domain polos tanpa port, HTTPS standar) diperbarui
+  di DB; hapus domain (`domain: null`) → recreate tanpa label, `url` kembali ke `SelfHostedRegistryService.publicUrl`. Volume data & auth (htpasswd) tidak tersentuh saat recreate,
+  jadi kredensial tetap sama. `apiBaseUrl()` (panggilan API sendiri ke registry) tidak berubah — tetap lewat `REGISTRY_INTERNAL_URL`, tidak pernah lewat domain publik. CLI:
+  `aoox registry domain --set <host>` / `--clear` (cari registry `self-hosted` otomatis, tidak perlu id). Dashboard: field "Domain kustom" di kartu Registry lokal.
+  Efek samping yang diinginkan: `SwarmStatus.registry.reachableFromNodes` (cek regex `registry.url` bukan `localhost`) otomatis jadi `true` begitu domain aktif, tanpa perlu ubah
+  `swarm.service.ts` sama sekali.
 - Route dengan nama repo bergaris miring memakai wildcard Express 5 (`*repository`) yang tiba sebagai array → di-`@Transform` jadi string di DTO.
 - Hapus tag = hapus manifest (tag lain dengan digest sama ikut hilang); disk kembali setelah GC.
 - **Kredensial untuk klien luar** (`get-registry-credentials/`, `GET /registries/:id/credentials`, `@Roles('owner','admin')` — sama dengan `delete-registry`): membalas `{url, username, password}` dengan password **terdekripsi**, pola yang sama dengan `database-credentials` (dipisah dari `GET /registries` supaya list tidak pernah membawa rahasia). Dipakai `aoox deploy` di CLI (`../aoox-cli`) untuk `docker login` sebelum `docker push` — `url` di sini APA ADANYA dari kolom `registries.url` (untuk registry self-hosted = `SelfHostedRegistryService.publicUrl`, sudah menghormati `REGISTRY_PUBLIC_HOST`), bukan `apiBaseUrl()` yang dipakai API sendiri untuk memanggil registry (itu bisa `REGISTRY_INTERNAL_URL`, tidak terjangkau dari luar container API).
