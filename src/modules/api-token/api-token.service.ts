@@ -49,7 +49,8 @@ export class ApiTokenService {
         userId,
         name,
         tokenHash: hashToken(plaintext),
-        prefix: plaintext.slice(0, TOKEN_PREFIX.length + 6),
+        // 10 chars total for display (see AGENTS.md), not the full 45-char token.
+        prefix: plaintext.slice(0, 10),
         expiresAt,
         readOnly: scope.readOnly ?? false,
         projectIds: scope.projectIds?.length ? scope.projectIds : null,

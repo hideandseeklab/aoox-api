@@ -20,6 +20,11 @@ Versions below 1.0.0 may include breaking changes in a minor release.
   `main` — previously the only workflow ran on version tags (Docker publish), so a broken PR could
   merge unnoticed.
 
+### Fixed
+
+- API token `prefix` was stored as 11 characters instead of the documented 10 (off-by-one in
+  `plaintext.slice(0, TOKEN_PREFIX.length + 6)`), caught by the new CI's first run.
+
 ## [0.1.0-alpha.0] - 2026-09-25
 
 ### Added
