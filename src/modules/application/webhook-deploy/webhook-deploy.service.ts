@@ -22,6 +22,14 @@ interface PushPayload {
   ref?: string;
   object_kind?: string; // GitLab
   deleted?: boolean; // GitHub
+  // GitHub push
+  after?: string;
+  head_commit?: { message?: string };
+  pusher?: { name?: string };
+  // GitLab push
+  checkout_sha?: string;
+  commits?: { message?: string }[];
+  user_name?: string;
   // GitHub pull_request
   action?: string;
   number?: number;
@@ -42,6 +50,33 @@ interface PushPayload {
     source_project_id?: number;
     target_project_id?: number;
   };
+}
+
+const COMMIT_MESSAGE_MAX = 200;
+
+export interface PushCommitInfo {
+  sha: string | null;
+  message: string | null;
+  pusherName: string | null;
+}
+
+/**
+ * Commit + pusher off a push payload — GitHub's `after`/`head_commit`/
+ * `pusher`, or GitLab's `checkout_sha`/last of `commits`/`user_name`. Only
+ * the first line of the message is kept, truncated, since it ends up in the
+ * deployment log and history list, not a scrollable diff view.
+ */
+export function parsePushCommit(payload: PushPayload): PushCommitInfo {
+  const sha = payload.after ?? payload.checkout_sha ?? null;
+  const rawMessage =
+    payload.head_commit?.message ??
+    payload.commits?.[payload.commits.length - 1]?.message ??
+    null;
+  const message = rawMessage
+    ? rawMessage.split('\n')[0].slice(0, COMMIT_MESSAGE_MAX)
+    : null;
+  const pusherName = payload.pusher?.name ?? payload.user_name ?? null;
+  return { sha, message, pusherName };
 }
 
 /** Provider-neutral view of a PR event. */
@@ -229,7 +264,13 @@ export class WebhookDeployService {
     }
 
     try {
-      const deployment = await this.deploys.queue(app);
+      const commit = parsePushCommit(payload);
+      const deployment = await this.deploys.queue(app, 'build', {
+        trigger: 'webhook',
+        commitSha: commit.sha,
+        commitMessage: commit.message,
+        triggeredBy: commit.pusherName,
+      });
       this.logger.log(
         `Webhook queued deployment ${deployment.id} for ${app.appName}`,
       );

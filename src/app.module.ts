@@ -14,6 +14,7 @@ import { DatabaseBackupModule } from './modules/database-backup/database-backup.
 import { ComposeModule } from './modules/compose/compose.module';
 import { ComposeMountModule } from './modules/compose-mount/compose-mount.module';
 import { InstanceBackupModule } from './modules/instance-backup/instance-backup.module';
+import { InstanceEnvModule } from './modules/instance-env/instance-env.module';
 import { InstanceUpdateModule } from './modules/instance-update/instance-update.module';
 import { InvitationModule } from './modules/invitation/invitation.module';
 import { DatabaseMountModule } from './modules/database-mount/database-mount.module';
@@ -63,6 +64,7 @@ import { VolumeBackupModule } from './modules/volume-backup/volume-backup.module
     InvitationModule,
     InstanceBackupModule,
     InstanceUpdateModule,
+    InstanceEnvModule,
     RegistryModule,
     ApplicationModule,
     ProxyModule,

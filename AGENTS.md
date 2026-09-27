@@ -115,8 +115,13 @@ NestJS 11 backend for aoox (self-hosted PaaS).
   owner/admin platform & pembuat ditolak 400 karena sudah implisit), `update-member` (`PATCH /:userId`), `remove-member`. Hapus user: row keanggotaan ikut cascade.
 - `project-summary/` (`GET /projects/summary`, didaftarkan **sebelum** `get-project` agar tidak tertangkap `:id`): `{total, active, inactive}` — aktif = punya ≥1 application/
   managed database/compose app berstatus `running` (kolom status yang diamati aoox, satu query SQL dengan `count(*) FILTER`), tanpa panggilan Docker; difilter per akses.
-- `list-projects/` membalas `ProjectListItemDto` = project + `instances[]` (`{kind: application|database|compose, id, name, status, engine}`; satu query `UNION ALL`
-  atas tiga tabel dengan `project_id = ANY($1)`, raw SQL seperti summary karena ProjectModule tidak bisa meng-import module lain — mereka meng-import-nya) untuk kartu overview.
+- `list-projects/` membalas `ProjectListItemDto` = project + `instances[]` (`{kind: application|database|compose, id, name, status, engine, deploying}`; satu query
+  `UNION ALL` atas tiga tabel dengan `project_id = ANY($1)`, raw SQL seperti summary karena ProjectModule tidak bisa meng-import module lain — mereka meng-import-nya)
+  untuk kartu overview. **`deploying`**: badge "sedang deploy" tanpa panggilan Docker — application = `EXISTS` di `deployments` dengan status aktif
+  (`queued`/`building`/`pushing`/`starting`, subquery per baris di dalam `UNION ALL` yang sama, masih satu round-trip); database = `status = 'creating'`;
+  compose = `status = 'deploying'` (stack sudah punya status ini sendiri, disamakan bentuknya jadi satu boolean seragam lintas kind supaya web tidak perlu
+  logika per-kind). Web: `project-card.tsx` menampilkan badge amber + `ProjectsAutoRefresh` (client component, `router.refresh()` tiap 4 detik) yang hanya
+  aktif selama ada instance `deploying` di halaman `/projects`, berhenti sendiri begitu badge terakhir hilang.
 - Flow: `create-project/`, `list-projects/`, `get-project/`, `update-project/`, `delete-project/` — semua `@UseGuards(JwtAuthGuard)`,
   owner diambil dari `@CurrentUser()`, tidak pernah dari body.
 - Kolom waktu memakai `timestamptz` (migrasi `UseTimestamptz`); gunakan tipe yang sama untuk entity baru.
@@ -238,6 +243,13 @@ NestJS 11 backend for aoox (self-hosted PaaS).
 - Kepemilikan lewat project: `ApplicationService.findOwnedOrFail(id, ownerId)` join `project.ownerId`.
 - Flow: `create/list/get/update/delete-application`, `deploy-application` (202, tolak 409 kalau masih ada deployment aktif),
   `list-deployments` (tanpa logs), `get-deployment` (dengan logs, di-poll web), `stop/start-application`, `application-logs` (log container).
+- **Cek tabrakan host port** saat `create`/`update-application` men-set `hostPort`: `HostPortService` (`src/modules/host-port/`, hanya meng-impor entity
+  `Application`/`ManagedDatabase`/`ComposeApp` langsung — bukan module-nya — supaya bisa dipakai `ApplicationModule` **dan** `ComposeModule` tanpa siklus,
+  karena `ComposeModule` sudah meng-import `ApplicationModule`). Logika sama dengan `ComposeService.assertHostPortsFree()` (lihat bagian Compose): `applications.host_port`
+  lain, `managed_databases.host_port`, `service_ports` compose, dan port yang sedang di-bind container di daemon. App di server remote (`Application.serverId`) mengecek
+  container lewat `RemoteDockerService.forServer(serverId)`, bukan daemon lokal — cek tabel tetap global. Saat `update`, container milik app sendiri (`aoox-app-<appName>`,
+  `-next` blue/green, atau task swarm berlabel `aoox.application`) dan baris app itu sendiri dikecualikan; cek hanya jalan kalau `hostPort` atau `serverId` berubah.
+  Sebelumnya app yang dibuat tanpa domain **dan** tanpa host port bebas dipilih port yang sudah dipakai lalu gagal diam-diam saat container dibuat — sekarang 400 di awal.
 - `deployment-runner.service.ts` berjalan **detached** dari request: `POST /build?remote=<git>#<branch>` (daemon meng-clone sendiri — tidak butuh git/tar di API)
   → `POST /images/{name}/push` dengan `X-Registry-Auth` (base64url **dengan padding**, seperti Go) ke registry lokal
   → hapus container lama → create+start container baru (label `aoox.application`). Image ref: `<registry.url>/<project-slug>/<appName>:<12 char id deployment>`.
@@ -247,6 +259,22 @@ NestJS 11 backend for aoox (self-hosted PaaS).
   `deployment:status`, `container:log`, `container:end`. Runner memancarkan chunk lewat `DeploymentEventsService` (EventEmitter in-process + teks live per deployment
   untuk snapshot sinkron tanpa duplikasi); DB tetap di-flush tiap ~1 detik sebagai penyimpanan. Log container via `followContainerLogs` (`GET /containers/{id}/logs?follow=1`, `StreamDemuxer`).
   Satu instance API saja — kalau di-scale, ganti emitter dengan Redis pub/sub.
+  Selain langganan per-deployment, tiap socket juga `join()` room `app:<applicationId>` saat handshake (di `handleConnection`, dari `applicationId` tiket) — dipakai
+  event `deployment:created` (di bawah) yang harus sampai ke **semua** socket terhubung ke aplikasi itu, bukan cuma yang sedang subscribe ke satu deployment tertentu.
+- **Asal pemicu deployment** (`Deployment.trigger`: `manual`|`webhook`|`auto-update`, terpisah dari `kind` yang memilih jalur build/rollback/config — `rollback`/`config`
+  selalu `trigger: 'manual'`, `triggeredBy` yang membedakannya dari deploy manual biasa) + `commitSha`/`commitMessage` (dipotong ke baris pertama, 200 char) +
+  `triggeredBy` (email aktor untuk manual/rollback/config — dari `@CurrentUser()`, sama untuk sesi maupun API token; nama pusher untuk webhook). Diisi di titik
+  pembuatan row: `DeployApplicationService.queue(app, kind, info?)` (manual & auto-update lewat `execute()`/`ImageUpdateWatcherService`, default trigger dari `kind`),
+  `WebhookDeployService` (dari `parsePushCommit()` — GitHub `after`/`head_commit.message`/`pusher.name`, GitLab `checkout_sha`/`commits[].message` terakhir/`user_name`),
+  `RollbackApplicationService`, `DeploymentRunnerService.queueRuntimeConfig()`. Baris pertama log deployment juga menyebutkannya (`triggerSummary()`, pure & di-unit-test,
+  mis. `==> Triggered by webhook (a1b2c3d "fix x" by octocat)`) via `DeploymentLog.note()` (seperti `step()` tapi tanpa ganti status) — redaksi token/password tetap berlaku
+  karena lewat `append()` yang sama. Diekspos di `list-deployments`/`get-deployment` (field baru ditambahkan ke `select` eksplisit `list-deployments`, `get-deployment`
+  sudah membalas row penuh).
+- **`deployment:created`** (event baru `LogsServerEvents`, dipancarkan `DeploymentEventsService.emitCreated()`/`onCreated()`): `DeploymentRunnerService.start()` —
+  satu-satunya titik yang dipanggil oleh **semua** jalur pembuatan deployment (build/webhook/auto-update lewat `queue()`, rollback/config lewat `start()` langsung) —
+  memancarkannya sekali per row, sehingga tidak perlu duplikasi di tiap caller. `LogsGateway` meneruskannya ke room `app:<applicationId>` (`server.to(room).emit(...)`,
+  `@WebSocketServer()`), bukan ke satu socket yang sedang subscribe — jadi tab yang sedang terbuka tahu ada deploy baru (webhook, auto-update, user lain) tanpa
+  refresh manual. Payload `{id, trigger, commitSha, commitMessage, triggeredBy}`.
 - **Health check & zero-downtime** (`Application.healthcheckPath`, mis. `/health`; `healthcheck.ts`): container dibuat dengan Docker `HEALTHCHECK` (`CMD-SHELL` yang mencoba
   `wget` → `curl` → `node -e fetch` → `python3` ke `127.0.0.1:<containerPort><path>`, interval 3 s, 30 retry; exit 127 = tidak ada satu pun → pesan error menyebutkannya).
   `replaceContainer` menunggu `State.Health.Status === 'healthy'` (`waitHealthy`, poll `healthPollMs`) sebelum deployment dianggap sukses. Untuk app yang dirutekan lewat
@@ -311,6 +339,14 @@ NestJS 11 backend for aoox (self-hosted PaaS).
   lalu `replaceContainer`. Tidak butuh registry lokal. Pull gagal → deployment `failed`, container lama tetap jalan. Rollback tetap memakai `imageRef` deployment lama; webhook untuk app
   image mengabaikan cek branch (CI bisa memanggilnya setelah `docker push`); preview PR tidak berlaku. DTO: `gitUrl` wajib hanya bila `sourceType !== 'image'` (`ValidateIf`),
   `imageRef` wajib bila `image`. Web: select **Sumber** di form (git/image), field image + kredensial registry.
+  **Jebakan yang ditemukan** (`update-application.dto.ts`): field milik sumber yang tidak dipakai (mis. `imageRef` untuk app git) dikirim web sebagai `""`, bukan
+  `undefined`/`null` — bagian Image/Git di form React di-mount kondisional per `sourceType`, jadi field yang tidak relevan lenyap dari `FormData` dan action mengembalikannya
+  sebagai string kosong. `@IsOptional()` **hanya** melewatkan `null`/`undefined`, bukan `""`, sehingga `@Matches(...)` tetap jalan dan menolak string kosong dengan pesan
+  regex-nya (`imageRef must be an image reference like registry/repo:tag`) — user tidak bisa menyimpan Pengaturan sama sekali untuk app git karena field `imageRef` yang
+  sama sekali tidak mereka sentuh. Field bertipe string dengan pola serupa (`imageRef`, `gitUrl`, `gitBranch`, `dockerfilePath`, `staticOutputDir`, `previewDomain`) butuh
+  `@ValidateIf((_, v) => v !== '')` tambahan (di samping `v !== null` untuk yang nullable) supaya `""` dilewatkan seperti `null`/`undefined`; field UUID nullable
+  (`gitCredentialId`, `imageRegistryId`, `swarmNodeId`, `serverId`) aman karena `application.schema.ts` di web sudah men-transform `""` → `null` sebelum dikirim, jadi
+  `ValidateIf(v !== null)` yang ada di sana sudah cukup — hanya field string yang divalidasi `@Matches`/regex tanpa transform serupa yang rawan.
 - **Update otomatis image** (`Application.autoUpdate`, `autoUpdateIntervalMinutes` 5–1440 default 60, `imageDigest`, `imageCheckedAt`; hanya `sourceType='image'`):
   `image-reference.ts` `parseImageRef()` (pure, di-unit-test; Docker Hub → `registry-1.docker.io` + `library/`), `registry/remote-digest.ts` `fetchRemoteDigest()` =
   `HEAD /v2/<repo>/manifests/<tag>` dengan Accept manifest list/OCI index (digest yang sama dengan `docker pull`/`buildx imagetools`), token flow Docker Hub/GHCR
@@ -342,8 +378,17 @@ NestJS 11 backend for aoox (self-hosted PaaS).
   untuk `POST /build?remote=` (daemon meneruskan userinfo — diverifikasi; daemon juga tidak menampilkannya di pesan error). `DeploymentLog.redact(token)` menyensor
   token (mentah & URL-encoded) di log dan `errorMessage`. DTO menolak `gitUrl` yang mengandung `@`.
 - Webhook: `Application.webhookToken` (32 byte random, `select: false`, unik) → `POST /webhooks/:token` (`webhook-deploy/`, **tanpa JwtAuthGuard**, throttle 30/menit,
-  `timingSafeEqual`). Push ke `refs/heads/<gitBranch>` → `DeployApplicationService.queue(app)`; branch lain / event non-push / branch dihapus → 200 `ignored`;
+  `timingSafeEqual`). Push ke `refs/heads/<gitBranch>` → `DeployApplicationService.queue(app, 'build', {trigger:'webhook', ...})`, commit & pusher dari `parsePushCommit()`
+  (`webhook-deploy.service.ts`, pure & di-unit-test: GitHub `after`/`head_commit.message`/`pusher.name`, GitLab `checkout_sha`/commit terakhir di `commits[]`/`user_name`
+  — lihat bagian Application & Deploy soal `Deployment.trigger`); branch lain / event non-push / branch dihapus → 200 `ignored`;
   deployment sedang berjalan → 200 `busy` (tidak antre). `get-webhook/` (URL dari `PUBLIC_API_URL`) dan `regenerate-webhook/`. Pengiriman dari provider sungguhan belum diuji (localhost).
+  **Jebakan yang ditemukan**: `PUBLIC_API_URL` dibaca oleh **container `api` sendiri** (`ConfigService.get`, di sini dan di `compose-webhook.service.ts` +
+  `panel-domain.service.ts` untuk `applied.publicApiUrl`) — bukan cuma dipakai `web` untuk terminal socket seperti terlihat dari namanya. `docker-compose.dist.yml`
+  sekarang meneruskan var ini ke **kedua** service (`api` dan `web`); sebelumnya hanya `web` yang mendeklarasikannya, jadi API selalu jatuh ke fallback
+  `http://localhost:3001` walau domain API sudah diset lewat panel-domain (yang menulis `PUBLIC_API_URL` ke `.env.dist` tapi tidak ada gunanya kalau service api
+  tidak membacanya) — webhook URL di dashboard dan status "Saat ini terpasang" di kartu Domain panel ikut menampilkan `localhost` yang salah. Aturan umum: kalau
+  menambah `config.get<...>('X')` baru di kode API, cek juga apakah `X` perlu ditambahkan ke blok `environment:` service **api** (bukan cuma web) di
+  `docker-compose.dist.yml` — lihat bagian Docker/distribusi soal menyalin ulang ke `aoox-cli/assets/install/`.
 - **Secret webhook** (`Application.webhookSecretEncrypted`, nullable `select:false`, AES via `secret.util` seperti secret lain — token URL tetap plaintext karena jadi kunci lookup; `webhook-secret/`: `PUT /applications/:id/webhook/secret` buat/rotasi, `DELETE` nonaktif; nilainya ikut di `get-webhook`
   agar bisa disalin ke provider). Bila diset, `webhook-deploy` menuntut bukti: GitHub `X-Hub-Signature-256` = `sha256=HMAC-SHA256(secret, raw body)` atau GitLab `X-Gitlab-Token` = secret
   (`webhook-signature.ts` `verifyWebhookSignature`, `timingSafeEqual`) → selain itu **401** (sengaja bukan 200 seperti event tak relevan: docs GitHub menetapkan 401 untuk signature salah, throttle membatasi brute force). Butuh **`rawBody: true`** di `NestFactory.create` + `@Req() RawBodyRequest` (docs NestJS "Raw body"),
@@ -369,7 +414,13 @@ NestJS 11 backend for aoox (self-hosted PaaS).
 - `src/modules/proxy/` — `proxy.service.ts` menjalankan **Traefik v3** (`aoox-proxy`, network bridge `aoox`, volume `aoox_proxy_acme`)
   dengan docker provider (`exposedbydefault=false`), entrypoint `web`/`websecure`, dan resolver ACME `le` (HTTP-01) bila `PROXY_ACME_EMAIL` di-set.
   Flow: `proxy-status/`, `provision-proxy/`, `remove-proxy/` (owner). Port host: `PROXY_HTTP_PORT`/`PROXY_HTTPS_PORT` (dev: 8088/8443 karena 80 dipakai).
-- Entity `Domain` (`domains`, `host` unik, `https`) di application module; flow `add-domain/`, `list-domains/`, `delete-domain/`.
+- Entity `Domain` (`domains`, `host` unik, `https`) di application module; flow `add-domain/`, `list-domains/`, `delete-domain/`. `add-domain/` sekarang meniru
+  `PanelDomainService`: sebelum `applyRuntimeConfig` (label Traefik useless tanpa yang listen), cek `ProxyService.statusOn()` pada daemon yang tepat (lokal, atau
+  `RemoteDockerService.forServer(app.serverId)` + `proxySettingsOf(server)` untuk app di server remote) dan `provisionOn()` otomatis kalau belum `running` —
+  proxy yang sudah jalan tidak disentuh. Respons `AddDomainResult { domain, proxyAutoProvisioned }` (bukan `Domain` polos lagi) supaya web bisa menampilkan
+  peringatan yang sama dengan panel-domain (DNS/firewall/tunggu ACME) saat menambah domain pertama untuk sebuah app. Tanpa `PROXY_ACME_EMAIL` di host/server,
+  proxy tetap jalan tapi tanpa ACME — domain `https` yang diminta baru benar-benar dapat sertifikat setelah `acmeEmail` diisi (lewat panel-domain untuk host,
+  atau pengaturan server untuk server remote).
 - Label Traefik dibuat `proxy.labelsFor(appName, port, domains)` (instance; memakai `httpsPort` + ada/tidaknya ACME) → `ProxyService.buildLabels(..., {httpsPort, acme})` (static, di-unit-test)
   dan dipasang di `replaceContainer`; semua container app join network `aoox` (`HostConfig.NetworkMode`).
   Router per app: `<name>` (web, host non-https), `<name>-secure` (websecure + certresolver `le`), dan **`<name>-redirect`** (web, host https → 301 https via middleware
@@ -380,10 +431,17 @@ NestJS 11 backend for aoox (self-hosted PaaS).
   service `web`/`api` (`WEB_DOMAIN`/`API_DOMAIN` wajib, butuh `PROXY_ACME_EMAIL`; `WEB_ORIGIN`/`PUBLIC_API_URL` harus diganti ke https); (2) **dari dashboard** —
   `src/modules/panel-domain/` (`GET`/`PATCH /instance/domain`, owner saja): `PanelDomainSettings` (row tunggal `panel_domain_settings`) menyimpan `webHost`/`apiHost`/`acmeEmail`;
   `PATCH` men-throttle 5/menit, butuh env `INSTALL_DIR` (path absolut folder `docker-compose.dist.yml` di host — belum ada default, harus diisi manual di `.env.dist`) lalu
-  `apply()` di-jadwalkan `setTimeout` 1,5 detik (agar response HTTP sempat terkirim sebelum container ini sendiri di-recreate): helper `docker:29-cli` (pola sama dengan
+  `apply()` di-jadwalkan `setTimeout` 1,5 detik (agar response HTTP sempat terkirim sebelum container ini sendiri di-recreate): sebelum apa pun, kalau `ProxyService.status()`
+  bilang proxy belum `running`, **provision otomatis** (`ProxyService.provisionOn` dengan `acmeEmail` dari setting yang baru disimpan) — tanpa ini label Traefik terpasang tapi
+  tidak ada yang listen di port 80/443, domain jadi "unable to connect" tanpa error yang jelas (ditemukan lewat test VPS sungguhan). Proxy yang **sudah** `running` tidak disentuh
+  (tidak di-recreate ulang tiap kali domain disimpan, supaya ACME state & routing app lain tidak terganggu). Lalu helper `docker:29-cli` (pola sama dengan
   `compose-runner`) mem-bind `INSTALL_DIR` host langsung (bukan volume) ke path yang sama di helper, `putArchive` menulis `docker-compose.override.yml` (nama **berbeda** dari
-  `docker-compose.domain.yml` manual — `override.yml` otomatis ikut ter-`-f` oleh Compose di setiap `up` berikutnya tanpa flag tambahan, jadi domain bertahan lewat restart/`aoox update`),
-  lalu skrip `sed`/`grep` meng-upsert `WEB_DOMAIN`/`API_DOMAIN`/`PROXY_ACME_EMAIL`/`WEB_ORIGIN`/`PUBLIC_API_URL`/`COOKIE_SECURE` di `.env.dist` sebelum `docker compose up -d`.
+  `docker-compose.domain.yml` manual). **Jebakan yang ditemukan**: Compose hanya otomatis meng-include `docker-compose.override.yml` kalau file utamanya bernama persis
+  `docker-compose.yml` (default lookup tanpa `-f`) — begitu `-f docker-compose.dist.yml` disebut eksplisit (seperti di sini), override **tidak** ikut ter-load kecuali disebut
+  eksplisit juga; salah asumsi ini bikin label Traefik ditulis ke disk tapi tidak pernah benar-benar dipasang ke container. Karena itu skrip selalu `-f docker-compose.dist.yml -f
+  docker-compose.override.yml` (jalur ini menulis file itu sendiri lebih dulu, jadi selalu ada) — `instance-update` (di bawah) mengecek dulu file itu ada sebelum menyebutnya, karena
+  di sana filenya mungkin belum pernah ditulis sama sekali. Lalu skrip `sed`/`grep` meng-upsert `WEB_DOMAIN`/`API_DOMAIN`/`PROXY_ACME_EMAIL`/`WEB_ORIGIN`/`PUBLIC_API_URL`/`COOKIE_SECURE`
+  di `.env.dist` sebelum `docker compose up -d`.
   Label Traefik dari `renderPanelOverride()` (`panel-domain.util.ts`, pure & di-unit-test) memakai ulang `ProxyService.buildLabels` langsung untuk router `aoox-web`/`aoox-api`
   (port 3000/3001) — bukan template YAML terpisah seperti jalur manual. `docker-compose.dist.yml` mendeklarasikan network `aoox` (`name:` eksplisit) dan memasukkan `web`/`api`
   ke sana selain `default`, sehingga Traefik bisa menjangkaunya. Port 3000/3001 tetap dipublikasikan untuk akses via IP di kedua jalur. `aoox-cli`: `aoox domain set --web --api
@@ -427,6 +485,14 @@ NestJS 11 backend for aoox (self-hosted PaaS).
 - Pengirimannya di application module: `deployment-notifier.service.ts` subscribe `DeploymentEventsService.onStatus` (emit **sinkron** dari dalam runner → listener hanya menjadwalkan,
   tidak pernah throw), hanya `success`/`failed`, lalu **membaca ulang row Deployment** (error sudah di-redact oleh `DeploymentLog`) dan `NotificationService.broadcast(event, message)`;
   kegagalan per channel hanya di-log. Link ke `${WEB_ORIGIN}/applications/<id>` bila `WEB_ORIGIN` di-set. `ApplicationModule` meng-import `NotificationModule` (bukan sebaliknya).
+- **Deploy dimulai** (`on_deployment_started`, **default `false`** — beda dari toggle lain yang default `true`, karena event ini bisa sering terjadi lewat webhook/
+  auto-update dan channel yang sudah ada belum tentu mau tahu setiap kali): `deployment-notifier.service.ts` juga subscribe `DeploymentEventsService.onCreated`
+  (`emitCreated`, ditambahkan `DeploymentRunnerService.start()` — titik cekik tunggal yang dipanggil **setiap** jalur pembuatan deployment: build/webhook/
+  auto-update/rollback/config, jadi `deployment:created` selalu tepat sekali per deployment apa pun pemicunya). Handler membaca ulang row lalu **melewati**
+  `kind: 'config'` (deployment tanpa build — cuma re-apply mode/replika/limit swarm pada image yang sama; bukan "deploy baru" yang layak ditunggu, dan bisa
+  sering terjadi untuk penyesuaian rutin — mengirim untuk ini akan lebih berisik daripada berguna). Pesan: nama app, project, dan field **Trigger** dari
+  `trigger-summary.ts` `triggerSummary()` (helper murni yang sudah dipakai baris pertama log deployment — commit pendek + pesan commit + pengirim untuk webhook,
+  "Triggered by auto-update" untuk auto-update, "Triggered manually" selainnya), `level: 'info'`.
 
 ## Compose (stack docker-compose)
 
@@ -452,10 +518,11 @@ NestJS 11 backend for aoox (self-hosted PaaS).
   (override lama ikut hilang karena deploy selalu `rm -rf SRC` dulu, jadi stop/start tidak memakai konfigurasi yang sudah dicabut — diuji: port lepas).
 - **Port host** (`service_ports` jsonb `{service, port, hostPort}`, `ServicePortDto`): akses lewat IP tanpa domain/proxy. `renderOverride(domains, ports, …)` menambahkan
   `ports: ["<hostPort>:<port>"]` ke service (tanpa `networks` bila hanya port); compose **meng-append** `ports` override ke `ports` file compose (diuji `config`), jadi binding
-  yang sudah ada di file tetap. `ComposeService.assertHostPortsFree()` (dipakai `update-compose-app` & `create-from-template`) menolak 400 sebelum deploy: duplikat dalam daftar, `applications.host_port`,
-  `managed_databases.host_port`, `service_ports` stack lain, dan port yang sedang di-bind container **mana pun** di daemon lokal (`listContainers({status:['running']})`,
-  `ContainerSummary.Ports[].PublicPort`; container project compose stack sendiri dikecualikan karena di-recreate; entri IPv4/IPv6 di-dedupe) — tanpa ini `up` gagal
-  *setelah* container lama di-recreate, service jadi mati. Cek saat simpan, bukan saat deploy — port yang direbut proses lain di antaranya tetap gagal di `up`. `create-from-template` menerima `servicePorts`
+  yang sudah ada di file tetap. `ComposeService.assertHostPortsFree()` (dipakai `update-compose-app` & `create-from-template`) menolak 400 sebelum deploy: duplikat dalam daftar, lalu delegasi ke
+  `HostPortService` (`src/modules/host-port/`, lihat bagian Application & Deploy) untuk `applications.host_port`, `managed_databases.host_port`, `service_ports` stack lain, dan port yang sedang
+  di-bind container **mana pun** di daemon lokal (`listContainers({status:['running']})`, `ContainerSummary.Ports[].PublicPort`; container project compose stack sendiri dikecualikan karena
+  di-recreate; entri IPv4/IPv6 di-dedupe) — tanpa ini `up` gagal *setelah* container lama di-recreate, service jadi mati. Cek saat simpan, bukan saat deploy — port yang direbut proses lain di
+  antaranya tetap gagal di `up`. `create-from-template` menerima `servicePorts`
   (divalidasi terhadap `template.services` seperti domain). Ekspor/impor project membawa `servicePorts` (opsional di file lama; `freeHostPort` kini juga memindai
   `service_ports` stack lain; port yang sudah dipakai dilewati + warning).
 - **Riwayat** (`compose-deployment.entity.ts`, tabel `compose_deployments`: FK cascade ke stack, `action` deploy|stop|start|down, `trigger` manual|webhook, `status` running→success|failed,
@@ -734,14 +801,48 @@ NestJS 11 backend for aoox (self-hosted PaaS).
   (`currentDigest: null` di response, dibedakan dari "sudah terbaru" di UI); jujur soal keterbatasan ini daripada berpura-pura tahu.
 - **Apply** (`POST /instance/update/apply`, owner, throttle 3/menit, 202): pola yang sama persis dengan `panel-domain` — butuh `INSTALL_DIR`, fire digest baru + simpan sebagai
   baseline lalu `setTimeout` 1,5 detik supaya response HTTP sempat terkirim sebelum container `web`/`api` di-recreate. Helper `docker:29-cli` (bind `INSTALL_DIR` host langsung +
-  docker socket, pola sama dengan `panel-domain.service.ts`) menjalankan `docker compose -f docker-compose.dist.yml --env-file .env.dist pull` lalu `up -d` — **tanpa** perlu
-  menyebut `-f docker-compose.override.yml`/`docker-compose.domain.yml` secara eksplisit karena file override domain (kalau ada, dari fitur Domain panel) sudah otomatis
-  ter-include Compose lewat nama filenya sendiri. Tidak menyentuh `docker-compose.domain.yml` manual (butuh `-f` eksplisit, di luar cakupan fitur ini).
+  docker socket, `runComposeHelper()` di `docker/compose-apply.util.ts` — dipakai bersama `panel-domain` dan `instance-env`) menjalankan `docker compose $FILES --env-file .env.dist
+  pull` lalu `up -d`. **Jebakan yang sempat lolos**: dulu dipikir `-f docker-compose.dist.yml` saja cukup karena "override otomatis ter-include" — salah; Compose hanya
+  meng-auto-include `docker-compose.override.yml` kalau file utama bernama persis `docker-compose.yml` (default lookup tanpa `-f`), bukan saat `-f docker-compose.dist.yml` disebut
+  eksplisit (ditemukan lewat test VPS sungguhan: domain panel hilang lagi setelah `aoox update`). `COMPOSE_FILES_SCRIPT` (util yang sama) membangun `$FILES` dengan `[ -f
+  docker-compose.override.yml ] && FILES="$FILES -f docker-compose.override.yml"` — file itu boleh belum ada sama sekali (belum pernah set domain panel). Tidak menyentuh
+  `docker-compose.domain.yml` manual (butuh `-f` eksplisit sendiri, di luar cakupan fitur ini).
 - `GET /instance/update` (owner) juga membalas `currentVersion` (dibaca dari `package.json` di `process.cwd()` — image runner meng-copy `package.json` ke `/app/`, lihat Dockerfile)
   untuk ditampilkan, bukan dipakai untuk logika pembanding update (channel alpha belum tentu naik linear per tag, digest tetap sumber kebenaran).
 - CLI: `aoox update` (cek) / `aoox update --apply` (terapkan). Web: `instance-update-card.tsx` di Settings → Infrastruktur (owner), tombol "Cek update" (server action, bukan cuma
   render awal) dan "Terapkan update" (disabled kalau `INSTALL_DIR` kosong atau tidak ada update).
   Belum: notifikasi otomatis saat ada update tersedia (beda dari `ImageUpdateWatcherService` aplikasi yang jalan `@Cron`), rollback otomatis kalau `docker compose up` gagal setelah pull.
+- **Keterbatasan penting**: `apply()` hanya `docker compose pull && up -d` — **tidak pernah** menulis ulang `docker-compose.dist.yml` di `INSTALL_DIR` host. Jadi perbaikan/fitur baru
+  yang butuh baris baru di file compose itu sendiri (var `environment:` baru, service baru, dll — mis. `PUBLIC_API_URL` yang sekarang juga diteruskan ke service `api`, lihat bagian
+  Git credential & Webhook) **tidak sampai** ke instalasi yang sudah ada lewat `aoox update` / tombol "Terapkan update" — image baru dijalankan dengan compose file **lama** di host,
+  jadi environment baru itu tidak pernah terpasang sampai file compose di host diedit manual. Langkah manual: tambahkan baris yang kurang ke service yang tepat di
+  `/opt/aoox/docker-compose.dist.yml` (atau `INSTALL_DIR` lain), lalu `docker compose -f docker-compose.dist.yml -f docker-compose.override.yml --env-file .env.dist up -d`
+  (`-f docker-compose.override.yml` hanya kalau file itu ada — dibuat oleh panel-domain/instance-env, lihat bagian Proxy & Domain). Ide yang belum diimplementasikan: `apply()`
+  bisa juga menulis ulang `docker-compose.dist.yml` dari salinan yang dibundel di image `api` sendiri (image sudah membawa versi baru file itu untuk keperluan lain) sebelum
+  `up -d`, supaya update compose ikut ter-apply otomatis — belum dikerjakan, perlu hati-hati karena bisa menimpa modifikasi manual operator di file itu (mis. `docker-compose.build.yml`
+  override lokal, atau baris yang sengaja ditambah operator sendiri).
+
+## Environment instance (`.env.dist` sebagian, dari dashboard)
+
+- `src/modules/instance-env/` — subset **whitelist** env var yang bisa diubah owner dari dashboard tanpa SSH: `TERMINAL_SSH_HOST/PORT/USER/PASSWORD`, `PUBLIC_IP`,
+  `REGISTRY_PUBLIC_HOST`. Pola sama persis dengan `panel-domain`/`instance-update` (butuh `INSTALL_DIR`, helper `docker:29-cli` via `runComposeHelper()`,
+  `setTimeout` 1,5 detik karena mengganti env ini me-recreate container `api` — satu-satunya service yang mendeklarasikan var-var ini di `docker-compose.dist.yml`).
+  **Sengaja whitelist, bukan editor bebas**: menambah field di sini tanpa juga menambahkannya ke `environment:` service `api` di `docker-compose.dist.yml` tidak akan
+  pernah berlaku (Compose hanya meneruskan var yang memang dideklarasikan di sana, meski `.env.dist` punya baris lain) — jangan buat field baru tanpa mengecek itu dulu.
+  Var seperti `JWT_SECRET`/`ENCRYPTION_KEY`/`POSTGRES_PASSWORD` **tidak pernah** masuk whitelist ini (mengubahnya lewat form biasa berisiko: invalidasi semua sesi,
+  gagal dekripsi kredensial tersimpan, dll — tetap harus manual dengan kesadaran penuh).
+- `GET /instance/env` (owner) membalas nilai aktif sekarang (`ConfigService.get()`, sama seperti `panel-domain.status()` membaca `WEB_ORIGIN`) — bukan isi file `.env.dist`
+  yang belum diterapkan. `terminalSshPassword` **tidak pernah** dikembalikan (hanya `terminalSshPasswordSet: boolean`), pola yang sama dengan notifikasi/webhook DTO yang
+  tidak pernah membawa rahasia di endpoint list/status.
+- `PATCH /instance/env` (owner, throttle 5/menit, 202): tiap field independen — field yang di-omit dibiarkan, string kosong **menghapus** nilai (kembali ke default
+  `${VAR:-default}` di compose, mis. `REGISTRY_PUBLIC_HOST=` kosong → balik ke `localhost`). Hanya key yang benar-benar dikirim yang di-upsert ke `.env.dist`
+  (`envUpsertLine()`), jadi menyimpan bagian "SSH Terminal" saja tidak menyentuh `PUBLIC_IP`/`REGISTRY_PUBLIC_HOST`. Web: `instance-env-card.tsx` di Settings → Infrastruktur
+  → **Environment** (owner), dua bagian (SSH Terminal, Jaringan) dengan tombol simpan terpisah agar tidak perlu isi semua sekaligus.
+  Belum: whitelist var lain yang sering ditanyakan (mis. `METRICS_RETENTION_DAYS`, `DISK_ALERT_PERCENT` — belum ada di `docker-compose.dist.yml` sama sekali, perlu
+  ditambahkan ke compose dulu sebelum bisa masuk whitelist ini), validasi bahwa `TERMINAL_SSH_HOST` benar-benar bisa dijangkau sebelum disimpan.
+- `docker/compose-apply.util.ts` (dipakai `panel-domain`, `instance-update`, `instance-env`): `envUpsertLine()` (pure, di-unit-test) dan `runComposeHelper()`
+  (buat container `docker:29-cli`, bind `installDir` + socket docker, opsional tulis file lewat `putArchive`, start, wait, hapus) — sebelumnya disalin manual di dua
+  tempat (dan nyaris di tempat ketiga ini), sekarang satu sumber kebenaran untuk pola "edit `.env.dist`/compose lalu `docker compose up` dari dalam container sendiri".
 
 ## Docker Swarm (tahap 1–2: single node, app sebagai service)
 

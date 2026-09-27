@@ -15,6 +15,7 @@ function fakeClient(auth: Record<string, unknown>, origin = 'http://web') {
     handshake: { auth, headers: { origin } },
     emit: jest.fn((...args: unknown[]) => emitted.push(args)),
     disconnect: jest.fn(),
+    join: jest.fn(),
     emitted,
   };
 }
@@ -107,5 +108,35 @@ describe('LogsGateway', () => {
       status: 'success',
     });
     expect(events.snapshot('d1')).toBeUndefined();
+  });
+
+  it('joins the socket to the application room on connect', () => {
+    const client = fakeClient({ ticket: ticket('app1') });
+    gateway.handleConnection(client as never);
+    expect(client.join).toHaveBeenCalledWith('app:app1');
+  });
+
+  it('broadcasts deployment:created to the application room, not just a subscribed socket', () => {
+    const server = { to: jest.fn().mockReturnThis(), emit: jest.fn() };
+    (gateway as unknown as { server: typeof server }).server = server;
+    gateway.onModuleInit();
+
+    events.emitCreated({
+      deploymentId: 'd2',
+      applicationId: 'app1',
+      trigger: 'webhook',
+      commitSha: 'abc1234',
+      commitMessage: 'fix x',
+      triggeredBy: 'octocat',
+    });
+
+    expect(server.to).toHaveBeenCalledWith('app:app1');
+    expect(server.emit).toHaveBeenCalledWith('deployment:created', {
+      id: 'd2',
+      trigger: 'webhook',
+      commitSha: 'abc1234',
+      commitMessage: 'fix x',
+      triggeredBy: 'octocat',
+    });
   });
 });

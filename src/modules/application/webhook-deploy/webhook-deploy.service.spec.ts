@@ -10,7 +10,10 @@ import { Test } from '@nestjs/testing';
 import { ApplicationService } from '../application.service';
 import { DeployApplicationService } from '../deploy-application/deploy-application.service';
 import { PreviewService } from '../preview.service';
-import { WebhookDeployService } from './webhook-deploy.service';
+import {
+  parsePushCommit,
+  WebhookDeployService,
+} from './webhook-deploy.service';
 
 describe('WebhookDeployService', () => {
   const app = {
@@ -79,6 +82,25 @@ describe('WebhookDeployService', () => {
       ),
     ).resolves.toEqual({ result: 'queued', deploymentId: 'd1' });
     expect(deploys.queue).toHaveBeenCalledTimes(2);
+  });
+
+  it('passes trigger + commit info from the push payload to queue()', async () => {
+    await service.execute(
+      app.webhookToken,
+      {
+        ref: 'refs/heads/main',
+        after: 'a1b2c3d4e5f6',
+        head_commit: { message: 'fix x\n\nlonger body' },
+        pusher: { name: 'octocat' },
+      },
+      'push',
+    );
+    expect(deploys.queue).toHaveBeenCalledWith(app, 'build', {
+      trigger: 'webhook',
+      commitSha: 'a1b2c3d4e5f6',
+      commitMessage: 'fix x',
+      triggeredBy: 'octocat',
+    });
   });
 
   it('requires a valid GitHub signature or GitLab token once a secret is set', async () => {
@@ -327,6 +349,43 @@ describe('WebhookDeployService', () => {
         }),
       ).resolves.toMatchObject({ result: 'queued' });
       expect(fetchMock).not.toHaveBeenCalled();
+    });
+  });
+});
+
+describe('parsePushCommit', () => {
+  it('reads GitHub push fields', () => {
+    expect(
+      parsePushCommit({
+        after: 'a1b2c3d4e5f6',
+        head_commit: { message: 'fix x\n\nlonger body' },
+        pusher: { name: 'octocat' },
+      }),
+    ).toEqual({ sha: 'a1b2c3d4e5f6', message: 'fix x', pusherName: 'octocat' });
+  });
+
+  it('reads GitLab push fields, using the last commit', () => {
+    expect(
+      parsePushCommit({
+        checkout_sha: 'deadbeef',
+        commits: [{ message: 'first' }, { message: 'fix y' }],
+        user_name: 'Jane Doe',
+      }),
+    ).toEqual({ sha: 'deadbeef', message: 'fix y', pusherName: 'Jane Doe' });
+  });
+
+  it('truncates a long commit message to its first line, up to 200 chars', () => {
+    const long = 'x'.repeat(250);
+    expect(
+      parsePushCommit({ after: 'sha', head_commit: { message: long } }).message,
+    ).toBe('x'.repeat(200));
+  });
+
+  it('returns nulls when the payload has none of these fields', () => {
+    expect(parsePushCommit({})).toEqual({
+      sha: null,
+      message: null,
+      pusherName: null,
     });
   });
 });

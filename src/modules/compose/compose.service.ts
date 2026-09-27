@@ -4,11 +4,10 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Not, Repository } from 'typeorm';
-import { ApplicationService } from '../application/application.service';
-import { ManagedDatabaseService } from '../managed-database/managed-database.service';
+import { Repository } from 'typeorm';
 import { ContainerSummary } from '../docker/docker-engine.client';
 import { DockerService } from '../docker/docker.service';
+import { HostPortService } from '../host-port/host-port.service';
 import { ProjectAccessService } from '../project/project-access.service';
 import { ComposeApp } from './compose-app.entity';
 
@@ -36,17 +35,15 @@ export class ComposeService {
     @InjectRepository(ComposeApp)
     readonly repo: Repository<ComposeApp>,
     private readonly docker: DockerService,
-    private readonly applications: ApplicationService,
-    private readonly databases: ManagedDatabaseService,
+    private readonly hostPorts: HostPortService,
     private readonly access: ProjectAccessService,
   ) {}
 
   /**
-   * Docker would only report a bind conflict at `up` time — and by then the
-   * old container is already recreated, so the service is down. Check the
-   * platform's own port owners (applications, managed databases, other
-   * stacks — even when stopped, they will want the port back) and whatever
-   * the local daemon currently has bound (containers outside aoox).
+   * Duplicate-within-request check is compose-specific (one stack can list
+   * the same port for two services by mistake); the rest — platform-table
+   * owners and the daemon's current bindings — is shared with application
+   * create/update via `HostPortService` (see `src/modules/host-port/`).
    */
   async assertHostPortsFree(app: ComposeApp): Promise<void> {
     const seen = new Set<number>();
@@ -58,52 +55,14 @@ export class ComposeService {
       }
       seen.add(hostPort);
     }
-    if (seen.size === 0) return;
-    const ports = [...seen];
-    const [apps, dbs, stacks, containers] = await Promise.all([
-      this.applications.repo.find({
-        where: ports.map((hostPort) => ({ hostPort })),
-        select: { appName: true, hostPort: true },
-      }),
-      this.databases.repo.find({
-        where: ports.map((hostPort) => ({ hostPort })),
-        select: { name: true, hostPort: true },
-      }),
-      this.repo.find({
-        where: { id: Not(app.id) },
-        select: { name: true, servicePorts: true },
-      }),
-      this.docker.engine
-        .listContainers({ status: ['running'] })
-        .catch(() => []),
-    ]);
-    // A Set: the daemon lists one entry per bound IP (IPv4 and IPv6).
-    const taken = new Set<string>();
-    for (const a of apps) taken.add(`${a.hostPort} (aplikasi ${a.appName})`);
-    for (const d of dbs) taken.add(`${d.hostPort} (database ${d.name})`);
-    for (const s of stacks) {
-      for (const p of s.servicePorts) {
-        if (seen.has(p.hostPort)) taken.add(`${p.hostPort} (stack ${s.name})`);
-      }
-    }
     // This stack's own containers are recreated on deploy, so their current
     // bindings do not count.
     const own = composeProjectFor(app);
-    for (const c of containers) {
-      if (c.Labels?.['com.docker.compose.project'] === own) continue;
-      for (const p of c.Ports ?? []) {
-        if (p.PublicPort && seen.has(p.PublicPort)) {
-          taken.add(
-            `${p.PublicPort} (container ${c.Names[0]?.replace(/^\//, '') ?? c.Id.slice(0, 12)})`,
-          );
-        }
-      }
-    }
-    if (taken.size) {
-      throw new BadRequestException(
-        `Host port sudah dipakai: ${[...taken].join(', ')}`,
-      );
-    }
+    await this.hostPorts.assertFree([...seen], this.docker, {
+      excludeComposeAppId: app.id,
+      isOwnContainer: (c: ContainerSummary) =>
+        c.Labels?.['com.docker.compose.project'] === own,
+    });
   }
 
   /** Ownership is enforced through the parent project. */

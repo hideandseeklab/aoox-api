@@ -4,7 +4,7 @@ import { ApplicationModule } from '../application/application.module';
 import { Mount } from '../application/mount.entity';
 import { DockerModule } from '../docker/docker.module';
 import { GitCredentialModule } from '../git-credential/git-credential.module';
-import { ManagedDatabaseModule } from '../managed-database/managed-database.module';
+import { HostPortModule } from '../host-port/host-port.module';
 import { NotificationModule } from '../notification/notification.module';
 import { ProjectModule } from '../project/project.module';
 import { ProxyModule } from '../proxy/proxy.module';
@@ -46,10 +46,10 @@ import { UpdateComposeAppService } from './update-compose-app/update-compose-app
     NotificationModule,
     ProxyModule,
     TemplateModule,
-    // For EnvResolverService (shared env + database references) and the
-    // host-port conflict check in update-compose-app.
+    // For EnvResolverService (shared env + database references).
     ApplicationModule,
-    ManagedDatabaseModule,
+    // Host-port conflict check, shared with application create/update.
+    HostPortModule,
   ],
   controllers: [
     CreateComposeAppController,

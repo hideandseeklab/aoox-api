@@ -13,6 +13,7 @@ export class CreateNotificationService {
       name: dto.name.trim(),
       type: dto.type,
       configEncrypted: this.notifications.encryptConfig(config),
+      onDeploymentStarted: dto.onDeploymentStarted ?? false,
       onDeploymentSuccess: dto.onDeploymentSuccess ?? true,
       onDeploymentFailure: dto.onDeploymentFailure ?? true,
       onBackupFailure: dto.onBackupFailure ?? true,

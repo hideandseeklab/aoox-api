@@ -27,6 +27,11 @@ export class RollbackApplicationController {
     @Param() params: ApplicationParamsDto,
     @Body() dto: RollbackApplicationDto,
   ): Promise<Deployment> {
-    return this.service.execute(user.sub, params.id, dto.deploymentId);
+    return this.service.execute(
+      user.sub,
+      params.id,
+      dto.deploymentId,
+      user.email,
+    );
   }
 }

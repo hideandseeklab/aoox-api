@@ -1,5 +1,7 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { randomBytes } from 'crypto';
+import { HostPortService } from '../../host-port/host-port.service';
+import { RemoteDockerService } from '../../server/remote-docker.service';
 import { ServerService } from '../../server/server.service';
 import { SwarmService } from '../../swarm/swarm.service';
 import { GitCredentialService } from '../../git-credential/git-credential.service';
@@ -16,6 +18,8 @@ export class CreateApplicationService {
     private readonly credentials: GitCredentialService,
     private readonly servers: ServerService,
     private readonly swarm: SwarmService,
+    private readonly hostPorts: HostPortService,
+    private readonly remote: RemoteDockerService,
   ) {}
 
   async execute(
@@ -27,6 +31,10 @@ export class CreateApplicationService {
       await this.credentials.findOrFail(dto.gitCredentialId);
     }
     if (dto.serverId) await this.servers.findOrFail(dto.serverId);
+    if (dto.hostPort != null) {
+      const docker = await this.remote.forServer(dto.serverId ?? null);
+      await this.hostPorts.assertFree([dto.hostPort], docker);
+    }
     if (dto.deployMode === 'service') {
       if (dto.serverId) {
         throw new BadRequestException(

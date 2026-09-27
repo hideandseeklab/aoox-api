@@ -11,6 +11,10 @@ function deployment(over: Partial<Deployment> = {}): Deployment {
     applicationId: 'a1',
     status: 'success',
     kind: 'build',
+    trigger: 'manual',
+    commitSha: null,
+    commitMessage: null,
+    triggeredBy: null,
     imageRef: 'localhost:5000/p/app:d1',
     errorMessage: null,
     createdAt: new Date('2026-01-01T00:00:00Z'),
@@ -110,6 +114,68 @@ describe('DeploymentNotifierService', () => {
         deploymentId: 'd1',
         applicationId: 'a1',
         status: 'success',
+      }),
+    ).not.toThrow();
+    await flush();
+    expect(broadcast).not.toHaveBeenCalled();
+  });
+
+  it('broadcasts deploymentStarted from a webhook push, naming the trigger', async () => {
+    findOne.mockResolvedValue(
+      deployment({
+        trigger: 'webhook',
+        commitSha: 'abcdef1234567',
+        commitMessage: 'fix: thing',
+        triggeredBy: 'octocat',
+      }),
+    );
+    events.emitCreated({
+      deploymentId: 'd1',
+      applicationId: 'a1',
+      trigger: 'webhook',
+      commitSha: 'abcdef1234567',
+      commitMessage: 'fix: thing',
+      triggeredBy: 'octocat',
+    });
+    await flush();
+    expect(broadcast).toHaveBeenCalledWith(
+      'deploymentStarted',
+      expect.objectContaining({
+        title: 'Deployment started: My App',
+        level: 'info',
+        url: 'https://panel.example.com/applications/a1',
+        fields: expect.arrayContaining([
+          ['Project', 'Proj'],
+          ['Trigger', 'Triggered by webhook (abcdef1 "fix: thing" by octocat)'],
+        ]) as unknown,
+      }),
+    );
+  });
+
+  it('skips deploymentStarted for a runtime-config-only deployment', async () => {
+    findOne.mockResolvedValue(deployment({ kind: 'config' }));
+    events.emitCreated({
+      deploymentId: 'd1',
+      applicationId: 'a1',
+      trigger: 'manual',
+      commitSha: null,
+      commitMessage: null,
+      triggeredBy: null,
+    });
+    await flush();
+    expect(broadcast).not.toHaveBeenCalled();
+  });
+
+  it('never throws into the emitter when the created-lookup fails', async () => {
+    findOne.mockRejectedValue(new Error('db down'));
+    expect(() =>
+      events.emitCreated({
+        deploymentId: 'd1',
+        applicationId: 'a1',
+        trigger: 'manual',
+        commitSha: null,
+        commitMessage: null,
+        triggeredBy: null,
       }),
     ).not.toThrow();
     await flush();

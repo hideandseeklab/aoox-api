@@ -9,6 +9,9 @@ export interface LogsClientEvents {
   unsubscribe: () => void;
 }
 
+/** Mirrors `DeploymentTrigger` in deployment.entity.ts. */
+export type LogsDeploymentTrigger = 'manual' | 'webhook' | 'auto-update';
+
 // server -> client
 export interface LogsServerEvents {
   /** `snapshot: true` carries the full text so far; otherwise `chunk` is appended. */
@@ -20,6 +23,16 @@ export interface LogsServerEvents {
   'deployment:status': (payload: {
     deploymentId: string;
     status: string;
+  }) => void;
+  /** Broadcast to every socket ticketed for the application, not just one
+   * already subscribed to a deployment — lets an open page notice a
+   * webhook/auto-update/other-user deploy without a manual refresh. */
+  'deployment:created': (payload: {
+    id: string;
+    trigger: LogsDeploymentTrigger;
+    commitSha: string | null;
+    commitMessage: string | null;
+    triggeredBy: string | null;
   }) => void;
   'container:log': (chunk: string) => void;
   'container:end': () => void;

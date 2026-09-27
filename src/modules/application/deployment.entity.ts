@@ -16,6 +16,14 @@ export type DeploymentKind = 'build' | 'rollback' | 'auto-update' | 'config';
 export type DeploymentStatus =
   'queued' | 'building' | 'pushing' | 'starting' | 'success' | 'failed';
 
+/**
+ * Who/what actually queued the deployment — separate from `kind` (which
+ * selects the build/rollback/config code path). `rollback` and `config`
+ * kinds are always user actions, so they carry `trigger: 'manual'` too;
+ * `triggeredBy` is what tells them apart from an ordinary manual deploy.
+ */
+export type DeploymentTrigger = 'manual' | 'webhook' | 'auto-update';
+
 @Entity({ name: 'deployments' })
 export class Deployment {
   @PrimaryGeneratedColumn('uuid')
@@ -49,6 +57,21 @@ export class Deployment {
 
   @Column({ name: 'error_message', type: 'text', nullable: true })
   errorMessage: string | null;
+
+  @Column({ type: 'varchar', default: 'manual' })
+  trigger: DeploymentTrigger;
+
+  /** Commit the webhook reported, when it sent one (informational). */
+  @Column({ name: 'commit_sha', type: 'varchar', nullable: true })
+  commitSha: string | null;
+
+  /** First line of the commit message, truncated; also from the webhook. */
+  @Column({ name: 'commit_message', type: 'text', nullable: true })
+  commitMessage: string | null;
+
+  /** Email of the actor for `manual`, or the git provider's pusher name for `webhook`. */
+  @Column({ name: 'triggered_by', type: 'varchar', nullable: true })
+  triggeredBy: string | null;
 
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;

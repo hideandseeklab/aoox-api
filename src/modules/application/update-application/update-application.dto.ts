@@ -26,6 +26,8 @@ export class UpdateApplicationDto {
   @Length(1, 100)
   name?: string;
 
+  /** Empty string is allowed (app not sourced from git) and left unvalidated. */
+  @ValidateIf((_, v) => v !== '')
   @IsOptional()
   @IsString()
   @MaxLength(500)
@@ -35,11 +37,13 @@ export class UpdateApplicationDto {
   })
   gitUrl?: string;
 
+  @ValidateIf((_, v) => v !== '')
   @IsOptional()
   @IsString()
   @Matches(/^[\w./-]{1,100}$/)
   gitBranch?: string;
 
+  @ValidateIf((_, v) => v !== '')
   @IsOptional()
   @IsString()
   @Matches(/^[\w./-]{1,200}$/)
@@ -108,7 +112,11 @@ export class UpdateApplicationDto {
   @IsIn(['git', 'image'])
   sourceType?: SourceType;
 
-  /** `image` source: full reference, e.g. `ghcr.io/org/app:1.2`. */
+  /**
+   * `image` source: full reference, e.g. `ghcr.io/org/app:1.2`. Empty string
+   * is allowed (app not sourced from an image) and left unvalidated.
+   */
+  @ValidateIf((_, v) => v !== '')
   @IsOptional()
   @IsString()
   @MaxLength(300)
@@ -191,6 +199,7 @@ export class UpdateApplicationDto {
   staticBuildCommand?: string | null;
 
   /** `static` build type: output folder relative to the repo root. */
+  @ValidateIf((_, v) => v !== '')
   @IsOptional()
   @IsString()
   @MaxLength(200)
@@ -213,6 +222,7 @@ export class UpdateApplicationDto {
   previewsEnabled?: boolean;
 
   /** e.g. `preview.example.com` (wildcard DNS `*.preview.example.com` -> this host). */
+  @ValidateIf((_, v) => v !== null && v !== '')
   @IsOptional()
   @IsString()
   @MaxLength(253)

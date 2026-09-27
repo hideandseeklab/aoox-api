@@ -21,6 +21,7 @@ export class RollbackApplicationService {
     ownerId: string,
     applicationId: string,
     targetId: string,
+    actorEmail: string,
   ): Promise<Deployment> {
     const app = await this.applications.findOwnedOrFail(applicationId, ownerId);
     const target = await this.applications.deployments.findOne({
@@ -51,6 +52,8 @@ export class RollbackApplicationService {
         imageRef: target.imageRef,
         status: 'queued',
         logs: '',
+        trigger: 'manual',
+        triggeredBy: actorEmail,
       }),
     );
     this.runner.start(deployment, app);

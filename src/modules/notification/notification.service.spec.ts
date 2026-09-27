@@ -18,6 +18,7 @@ function channel(name: string, toggles: Partial<Notification>): Notification {
       JSON.stringify({ type: 'webhook', url: `http://${name}` }),
       'k',
     ),
+    onDeploymentStarted: false,
     onDeploymentSuccess: false,
     onDeploymentFailure: false,
     onBackupFailure: false,

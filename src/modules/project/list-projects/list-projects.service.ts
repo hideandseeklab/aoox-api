@@ -15,6 +15,13 @@ export interface ProjectInstanceDto {
   status: string;
   /** Engine for databases (postgres/mysql/…); null otherwise. */
   engine: string | null;
+  /**
+   * A build/redeploy is in flight right now: application = an active row in
+   * `deployments` (`queued`/`building`/`pushing`/`starting`); database =
+   * `creating`; compose = `status === 'deploying'`. Lets overview cards show
+   * a live "deploying…" badge without a Docker call.
+   */
+  deploying: boolean;
 }
 
 export type ProjectListItemDto = Project & { instances: ProjectInstanceDto[] };
@@ -43,13 +50,19 @@ export class ListProjectsService {
     const rows = await this.projectService.repo.query<
       (ProjectInstanceDto & { projectId: string })[]
     >(
-      `SELECT 'application' AS kind, id, name, status, NULL AS engine, project_id AS "projectId", created_at
-         FROM applications WHERE project_id = ANY($1)
+      `SELECT 'application' AS kind, a.id, a.name, a.status, NULL AS engine, a.project_id AS "projectId",
+              a.created_at,
+              EXISTS (
+                SELECT 1 FROM deployments d
+                WHERE d.application_id = a.id
+                  AND d.status IN ('queued', 'building', 'pushing', 'starting')
+              ) AS deploying
+         FROM applications a WHERE a.project_id = ANY($1)
        UNION ALL
-       SELECT 'database', id, name, status, engine, project_id, created_at
+       SELECT 'database', id, name, status, engine, project_id, created_at, status = 'creating'
          FROM managed_databases WHERE project_id = ANY($1)
        UNION ALL
-       SELECT 'compose', id, name, status, NULL, project_id, created_at
+       SELECT 'compose', id, name, status, NULL, project_id, created_at, status = 'deploying'
          FROM compose_apps WHERE project_id = ANY($1)
        ORDER BY created_at ASC`,
       [ids],

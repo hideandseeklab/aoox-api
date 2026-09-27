@@ -149,7 +149,11 @@ describe('DeploymentRunnerService', () => {
         { provide: ApplicationService, useValue: applications },
         {
           provide: DeploymentEventsService,
-          useValue: { emitLog: jest.fn(), emitStatus: jest.fn() },
+          useValue: {
+            emitLog: jest.fn(),
+            emitStatus: jest.fn(),
+            emitCreated: jest.fn(),
+          },
         },
         {
           provide: GitCredentialService,

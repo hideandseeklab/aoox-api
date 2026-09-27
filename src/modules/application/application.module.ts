@@ -4,6 +4,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuthModule } from '../auth/auth.module';
 import { DockerModule } from '../docker/docker.module';
 import { GitCredentialModule } from '../git-credential/git-credential.module';
+import { HostPortModule } from '../host-port/host-port.module';
 import { ManagedDatabaseModule } from '../managed-database/managed-database.module';
 import { MonitoringModule } from '../monitoring/monitoring.module';
 import { NotificationModule } from '../notification/notification.module';
@@ -103,6 +104,7 @@ import { UpdateApplicationService } from './update-application/update-applicatio
     MonitoringModule,
     ServerModule,
     SwarmModule,
+    HostPortModule,
   ],
   controllers: [
     CreateApplicationController,

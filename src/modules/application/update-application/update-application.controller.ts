@@ -18,6 +18,6 @@ export class UpdateApplicationController {
     @Param() params: ApplicationParamsDto,
     @Body() dto: UpdateApplicationDto,
   ): Promise<Application> {
-    return this.service.execute(user.sub, params.id, dto);
+    return this.service.execute(user.sub, params.id, dto, user.email);
   }
 }

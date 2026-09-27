@@ -28,6 +28,7 @@ import { Application, ApplicationStatus } from './application.entity';
 import { ApplicationService, containerNameFor } from './application.service';
 import { Deployment, DeploymentStatus } from './deployment.entity';
 import { DeploymentEventsService } from './deployment-events.service';
+import { triggerSummary } from './trigger-summary';
 import { EnvResolverService, parseEnvLines } from './env-resolver.service';
 import { NixpacksBuilderService } from './nixpacks-builder.service';
 import { RailpackBuilderService } from './railpack-builder.service';
@@ -64,8 +65,21 @@ export class DeploymentRunnerService {
     private readonly servers: ServerService,
   ) {}
 
-  /** Fire-and-forget; every path ends in `success` or `failed`. */
+  /**
+   * Fire-and-forget; every path ends in `success` or `failed`. The single
+   * choke point every creation path (build/webhook/auto-update/rollback/
+   * config) already calls, so `deployment:created` fires exactly once
+   * regardless of what queued it.
+   */
   start(deployment: Deployment, app: Application): void {
+    this.events.emitCreated({
+      deploymentId: deployment.id,
+      applicationId: app.id,
+      trigger: deployment.trigger,
+      commitSha: deployment.commitSha,
+      commitMessage: deployment.commitMessage,
+      triggeredBy: deployment.triggeredBy,
+    });
     void this.run(deployment, app).catch((err) =>
       this.logger.error(`Deployment ${deployment.id} crashed: ${String(err)}`),
     );
@@ -73,6 +87,7 @@ export class DeploymentRunnerService {
 
   private async run(deployment: Deployment, app: Application): Promise<void> {
     const log = new DeploymentLog(deployment, this.applications, this.events);
+    await log.note(triggerSummary(deployment));
     try {
       if (deployment.kind === 'rollback' || deployment.kind === 'config') {
         await this.rollback(deployment, app, log);
@@ -361,7 +376,10 @@ export class DeploymentRunnerService {
    * (visible in the history, never blocks the request) — used for swarm
    * changes, whose rolling update can take minutes. 409 while one runs.
    */
-  async queueRuntimeConfig(app: Application): Promise<Deployment | null> {
+  async queueRuntimeConfig(
+    app: Application,
+    actorEmail: string | null = null,
+  ): Promise<Deployment | null> {
     if (!app.currentImage) return null;
     const inFlight = await this.applications.deployments.count({
       where: {
@@ -379,6 +397,8 @@ export class DeploymentRunnerService {
         imageRef: app.currentImage,
         status: 'queued',
         logs: '',
+        trigger: 'manual',
+        triggeredBy: actorEmail,
       }),
     );
     this.start(deployment, app);
@@ -715,6 +735,12 @@ class DeploymentLog implements BuildLog {
   async step(status: DeploymentStatus, line: string): Promise<void> {
     this.setStatus(status);
     this.append(`\n==> ${line}\n`);
+    await this.flush(true);
+  }
+
+  /** Like `step`, but doesn't change status — for informational lines. */
+  async note(line: string): Promise<void> {
+    this.append(`==> ${line}\n`);
     await this.flush(true);
   }
 

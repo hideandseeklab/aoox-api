@@ -5,6 +5,10 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import { Repository } from 'typeorm';
 import { parseImageRef } from '../application/image-reference';
+import {
+  COMPOSE_FILES_SCRIPT,
+  runComposeHelper,
+} from '../docker/compose-apply.util';
 import { DockerService } from '../docker/docker.service';
 import { fetchRemoteDigest } from '../registry/remote-digest';
 import {
@@ -12,7 +16,6 @@ import {
   InstanceUpdateState,
 } from './instance-update-state.entity';
 
-const COMPOSE_CLI_IMAGE = 'docker:29-cli';
 const DEFAULT_API_IMAGE = 'hideandseeklab/aoox-api:latest';
 const DEFAULT_WEB_IMAGE = 'hideandseeklab/aoox-web:latest';
 
@@ -173,28 +176,11 @@ export class InstanceUpdateService {
     const script = [
       'set -e',
       `cd ${installDir}`,
-      'docker compose -f docker-compose.dist.yml --env-file .env.dist pull',
-      'docker compose -f docker-compose.dist.yml --env-file .env.dist up -d',
+      ...COMPOSE_FILES_SCRIPT,
+      'docker compose $FILES --env-file .env.dist pull',
+      'docker compose $FILES --env-file .env.dist up -d',
     ].join('\n');
 
-    await this.docker.ensureImage(COMPOSE_CLI_IMAGE);
-    const id = await this.docker.engine.createContainer({
-      Image: COMPOSE_CLI_IMAGE,
-      Entrypoint: ['sh', '-c', script],
-      Labels: { 'aoox.component': 'build' },
-      HostConfig: {
-        Binds: [
-          `${this.docker.hostDockerSocket}:/var/run/docker.sock`,
-          `${installDir}:${installDir}`,
-        ],
-        NetworkMode: 'bridge',
-      },
-    });
-    try {
-      await this.docker.engine.startContainer(id);
-      await this.docker.engine.waitContainer(id);
-    } finally {
-      await this.docker.engine.removeContainer(id, true).catch(() => undefined);
-    }
+    await runComposeHelper(this.docker, installDir, script);
   }
 }

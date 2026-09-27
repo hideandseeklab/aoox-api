@@ -5,9 +5,11 @@ import { NotificationService } from '../notification/notification.service';
 import { ApplicationService } from './application.service';
 import { Deployment } from './deployment.entity';
 import {
+  DeploymentCreatedEvent,
   DeploymentEventsService,
   DeploymentStatusEvent,
 } from './deployment-events.service';
+import { triggerSummary } from './trigger-summary';
 
 /**
  * Posts finished deployments to the configured notification channels.
@@ -28,12 +30,37 @@ export class DeploymentNotifierService implements OnModuleInit {
   ) {}
 
   onModuleInit(): void {
+    this.events.onCreated((e) => {
+      void this.notifyStarted(e).catch((err) =>
+        this.logger.warn(`Notification dispatch failed: ${String(err)}`),
+      );
+    });
     this.events.onStatus((e) => {
       if (e.status !== 'success' && e.status !== 'failed') return;
       void this.notify(e).catch((err) =>
         this.logger.warn(`Notification dispatch failed: ${String(err)}`),
       );
     });
+  }
+
+  /**
+   * `deployment:created` fires exactly once per deployment, for every
+   * trigger (build/webhook/auto-update/rollback/config) — see
+   * `DeploymentRunnerService.start`. Skips `kind: 'config'`: that's just a
+   * rolling re-apply of the current image (mode/replica/limit change), not
+   * something a user is watching for like a real deploy, and it can fire
+   * often for routine scaling — a "started" ping for it would mostly be noise.
+   */
+  async notifyStarted(e: DeploymentCreatedEvent): Promise<void> {
+    const deployment = await this.applications.deployments.findOne({
+      where: { id: e.deploymentId },
+      relations: { application: { project: true } },
+    });
+    if (!deployment || deployment.kind === 'config') return;
+    await this.notifications.broadcast(
+      'deploymentStarted',
+      this.startedMessageFor(deployment),
+    );
   }
 
   async notify(e: DeploymentStatusEvent): Promise<void> {
@@ -47,6 +74,35 @@ export class DeploymentNotifierService implements OnModuleInit {
       e.status === 'success' ? 'deploymentSuccess' : 'deploymentFailure',
       message,
     );
+  }
+
+  startedMessageFor(deployment: Deployment): NotificationMessage {
+    const app = deployment.application;
+    const kind = deployment.kind === 'rollback' ? 'Rollback' : 'Deployment';
+    const fields: NotificationMessage['fields'] = [
+      ['Application', app.name],
+      ['Project', app.project.name],
+      ['Trigger', triggerSummary(deployment)],
+    ];
+    const origin = this.config.get<string>('WEB_ORIGIN')?.trim();
+    return {
+      title: `${kind} started: ${app.name}`,
+      level: 'info',
+      fields,
+      url: origin ? `${origin}/applications/${app.id}` : undefined,
+      data: {
+        event: 'deployment.started',
+        deploymentId: deployment.id,
+        kind: deployment.kind,
+        applicationId: app.id,
+        application: app.name,
+        project: app.project.name,
+        trigger: deployment.trigger,
+        commitSha: deployment.commitSha,
+        commitMessage: deployment.commitMessage,
+        triggeredBy: deployment.triggeredBy,
+      },
+    };
   }
 
   messageFor(deployment: Deployment): NotificationMessage {

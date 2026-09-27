@@ -24,6 +24,6 @@ export class DeployApplicationController {
     @CurrentUser() user: JwtPayload,
     @Param() params: ApplicationParamsDto,
   ): Promise<Deployment> {
-    return this.service.execute(user.sub, params.id);
+    return this.service.execute(user.sub, params.id, user.email);
   }
 }

@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { EventEmitter } from 'events';
-import { DeploymentStatus } from './deployment.entity';
+import { DeploymentStatus, DeploymentTrigger } from './deployment.entity';
 
 export interface DeploymentLogEvent {
   deploymentId: string;
@@ -12,6 +12,16 @@ export interface DeploymentStatusEvent {
   deploymentId: string;
   applicationId: string;
   status: DeploymentStatus;
+}
+
+/** Fired once, right when a new deployment row is created (any trigger). */
+export interface DeploymentCreatedEvent {
+  deploymentId: string;
+  applicationId: string;
+  trigger: DeploymentTrigger;
+  commitSha: string | null;
+  commitMessage: string | null;
+  triggeredBy: string | null;
 }
 
 /**
@@ -57,5 +67,14 @@ export class DeploymentEventsService {
   onStatus(cb: (e: DeploymentStatusEvent) => void): () => void {
     this.emitter.on('status', cb);
     return () => this.emitter.off('status', cb);
+  }
+
+  emitCreated(event: DeploymentCreatedEvent): void {
+    this.emitter.emit('created', event);
+  }
+
+  onCreated(cb: (e: DeploymentCreatedEvent) => void): () => void {
+    this.emitter.on('created', cb);
+    return () => this.emitter.off('created', cb);
   }
 }

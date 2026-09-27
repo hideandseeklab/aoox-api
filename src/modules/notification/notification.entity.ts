@@ -47,6 +47,10 @@ export class Notification {
   @Column({ name: 'config_encrypted', type: 'text', select: false })
   configEncrypted: string;
 
+  /** A deploy/redeploy just started (queued/building). Off by default — noisy for busy apps. */
+  @Column({ name: 'on_deployment_started', default: false })
+  onDeploymentStarted: boolean;
+
   @Column({ name: 'on_deployment_success', default: true })
   onDeploymentSuccess: boolean;
 

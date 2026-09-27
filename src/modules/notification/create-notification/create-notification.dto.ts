@@ -100,6 +100,10 @@ export class CreateNotificationDto {
 
   @IsOptional()
   @IsBoolean()
+  onDeploymentStarted?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
   onDeploymentSuccess?: boolean;
 
   @IsOptional()

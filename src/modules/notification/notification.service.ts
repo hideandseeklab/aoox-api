@@ -13,6 +13,7 @@ export interface NotificationDto {
   type: Notification['type'];
   /** e.g. `chat 12345…` or `hooks.slack.com/…`, for recognition only. */
   targetHint: string;
+  onDeploymentStarted: boolean;
   onDeploymentSuccess: boolean;
   onDeploymentFailure: boolean;
   onBackupFailure: boolean;
@@ -25,6 +26,7 @@ export interface NotificationDto {
 }
 
 export type NotificationEvent =
+  | 'deploymentStarted'
   | 'deploymentSuccess'
   | 'deploymentFailure'
   | 'backupFailure'
@@ -35,6 +37,7 @@ export type NotificationEvent =
   | 'dnsIssue';
 
 const EVENT_TOGGLE: Record<NotificationEvent, keyof Notification> = {
+  deploymentStarted: 'onDeploymentStarted',
   deploymentSuccess: 'onDeploymentSuccess',
   deploymentFailure: 'onDeploymentFailure',
   backupFailure: 'onBackupFailure',
@@ -64,6 +67,7 @@ export class NotificationService {
       name: n.name,
       type: n.type,
       targetHint: NotificationService.hint(config),
+      onDeploymentStarted: n.onDeploymentStarted,
       onDeploymentSuccess: n.onDeploymentSuccess,
       onDeploymentFailure: n.onDeploymentFailure,
       onBackupFailure: n.onBackupFailure,

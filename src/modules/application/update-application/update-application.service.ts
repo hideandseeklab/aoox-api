@@ -1,5 +1,7 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { limitsRemoved, resourceLimits } from '../../docker/resource-limits';
+import { ContainerSummary } from '../../docker/docker-engine.client';
+import { HostPortService } from '../../host-port/host-port.service';
 import { RemoteDockerService } from '../../server/remote-docker.service';
 import { ServerService } from '../../server/server.service';
 import { GitCredentialService } from '../../git-credential/git-credential.service';
@@ -21,17 +23,21 @@ export class UpdateApplicationService {
     private readonly remote: RemoteDockerService,
     private readonly runner: DeploymentRunnerService,
     private readonly swarm: SwarmService,
+    private readonly hostPorts: HostPortService,
   ) {}
 
   async execute(
     ownerId: string,
     id: string,
     dto: UpdateApplicationDto,
+    actorEmail: string,
   ): Promise<Application> {
     const app = await this.applications.findOwnedOrFail(id, ownerId);
+    const hostPortBefore = app.hostPort;
+    const serverIdBefore = app.serverId;
     if (dto.name !== undefined) app.name = dto.name.trim();
     if (dto.sourceType !== undefined) app.sourceType = dto.sourceType;
-    if (dto.gitUrl !== undefined) app.gitUrl = dto.gitUrl.trim();
+    if (dto.gitUrl !== undefined) app.gitUrl = dto.gitUrl.trim() || null;
     if (dto.imageRef !== undefined) {
       const next = dto.imageRef.trim() || null;
       // A new reference needs a fresh baseline (recorded by the next deploy/check).
@@ -140,6 +146,23 @@ export class UpdateApplicationService {
         );
       }
     }
+    // A moved server needs the new daemon re-checked even for an unchanged
+    // port; an unchanged port on the same daemon has already proven itself.
+    if (
+      app.hostPort != null &&
+      (app.hostPort !== hostPortBefore || app.serverId !== serverIdBefore)
+    ) {
+      const docker = await this.remote.forServer(app.serverId);
+      const ownName = containerNameFor(app);
+      await this.hostPorts.assertFree([app.hostPort], docker, {
+        excludeApplicationId: app.id,
+        isOwnContainer: (c: ContainerSummary) => {
+          if (c.Labels?.['aoox.application'] === app.id) return true;
+          const name = c.Names[0]?.replace(/^\//, '');
+          return name === ownName || name === `${ownName}-next`;
+        },
+      });
+    }
     const saved = await this.applications.repo.save(app);
     // Mode or replica changes are applied by re-deploying the current image
     // (service <-> container swap, or a scale of the running service).
@@ -151,7 +174,7 @@ export class UpdateApplicationService {
         (saved.deployMode === 'service' && swarmChanged))
     ) {
       // A rolling update can take minutes: run it as a `config` deployment.
-      await this.runner.queueRuntimeConfig(saved);
+      await this.runner.queueRuntimeConfig(saved, actorEmail);
       return saved;
     }
     // Limits are the one setting that applies now rather than at the next
@@ -160,7 +183,7 @@ export class UpdateApplicationService {
     if (limitsChanged) {
       // A service carries its limits in the spec: always a rolling update.
       if (saved.deployMode === 'service')
-        await this.runner.queueRuntimeConfig(saved);
+        await this.runner.queueRuntimeConfig(saved, actorEmail);
       else if (limitsRemoved(before, saved))
         await this.runner.applyRuntimeConfig(saved);
       else await this.applyLimits(saved);

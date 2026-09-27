@@ -67,6 +67,11 @@ services:
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env.dist (openssl rand -hex 32)}
       JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
       WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:3000}
+      # Externally reachable URL of this API — used to build webhook URLs shown
+      # in the dashboard (get-webhook, compose-webhook) and the panel-domain
+      # status card. Must match what web gets below, or those keep showing
+      # localhost even after a custom API domain is set.
+      PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:3001}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
       ADMIN_NAME: ${ADMIN_NAME:-}

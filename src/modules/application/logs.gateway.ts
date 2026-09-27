@@ -1,4 +1,4 @@
-import { Logger } from '@nestjs/common';
+import { Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import {
@@ -8,8 +8,9 @@ import {
   OnGatewayDisconnect,
   SubscribeMessage,
   WebSocketGateway,
+  WebSocketServer,
 } from '@nestjs/websockets';
-import type { Socket } from 'socket.io';
+import type { Server, Socket } from 'socket.io';
 import { RemoteDockerService } from '../server/remote-docker.service';
 import { ApplicationService, containerNameFor } from './application.service';
 import { SwarmDeployService } from './swarm-deploy.service';
@@ -20,6 +21,12 @@ import {
   LogsServerEvents,
   LogsTicketPayload,
 } from './logs.protocol';
+
+/** Room every socket ticketed for an application joins, for broadcasts that
+ * aren't tied to a specific deployment subscription (e.g. `deployment:created`). */
+function appRoom(applicationId: string): string {
+  return `app:${applicationId}`;
+}
 
 type LogsSocket = Socket<
   LogsClientEvents,
@@ -38,7 +45,12 @@ const ACTIVE = new Set(['queued', 'building', 'pushing', 'starting']);
   namespace: 'logs',
   cors: { origin: process.env.WEB_ORIGIN ?? true },
 })
-export class LogsGateway implements OnGatewayConnection, OnGatewayDisconnect {
+export class LogsGateway
+  implements OnGatewayConnection, OnGatewayDisconnect, OnModuleInit
+{
+  @WebSocketServer()
+  private readonly server: Server;
+
   private readonly logger = new Logger(LogsGateway.name);
   /** Cleanup for whatever the socket is currently subscribed to. */
   private readonly subscriptions = new Map<string, () => void>();
@@ -51,6 +63,24 @@ export class LogsGateway implements OnGatewayConnection, OnGatewayDisconnect {
     private readonly events: DeploymentEventsService,
     private readonly swarmDeploy: SwarmDeployService,
   ) {}
+
+  /**
+   * Not tied to any one socket's subscription — every socket ticketed for
+   * this application hears about a new deployment the moment it's queued
+   * (webhook, auto-update, another user's manual deploy…), so the page
+   * doesn't need a stale poll/refresh to notice.
+   */
+  onModuleInit(): void {
+    this.events.onCreated((e) => {
+      this.server.to(appRoom(e.applicationId)).emit('deployment:created', {
+        id: e.deploymentId,
+        trigger: e.trigger,
+        commitSha: e.commitSha,
+        commitMessage: e.commitMessage,
+        triggeredBy: e.triggeredBy,
+      });
+    });
+  }
 
   handleConnection(client: LogsSocket) {
     const allowedOrigin = this.config.get<string>('WEB_ORIGIN');
@@ -65,6 +95,7 @@ export class LogsGateway implements OnGatewayConnection, OnGatewayDisconnect {
         throw new Error('wrong scope');
       }
       client.data.applicationId = payload.applicationId;
+      void client.join(appRoom(payload.applicationId));
     } catch {
       this.reject(client, 'invalid ticket');
     }

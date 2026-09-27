@@ -2,8 +2,9 @@ import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { tarFiles } from '../application/nixpacks-builder.service';
+import { envUpsertLine, runComposeHelper } from '../docker/compose-apply.util';
 import { DockerService } from '../docker/docker.service';
+import { ProxyService } from '../proxy/proxy.service';
 import {
   PANEL_DOMAIN_SETTINGS_ID,
   PanelDomainSettings,
@@ -11,13 +12,25 @@ import {
 import { renderPanelOverride } from './panel-domain.util';
 import { UpdatePanelDomainDto } from './update-panel-domain.dto';
 
-const COMPOSE_CLI_IMAGE = 'docker:29-cli';
 const OVERRIDE_FILE = 'docker-compose.override.yml';
 
 export interface PanelDomainStatus {
   settings: PanelDomainSettings;
   applied: { webOrigin: string | null; publicApiUrl: string | null };
   installDirConfigured: boolean;
+}
+
+export interface UpdatePanelDomainResult {
+  settings: PanelDomainSettings;
+  /**
+   * True when the proxy wasn't running at the moment this was saved, so
+   * `apply()` provisioned it automatically. Surfaced to the dashboard as a
+   * warning (with manual troubleshooting steps) rather than staying silent,
+   * since auto-provisioning the proxy container doesn't guarantee the domain
+   * is actually reachable yet — DNS may not have propagated, or the host's
+   * firewall/cloud security group may still be blocking ports 80/443.
+   */
+  proxyAutoProvisioned: boolean;
 }
 
 /**
@@ -38,6 +51,7 @@ export class PanelDomainService {
     private readonly repo: Repository<PanelDomainSettings>,
     private readonly docker: DockerService,
     private readonly config: ConfigService,
+    private readonly proxy: ProxyService,
   ) {}
 
   /** Absolute path, on the host, of the directory holding docker-compose.dist.yml. */
@@ -72,7 +86,7 @@ export class PanelDomainService {
     );
   }
 
-  async update(dto: UpdatePanelDomainDto): Promise<PanelDomainSettings> {
+  async update(dto: UpdatePanelDomainDto): Promise<UpdatePanelDomainResult> {
     const webHost = dto.webHost.trim().toLowerCase();
     const apiHost = dto.apiHost.trim().toLowerCase();
     if (webHost === apiHost) {
@@ -86,6 +100,13 @@ export class PanelDomainService {
           'then try again',
       );
     }
+
+    // Checked up front (not just inside apply()) so the response can tell the
+    // dashboard whether the proxy is about to be auto-provisioned, and it can
+    // show the operator what to double-check (DNS, firewall) rather than
+    // leaving them to guess why the new domain isn't reachable yet.
+    const proxyStatus = await this.proxy.status();
+    const proxyAutoProvisioned = !proxyStatus.running;
 
     const row = await this.settings();
     const saved = await this.repo.save(
@@ -108,7 +129,7 @@ export class PanelDomainService {
       });
     }, 1500);
 
-    return saved;
+    return { settings: saved, proxyAutoProvisioned };
   }
 
   private async apply(
@@ -119,6 +140,25 @@ export class PanelDomainService {
       this.config.get<string>('PROXY_HTTPS_PORT') ?? 443,
     );
     const acmeEmail = settings.acmeEmail;
+
+    // The Traefik labels below are pointless without the proxy actually
+    // running — bring it up automatically instead of leaving the domain
+    // silently unreachable (this exact gap is what caused a real-VPS test to
+    // fail: domain saved fine, container got its labels, but nothing was
+    // listening on 80/443). Only when it isn't already running: a running
+    // proxy is left untouched so this doesn't clobber ACME state or disrupt
+    // routing for other apps every time the panel domain is saved.
+    const proxyStatus = await this.proxy.status();
+    if (!proxyStatus.running) {
+      this.logger.log('Proxy is not running — provisioning it automatically');
+      await this.proxy.provisionOn(this.docker, {
+        httpPort: this.proxy.httpPort,
+        httpsPort: this.proxy.httpsPort,
+        acmeEmail,
+        acmeStaging: this.proxy.localSettings.acmeStaging,
+      });
+    }
+
     const override = renderPanelOverride(settings.webHost!, settings.apiHost!, {
       httpsPort,
       acme: acmeEmail !== null,
@@ -133,42 +173,15 @@ export class PanelDomainService {
       envUpsertLine('WEB_ORIGIN', `https://${settings.webHost}`),
       envUpsertLine('PUBLIC_API_URL', `https://${settings.apiHost}`),
       envUpsertLine('COOKIE_SECURE', 'true'),
-      'docker compose -f docker-compose.dist.yml --env-file .env.dist up -d',
+      // Compose only auto-includes docker-compose.override.yml when the base
+      // file is named exactly docker-compose.yml — with -f docker-compose.dist.yml
+      // given explicitly, the override must be listed explicitly too, or the
+      // Traefik labels below are silently never applied.
+      `docker compose -f docker-compose.dist.yml -f ${OVERRIDE_FILE} --env-file .env.dist up -d`,
     ].join('\n');
 
-    await this.docker.ensureImage(COMPOSE_CLI_IMAGE);
-    const id = await this.docker.engine.createContainer({
-      Image: COMPOSE_CLI_IMAGE,
-      Entrypoint: ['sh', '-c', script],
-      Labels: { 'aoox.component': 'build' },
-      HostConfig: {
-        Binds: [
-          `${this.docker.hostDockerSocket}:/var/run/docker.sock`,
-          `${installDir}:${installDir}`,
-        ],
-        NetworkMode: 'bridge',
-      },
-    });
-    try {
-      await this.docker.engine.putArchive(
-        id,
-        installDir,
-        tarFiles([[OVERRIDE_FILE, override]]),
-      );
-      await this.docker.engine.startContainer(id);
-      await this.docker.engine.waitContainer(id);
-    } finally {
-      await this.docker.engine.removeContainer(id, true).catch(() => undefined);
-    }
+    await runComposeHelper(this.docker, installDir, script, [
+      [OVERRIDE_FILE, override],
+    ]);
   }
-}
-
-/** `sh` line that sets KEY=value in .env.dist, replacing any existing line for KEY. */
-function envUpsertLine(key: string, value: string): string {
-  const escaped = value.replace(/[\\&/]/g, '\\$&');
-  return (
-    `grep -q '^${key}=' .env.dist ` +
-    `&& sed -i "s/^${key}=.*/${key}=${escaped}/" .env.dist ` +
-    `|| echo '${key}=${value}' >> .env.dist`
-  );
 }

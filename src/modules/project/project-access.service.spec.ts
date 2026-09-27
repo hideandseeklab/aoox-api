@@ -123,7 +123,6 @@ describe('findOwnedOrFail across resource types', () => {
             repoWith({ id, project }) as never,
             {} as never,
             {} as never,
-            {} as never,
             acc,
           ).findOwnedOrFail(id, u),
       ],

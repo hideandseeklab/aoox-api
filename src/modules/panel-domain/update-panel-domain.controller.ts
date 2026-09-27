@@ -10,8 +10,10 @@ import { Throttle } from '@nestjs/throttler';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
-import { PanelDomainSettings } from './panel-domain-settings.entity';
-import { PanelDomainService } from './panel-domain.service';
+import {
+  PanelDomainService,
+  UpdatePanelDomainResult,
+} from './panel-domain.service';
 import { UpdatePanelDomainDto } from './update-panel-domain.dto';
 
 @Controller('instance/domain')
@@ -24,7 +26,7 @@ export class UpdatePanelDomainController {
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @Patch()
   @HttpCode(HttpStatus.ACCEPTED)
-  update(@Body() dto: UpdatePanelDomainDto): Promise<PanelDomainSettings> {
+  update(@Body() dto: UpdatePanelDomainDto): Promise<UpdatePanelDomainResult> {
     return this.panelDomain.update(dto);
   }
 }
