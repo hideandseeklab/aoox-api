@@ -79,6 +79,11 @@ export class Notification {
   @Column({ name: 'on_dns_issue', default: true })
   onDnsIssue: boolean;
 
+  /** A managed app's container logs matched an error pattern. Off by default —
+   * log-based detection is prone to false positives. */
+  @Column({ name: 'on_app_error', default: false })
+  onAppError: boolean;
+
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;
 }

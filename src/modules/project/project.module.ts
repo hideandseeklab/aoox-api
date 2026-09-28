@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { DockerModule } from '../docker/docker.module';
+import { MonitoringModule } from '../monitoring/monitoring.module';
 import { CreateProjectController } from './create-project/create-project.controller';
 import { CreateProjectService } from './create-project/create-project.service';
 import { DeleteProjectController } from './delete-project/delete-project.controller';
@@ -17,13 +19,19 @@ import { UpdateMemberController } from './update-member/update-member.controller
 import { ProjectAccessService } from './project-access.service';
 import { ProjectMember } from './project-member.entity';
 import { Project } from './project.entity';
+import { ProjectResourceUsageController } from './project-resource-usage/project-resource-usage.controller';
+import { ProjectResourceUsageService } from './project-resource-usage/project-resource-usage.service';
 import { ProjectSummaryController } from './project-summary/project-summary.controller';
 import { ProjectService } from './project.service';
 import { UpdateProjectController } from './update-project/update-project.controller';
 import { UpdateProjectService } from './update-project/update-project.service';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Project, ProjectMember])],
+  imports: [
+    TypeOrmModule.forFeature([Project, ProjectMember]),
+    DockerModule,
+    MonitoringModule,
+  ],
   controllers: [
     CreateProjectController,
     ListMembersController,
@@ -35,6 +43,7 @@ import { UpdateProjectService } from './update-project/update-project.service';
     GetProjectController,
     UpdateProjectController,
     DeleteProjectController,
+    ProjectResourceUsageController,
   ],
   providers: [
     ProjectService,
@@ -46,6 +55,7 @@ import { UpdateProjectService } from './update-project/update-project.service';
     GetProjectService,
     UpdateProjectService,
     DeleteProjectService,
+    ProjectResourceUsageService,
   ],
   exports: [ProjectService, ProjectAccessService],
 })

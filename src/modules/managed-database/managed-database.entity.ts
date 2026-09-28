@@ -11,9 +11,12 @@ import {
 import { BackupDestination } from '../backup-destination/backup-destination.entity';
 import { Project } from '../project/project.entity';
 
-export type DatabaseEngine = 'postgres' | 'mysql' | 'mariadb' | 'redis';
+export type DatabaseEngine =
+  'postgres' | 'mysql' | 'mariadb' | 'redis' | 'valkey' | 'mongodb';
 export type ManagedDatabaseStatus =
   'creating' | 'running' | 'stopped' | 'error';
+/** Postgres only; a different preinstalled-extension image, same wire protocol. */
+export type PostgresVariant = 'pgvector' | 'postgis' | 'timescaledb' | null;
 
 /** A database server run as a managed container inside a project. */
 @Entity({ name: 'managed_databases' })
@@ -38,6 +41,10 @@ export class ManagedDatabase {
 
   @Column({ type: 'varchar' })
   engine: DatabaseEngine;
+
+  /** Only meaningful when `engine === 'postgres'`; null = plain Postgres. */
+  @Column({ type: 'varchar', nullable: true })
+  variant: PostgresVariant;
 
   /** Image tag, e.g. `16-alpine` for postgres. */
   @Column({ name: 'image_tag' })

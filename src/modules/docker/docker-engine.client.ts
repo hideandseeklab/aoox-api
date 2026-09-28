@@ -1,5 +1,5 @@
 import * as http from 'http';
-import { Writable } from 'stream';
+import { Duplex, Writable } from 'stream';
 
 /**
  * Minimal client for the Docker Engine HTTP API
@@ -751,6 +751,103 @@ export class DockerEngineClient {
     return { output, code: info.ExitCode ?? -1 };
   }
 
+  /**
+   * Interactive `docker exec -it`: creates the exec with a TTY, then
+   * `POST /exec/{id}/start` with `Connection: Upgrade`/`Upgrade: tcp` so the
+   * daemon hands back the raw duplex socket instead of a buffered response
+   * (see docs.docker.com/reference/api/engine/ "Hijacking"). With `Tty: true`
+   * there is no 8-byte frame header to strip — stdout/stderr are merged and
+   * sent as plain bytes, same as a real terminal. The socket is whatever the
+   * transport produces (a `net.Socket` for `socketPath`, an ssh2 channel for
+   * the SSH agent — both are plain `Duplex`es, so this works unmodified for
+   * apps on a remote server).
+   */
+  async execTty(
+    containerId: string,
+    cmd: string[],
+    env?: string[],
+  ): Promise<{ execId: string; socket: Duplex }> {
+    const { Id } = await this.json<{ Id: string }>(
+      'POST',
+      `/containers/${containerId}/exec`,
+      {
+        Cmd: cmd,
+        Env: env,
+        AttachStdin: true,
+        AttachStdout: true,
+        AttachStderr: true,
+        Tty: true,
+      },
+    );
+    const socket = await this.hijack(`/exec/${Id}/start`, {
+      Detach: false,
+      Tty: true,
+    });
+    return { execId: Id, socket };
+  }
+
+  /** `POST /exec/{id}/resize?h=&w=` — no-op once the exec has already exited. */
+  async resizeExec(execId: string, cols: number, rows: number): Promise<void> {
+    try {
+      await this.request('POST', `/exec/${execId}/resize?h=${rows}&w=${cols}`);
+    } catch {
+      // exec already gone — the exit event is what the caller acts on.
+    }
+  }
+
+  /** Exit code of a finished exec (`ExitCode` is null while it's still running). */
+  async execExitCode(execId: string): Promise<number | null> {
+    const info = await this.json<{ ExitCode: number | null }>(
+      'GET',
+      `/exec/${execId}/json`,
+    );
+    return info.ExitCode;
+  }
+
+  /**
+   * Low-level HTTP Upgrade: sends the request and resolves with the raw
+   * socket once the daemon switches protocols (101), instead of waiting for
+   * a normal response. A non-upgrade response (e.g. the container isn't
+   * running) is read fully and rejected the same way `request()` would.
+   */
+  private hijack(path: string, body: unknown): Promise<Duplex> {
+    const payload = JSON.stringify(body);
+    return new Promise((resolve, reject) => {
+      const req = http.request({
+        ...this.connection,
+        method: 'POST',
+        path: `/${this.apiVersion}${path}`,
+        headers: {
+          Host: 'docker',
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(payload),
+          Connection: 'Upgrade',
+          Upgrade: 'tcp',
+        },
+      });
+      req.on('upgrade', (_res, socket) => resolve(socket));
+      req.on('response', (res) => {
+        const chunks: Buffer[] = [];
+        res.on('data', (c: Buffer) => chunks.push(c));
+        res.on('end', () => {
+          let message = `POST ${path} -> ${res.statusCode}`;
+          try {
+            const parsed = JSON.parse(Buffer.concat(chunks).toString()) as {
+              message?: string;
+            };
+            if (parsed.message) message = parsed.message;
+          } catch {
+            // non-JSON error body
+          }
+          reject(new DockerEngineError(res.statusCode ?? 0, message));
+        });
+      });
+      req.on('error', reject);
+      req.write(payload);
+      req.end();
+    });
+  }
+
   // ---- build & push (JSON progress streams) --------------------------------
 
   /**
@@ -851,11 +948,32 @@ export class DockerEngineClient {
     }
   }
 
+  /** `POST /containers/{id}/restart?t=..` */
+  async restartContainer(id: string, timeoutSeconds = 10): Promise<void> {
+    await this.request('POST', `/containers/${id}/restart?t=${timeoutSeconds}`);
+  }
+
   /** `GET /containers/{id}/logs` — demultiplexed text of the last `tail` lines. */
   async containerLogs(id: string, tail = 200): Promise<string> {
     const res = await this.request(
       'GET',
       `/containers/${id}/logs?stdout=true&stderr=true&timestamps=true&tail=${tail}`,
+    );
+    return demultiplex(res.body);
+  }
+
+  /**
+   * `GET /containers/{id}/logs?since=<unix seconds>` — demultiplexed text
+   * emitted at or after `since`, for a poll-based watcher that doesn't want a
+   * permanent `follow` stream per container (see app-error-watcher.service.ts).
+   */
+  async containerLogsSince(
+    id: string,
+    sinceUnixSeconds: number,
+  ): Promise<string> {
+    const res = await this.request(
+      'GET',
+      `/containers/${id}/logs?stdout=true&stderr=true&timestamps=true&since=${sinceUnixSeconds}`,
     );
     return demultiplex(res.body);
   }

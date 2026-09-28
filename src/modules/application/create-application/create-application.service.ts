@@ -52,7 +52,7 @@ export class CreateApplicationService {
       name: dto.name.trim(),
       appName: ApplicationService.slugify(dto.name),
       sourceType: dto.sourceType ?? 'git',
-      gitUrl: dto.gitUrl?.trim() ?? null,
+      gitUrl: dto.gitUrl?.trim() || null,
       imageRef:
         dto.sourceType === 'image' ? (dto.imageRef?.trim() ?? null) : null,
       imageRegistryId:
@@ -73,7 +73,7 @@ export class CreateApplicationService {
       env: dto.env ?? '',
       buildArgs: dto.buildArgs ?? '',
       buildType: dto.buildType ?? 'dockerfile',
-      staticBuildCommand: dto.staticBuildCommand ?? null,
+      staticBuildCommand: dto.staticBuildCommand?.trim() || null,
       staticOutputDir: dto.staticOutputDir?.trim() || 'dist',
       staticSpa: dto.staticSpa ?? true,
       serverId: dto.serverId ?? null,

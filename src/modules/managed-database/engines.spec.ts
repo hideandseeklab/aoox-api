@@ -1,4 +1,9 @@
-import { ENGINES } from './engines';
+import {
+  defaultTagFor,
+  ENGINES,
+  imageNameFor,
+  POSTGRES_VARIANTS,
+} from './engines';
 
 describe('database engine recipes', () => {
   const opts = { username: 'app', password: 'p@ss/w', database: 'db1' };
@@ -35,5 +40,49 @@ describe('database engine recipes', () => {
     expect(
       ENGINES.redis.url({ ...opts, password: 'secret', host: 'h', port: 6379 }),
     ).toBe('redis://:secret@h:6379/0');
+  });
+
+  it('valkey is a redis drop-in: same requirepass command line, same redis:// url', () => {
+    expect(ENGINES.valkey.hasDatabase).toBe(false);
+    expect(ENGINES.valkey.cmd?.({ password: 'secret' })).toEqual([
+      'valkey-server',
+      '--requirepass',
+      'secret',
+      '--appendonly',
+      'yes',
+    ]);
+    expect(
+      ENGINES.valkey.url({
+        ...opts,
+        password: 'secret',
+        host: 'h',
+        port: 6379,
+      }),
+    ).toBe('redis://:secret@h:6379/0');
+  });
+
+  it('imageNameFor/defaultTagFor pick the variant image and tag for postgres variants', () => {
+    expect(imageNameFor('postgres', null)).toBe('postgres');
+    expect(imageNameFor('postgres', 'pgvector')).toBe('pgvector/pgvector');
+    expect(imageNameFor('postgres', 'postgis')).toBe('postgis/postgis');
+    expect(imageNameFor('postgres', 'timescaledb')).toBe(
+      'timescale/timescaledb',
+    );
+    expect(imageNameFor('redis', null)).toBe('redis');
+    expect(imageNameFor('valkey', null)).toBe('valkey/valkey');
+
+    expect(defaultTagFor('postgres', null)).toBe(ENGINES.postgres.defaultTag);
+    expect(defaultTagFor('postgres', 'pgvector')).toBe(
+      POSTGRES_VARIANTS.pgvector.defaultTag,
+    );
+  });
+
+  it('every postgres variant has at least one CREATE EXTENSION statement', () => {
+    for (const variant of Object.values(POSTGRES_VARIANTS)) {
+      expect(variant.extensionSql.length).toBeGreaterThan(0);
+      for (const stmt of variant.extensionSql) {
+        expect(stmt).toMatch(/^CREATE EXTENSION IF NOT EXISTS /);
+      }
+    }
   });
 });

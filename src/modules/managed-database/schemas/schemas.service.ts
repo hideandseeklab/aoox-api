@@ -5,9 +5,13 @@ import { ManagedDatabase } from '../managed-database.entity';
 import { SchemaInfoDto } from './schemas.dto';
 
 /** Engine-owned databases that must never be listed, dropped or dumped. */
-export const SYSTEM_SCHEMAS: Record<'postgres' | 'mysql', string[]> = {
+export const SYSTEM_SCHEMAS: Record<
+  'postgres' | 'mysql' | 'mongodb',
+  string[]
+> = {
   postgres: ['postgres', 'template0', 'template1'],
   mysql: ['information_schema', 'performance_schema', 'mysql', 'sys'],
+  mongodb: ['admin', 'local', 'config'],
 };
 
 /**
@@ -23,13 +27,18 @@ export class SchemasService {
 
   async list(db: ManagedDatabase): Promise<SchemaInfoDto[]> {
     const engine = this.engineOf(db);
-    const sql =
-      engine === 'postgres'
-        ? `SELECT datname FROM pg_database WHERE NOT datistemplate ORDER BY 1`
-        : `SHOW DATABASES`;
-    const { rows } = await this.queries.sql(db, sql, { readOnly: true });
-    return rows
-      .map((r) => r[0] ?? '')
+    let names: string[];
+    if (engine === 'mongodb') {
+      names = await this.queries.mongoDatabaseNames(db);
+    } else {
+      const sql =
+        engine === 'postgres'
+          ? `SELECT datname FROM pg_database WHERE NOT datistemplate ORDER BY 1`
+          : `SHOW DATABASES`;
+      const { rows } = await this.queries.sql(db, sql, { readOnly: true });
+      names = rows.map((r) => r[0] ?? '');
+    }
+    return names
       .filter((n) => n && !SYSTEM_SCHEMAS[engine].includes(n))
       .map((name) => ({ name, isPrimary: name === db.databaseName }));
   }
@@ -38,6 +47,10 @@ export class SchemasService {
     const engine = this.engineOf(db);
     if (SYSTEM_SCHEMAS[engine].includes(name)) {
       throw new BadRequestException(`${name} is reserved by the engine`);
+    }
+    if (engine === 'mongodb') {
+      await this.queries.mongoCreateDatabase(db, name);
+      return { name, isPrimary: false };
     }
     const ident = quoteIdent(name, engine);
     if (engine === 'postgres') {
@@ -71,6 +84,10 @@ export class SchemasService {
     if (SYSTEM_SCHEMAS[engine].includes(name)) {
       throw new BadRequestException(`${name} is reserved by the engine`);
     }
+    if (engine === 'mongodb') {
+      await this.queries.mongoDropDatabase(db, name);
+      return;
+    }
     const ident = quoteIdent(name, engine);
     await this.queries.sql(
       db,
@@ -82,12 +99,13 @@ export class SchemasService {
     );
   }
 
-  private engineOf(db: ManagedDatabase): 'postgres' | 'mysql' {
-    if (db.engine === 'redis') {
+  private engineOf(db: ManagedDatabase): 'postgres' | 'mysql' | 'mongodb' {
+    if (db.engine === 'redis' || db.engine === 'valkey') {
       throw new BadRequestException(
-        'Redis has numbered databases (0–15), not named ones',
+        `${db.engine === 'valkey' ? 'Valkey' : 'Redis'} has numbered databases (0–15), not named ones`,
       );
     }
+    if (db.engine === 'mongodb') return 'mongodb';
     return db.engine === 'postgres' ? 'postgres' : 'mysql';
   }
 }

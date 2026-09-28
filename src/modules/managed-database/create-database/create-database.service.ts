@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { randomBytes } from 'crypto';
 import { ProjectService } from '../../project/project.service';
-import { ENGINES } from '../engines';
+import { defaultTagFor, ENGINES } from '../engines';
 import { ManagedDatabase } from '../managed-database.entity';
 import { ManagedDatabaseService } from '../managed-database.service';
 import { CreateDatabaseDto } from './create-database.dto';
@@ -31,7 +31,13 @@ export class CreateDatabaseService {
         name: dto.name.trim(),
         slug,
         engine: dto.engine,
-        imageTag: dto.imageTag?.trim() || spec.defaultTag,
+        variant: dto.engine === 'postgres' ? (dto.variant ?? null) : null,
+        imageTag:
+          dto.imageTag?.trim() ||
+          defaultTagFor(
+            dto.engine,
+            dto.engine === 'postgres' ? (dto.variant ?? null) : null,
+          ),
         databaseName: spec.hasDatabase ? slug.replace(/-/g, '_') : '',
         username: spec.hasDatabase ? 'app' : 'default',
         passwordEncrypted: this.databases.encrypt(password),

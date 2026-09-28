@@ -7,7 +7,7 @@ import {
 import { composeLabels, DockerService } from '../../docker/docker.service';
 import { tarFiles } from '../../application/nixpacks-builder.service';
 import { APP_NETWORK } from '../../proxy/proxy.service';
-import { ENGINES } from '../engines';
+import { ENGINES, imageNameFor } from '../engines';
 import { ManagedDatabase } from '../managed-database.entity';
 import {
   containerNameForDb,
@@ -104,7 +104,7 @@ export class DatabaseQueryService {
     db: ManagedDatabase,
     database?: string,
   ): Promise<TableInfoDto[]> {
-    if (db.engine === 'redis') {
+    if (db.engine === 'redis' || db.engine === 'valkey') {
       const res = await this.redis(db, [
         'SCAN',
         '0',
@@ -113,6 +113,14 @@ export class DatabaseQueryService {
       ]);
       const [, keys] = res as [string, string[]];
       return keys
+        .sort()
+        .map((name) => ({ schema: null, name, estimatedRows: null }));
+    }
+    if (db.engine === 'mongodb') {
+      const names = (await this.mongo(db, 'db.getCollectionNames()', {
+        database,
+      })) as string[];
+      return names
         .sort()
         .map((name) => ({ schema: null, name, estimatedRows: null }));
     }
@@ -141,8 +149,26 @@ export class DatabaseQueryService {
     q: TableRowsQueryDto,
   ): Promise<TableRowsDto> {
     const limit = q.limit ?? 50;
-    if (db.engine === 'redis')
+    if (db.engine === 'redis' || db.engine === 'valkey')
       return this.redisKey(db, table, limit, q.offset ?? 0);
+    if (db.engine === 'mongodb') {
+      const started = Date.now();
+      const docs = await this.mongoFind(db, table, {
+        filter: '{}',
+        sort: q.orderBy ? { [q.orderBy]: q.dir === 'desc' ? -1 : 1 } : null,
+        skip: q.offset ?? 0,
+        limit: limit + 1,
+        database: q.db,
+      });
+      const rs = mongoDocsToRows(docs.slice(0, limit));
+      return {
+        ...rs,
+        hasMore: docs.length > limit,
+        truncated: false,
+        message: null,
+        durationMs: Date.now() - started,
+      };
+    }
     const engine = db.engine === 'postgres' ? 'postgres' : 'mysql';
     const from = this.tableRef(table, q.schema, engine);
     const order = q.orderBy
@@ -174,8 +200,13 @@ export class DatabaseQueryService {
     table: string,
     opts: { schema?: string; database?: string } = {},
   ): Promise<ColumnInfoDto[]> {
-    if (db.engine === 'redis') {
+    if (db.engine === 'redis' || db.engine === 'valkey') {
       throw new BadRequestException('Redis keys have no column structure');
+    }
+    if (db.engine === 'mongodb') {
+      throw new BadRequestException(
+        'MongoDB documents have no fixed column structure',
+      );
     }
     const tableLit = sqlLiteral(assertIdentifier(table, 'table'), 'postgres');
     const sql =
@@ -226,9 +257,14 @@ export class DatabaseQueryService {
     table: string,
     dto: UpdateRowDto,
   ): Promise<RowActionResultDto> {
-    if (db.engine === 'redis') {
+    if (db.engine === 'redis' || db.engine === 'valkey') {
       throw new BadRequestException(
         'Redis has no rows to edit; use the command box',
+      );
+    }
+    if (db.engine === 'mongodb') {
+      throw new BadRequestException(
+        'Editing documents isn’t supported yet; use the query box',
       );
     }
     if (Object.keys(dto.set).length === 0) {
@@ -261,9 +297,14 @@ export class DatabaseQueryService {
     table: string,
     dto: DeleteRowDto,
   ): Promise<RowActionResultDto> {
-    if (db.engine === 'redis') {
+    if (db.engine === 'redis' || db.engine === 'valkey') {
       throw new BadRequestException(
         'Redis has no rows to delete; use the command box',
+      );
+    }
+    if (db.engine === 'mongodb') {
+      throw new BadRequestException(
+        'Deleting documents isn’t supported yet; use the query box',
       );
     }
     const engine = db.engine === 'postgres' ? 'postgres' : 'mysql';
@@ -346,10 +387,22 @@ export class DatabaseQueryService {
     table: string,
     q: TableExportQueryDto,
   ): Promise<{ csv: string; truncated: boolean }> {
-    if (db.engine === 'redis') {
+    if (db.engine === 'redis' || db.engine === 'valkey') {
       throw new BadRequestException(
         'Redis has no rows to export as CSV; use the command box',
       );
+    }
+    if (db.engine === 'mongodb') {
+      const docs = await this.mongoFind(db, table, {
+        filter: '{}',
+        sort: q.orderBy ? { [q.orderBy]: q.dir === 'desc' ? -1 : 1 } : null,
+        skip: 0,
+        limit: MAX_EXPORT_ROWS + 1,
+        database: q.db,
+      });
+      const truncated = docs.length > MAX_EXPORT_ROWS;
+      const rs = mongoDocsToRows(docs.slice(0, MAX_EXPORT_ROWS));
+      return { csv: toCsv(rs.columns, rs.rows), truncated };
     }
     const engine = db.engine === 'postgres' ? 'postgres' : 'mysql';
     const from = this.tableRef(table, q.schema, engine);
@@ -373,7 +426,7 @@ export class DatabaseQueryService {
     database?: string,
   ): Promise<QueryResultDto> {
     const started = Date.now();
-    if (db.engine === 'redis') {
+    if (db.engine === 'redis' || db.engine === 'valkey') {
       const args = tokenize(input);
       if (args.length === 0) throw new BadRequestException('Empty command');
       const read = REDIS_READ_COMMANDS.has(args[0].toLowerCase());
@@ -389,6 +442,32 @@ export class DatabaseQueryService {
         rows: rs.rows.slice(0, MAX_ROWS),
         truncated: rs.rows.length > MAX_ROWS,
         message: rs.columns.length === 0 ? 'OK' : null,
+        durationMs: Date.now() - started,
+      };
+    }
+    if (db.engine === 'mongodb') {
+      // Read-only for everyone in this first pass (see AGENTS.md "Belum"):
+      // no insert/update/delete/aggregate via the query box yet, only
+      // `<collection>.find(<filter json>)`, mongosh shell syntax.
+      const m = /^(\w+)\.find\((.*)\)\s*$/s.exec(input.trim());
+      if (!m) {
+        throw new BadRequestException(
+          'Only <collection>.find({...}) is supported for now',
+        );
+      }
+      const [, collection, filterSrc] = m;
+      const docs = await this.mongoFind(db, collection, {
+        filter: filterSrc.trim() || '{}',
+        sort: null,
+        skip: 0,
+        limit: MAX_ROWS + 1,
+        database,
+      });
+      const rs = mongoDocsToRows(docs.slice(0, MAX_ROWS));
+      return {
+        ...rs,
+        truncated: docs.length > MAX_ROWS,
+        message: null,
         durationMs: Date.now() - started,
       };
     }
@@ -475,8 +554,13 @@ export class DatabaseQueryService {
     database: string | undefined,
     sql: Buffer,
   ): Promise<{ message: string }> {
-    if (db.engine === 'redis') {
+    if (db.engine === 'redis' || db.engine === 'valkey') {
       throw new BadRequestException('Redis has no SQL to import');
+    }
+    if (db.engine === 'mongodb') {
+      throw new BadRequestException(
+        'MongoDB has no SQL to import; use a backup restore instead',
+      );
     }
     if (sql.length > IMPORT_MAX_BYTES) {
       throw new BadRequestException(
@@ -515,8 +599,13 @@ export class DatabaseQueryService {
       case 'mariadb':
         return 'mariadb-dump -h "$DB_HOST" -P "$DB_PORT" -u root -p"$DB_PASSWORD" --single-transaction --routines --add-drop-table "$DB_NAME"';
       case 'redis':
+      case 'valkey':
         throw new BadRequestException(
-          'Redis has no SQL to export; use a backup',
+          `${db.engine === 'valkey' ? 'Valkey' : 'Redis'} has no SQL to export; use a backup`,
+        );
+      case 'mongodb':
+        throw new BadRequestException(
+          'MongoDB has no SQL to export; use a backup',
         );
     }
   }
@@ -562,6 +651,33 @@ export class DatabaseQueryService {
     if (code !== 0)
       throw new BadRequestException(cleanError(stderr) || `exit ${code}`);
     return isPg ? parsePsqlCsv(stdout) : parseMysqlBatch(stdout);
+  }
+
+  /** Names of every database on the server (used by `SchemasService`, mirrors `SHOW DATABASES`/`pg_database`). */
+  async mongoDatabaseNames(db: ManagedDatabase): Promise<string[]> {
+    const result = await this.mongo(
+      db,
+      'db.adminCommand({listDatabases:1, nameOnly:true}).databases.map(d => d.name)',
+    );
+    if (!Array.isArray(result)) return [];
+    return result.filter((n): n is string => typeof n === 'string');
+  }
+
+  /**
+   * Mongo creates databases lazily (no `CREATE DATABASE`) — a database only
+   * "exists" once it holds a collection, so make it show up immediately by
+   * writing one placeholder collection with a single throwaway document.
+   */
+  async mongoCreateDatabase(db: ManagedDatabase, name: string): Promise<void> {
+    await this.mongo(
+      db,
+      'db.getCollection("_aoox_init").insertOne({createdAt: new Date()})',
+      { database: name },
+    );
+  }
+
+  async mongoDropDatabase(db: ManagedDatabase, name: string): Promise<void> {
+    await this.mongo(db, 'db.dropDatabase()', { database: name });
   }
 
   private async redis(db: ManagedDatabase, args: string[]): Promise<unknown> {
@@ -615,6 +731,75 @@ export class DatabaseQueryService {
   }
 
   /**
+   * Evaluates `expression` and JSON-parses its single-line output. Root
+   * creds only exist in the `admin` database (`authSource=admin`);
+   * `$DB_NAME`/etc. are the same env vars `spawn()` already sets from `db` —
+   * `opts.database` (the `?db=` schema switch) overrides `$DB_NAME` for this
+   * call only, same pattern as `sql()`.
+   *
+   * `expression` is wrapped in `EJSON.stringify(..., {relaxed: true})`
+   * before being evaluated — mongosh's default REPL output for a plain
+   * value is its shell-inspect format (`[ 'a', 'b' ]`, unquoted keys), which
+   * is not valid JSON and would make every non-string result fail to parse
+   * here. Wrapping centrally means every caller gets real JSON back
+   * (`ObjectId`/`Date` become `{"$oid":"..."}`/ISO strings) without having
+   * to remember to wrap it themselves.
+   */
+  private async mongo(
+    db: ManagedDatabase,
+    expression: string,
+    opts: { database?: string } = {},
+  ): Promise<unknown> {
+    const evalScript = `EJSON.stringify((${expression}), {relaxed: true})`;
+    const script =
+      `mongosh "mongodb://$DB_USER:$DB_PASSWORD@$DB_HOST:$DB_PORT/$DB_NAME?authSource=admin" --quiet --eval ` +
+      shellQuote(evalScript);
+    const { code, stdout, stderr } = await this.runInEngine(
+      db,
+      script,
+      opts.database ? [`DB_NAME=${opts.database}`] : [],
+    );
+    if (code !== 0)
+      throw new BadRequestException(cleanError(stderr) || `exit ${code}`);
+    const text = stdout.trim();
+    try {
+      return JSON.parse(text || 'null') as unknown;
+    } catch {
+      throw new BadRequestException(text || 'Could not parse mongosh output');
+    }
+  }
+
+  /**
+   * `db.<collection>.find(<filter>)[.sort()][.skip()][.limit()]`, rendered
+   * with `EJSON.stringify(..., {relaxed: true})` so `ObjectId`/`Date` values
+   * come back as `{"$oid": "..."}`/ISO strings instead of `[object Object]`
+   * — the same extended-JSON shape MongoDB Compass/`mongoexport` use.
+   * `filter` is caller-controlled JS source (not user SQL — it becomes the
+   * argument to `.find(...)` inside a script we generate), but it still runs
+   * inside the collection's own database with no special privileges beyond
+   * the app user, same trust boundary as every other engine's query box.
+   */
+  private async mongoFind(
+    db: ManagedDatabase,
+    collection: string,
+    opts: {
+      /** Strict JSON only (see below) — `{}` for no filter. */
+      filter: string;
+      sort: Record<string, 1 | -1> | null;
+      skip: number;
+      limit: number;
+      database?: string;
+    },
+  ): Promise<Record<string, unknown>[]> {
+    const script = buildMongoFindScript(collection, opts);
+    const result = await this.mongo(db, script, { database: opts.database });
+    if (!Array.isArray(result)) {
+      throw new BadRequestException('Expected a list of documents');
+    }
+    return result as Record<string, unknown>[];
+  }
+
+  /**
    * One-off container of the engine image; stdout/stderr land in files that
    * are read back through the archive API (logs would add timestamps and
    * mangle multi-line CSV values). Killed after CONTAINER_TIMEOUT_MS.
@@ -659,7 +844,7 @@ export class DatabaseQueryService {
     timeoutMs = CONTAINER_TIMEOUT_MS,
   ): Promise<{ id: string; code: number; stderr: string }> {
     const spec = ENGINES[db.engine];
-    const image = `${spec.image}:${db.imageTag}`;
+    const image = `${imageNameFor(db.engine, db.variant)}:${db.imageTag}`;
     const password = await this.databases.password(db);
     await this.docker.ensureImage(image);
     const id = await this.docker.engine.createContainer({
@@ -755,4 +940,87 @@ export function redisToRows(value: unknown): ResultSet {
     };
   }
   return { columns: ['value'], rows: [[str(value)]] };
+}
+
+/**
+ * Renders a list of MongoDB documents (already `EJSON.stringify`d and
+ * JSON-parsed back, so nested values are plain JS) as a tabular result:
+ * columns = every key seen across the batch, in first-seen order with `_id`
+ * pinned first; a document missing a given key gets `null` for that cell.
+ * Nested objects/arrays are shown as their JSON text, same convention as
+ * `redisToRows`.
+ */
+export function mongoDocsToRows(docs: Record<string, unknown>[]): ResultSet {
+  const columns: string[] = [];
+  const seen = new Set<string>();
+  for (const doc of docs) {
+    for (const key of Object.keys(doc)) {
+      if (!seen.has(key)) {
+        seen.add(key);
+        columns.push(key);
+      }
+    }
+  }
+  columns.sort((a, b) => (a === '_id' ? -1 : b === '_id' ? 1 : 0));
+  const str = (v: unknown) =>
+    v === undefined || v === null
+      ? null
+      : typeof v === 'string'
+        ? v
+        : JSON.stringify(v);
+  return {
+    columns,
+    rows: docs.map((doc) => columns.map((c) => str(doc[c]))),
+  };
+}
+
+/**
+ * Builds the `mongosh --eval` script for `db.<collection>.find(<filter>)`,
+ * validating the collection name and filter first. Pure so the injection
+ * mitigation below can be unit-tested without a real mongosh.
+ *
+ * The filter is parsed as strict JSON, then re-serialized, before it's
+ * embedded in the generated script — this is what stops a query-box filter
+ * like `{}); db.dropDatabase(); ({` from escaping the `.find(...)` call and
+ * running as arbitrary mongosh JS: only a JSON literal (already validated,
+ * no function calls or statements) can survive `JSON.parse`, so what
+ * actually reaches the shell is always inert data. `$`-prefixed operator
+ * keys (`{"qty":{"$gt":2}}`) are plain JSON and pass through fine;
+ * extended-JSON literals like `{"$oid":"..."}` for `_id` are not
+ * interpreted specially in this first pass (see AGENTS.md "Belum") — they'd
+ * just filter for a field literally named `$oid`, not error, so document
+ * the limitation rather than silently doing the wrong thing.
+ */
+export function buildMongoFindScript(
+  collection: string,
+  opts: {
+    /** Strict JSON only — `{}` for no filter. */
+    filter: string;
+    sort: Record<string, 1 | -1> | null;
+    skip: number;
+    limit: number;
+  },
+): string {
+  if (!/^[A-Za-z0-9_.$-]{1,120}$/.test(collection)) {
+    throw new BadRequestException('Invalid collection name');
+  }
+  let filter: unknown;
+  try {
+    filter = JSON.parse(opts.filter || '{}');
+  } catch {
+    throw new BadRequestException('Filter must be valid JSON');
+  }
+  if (typeof filter !== 'object' || filter === null || Array.isArray(filter)) {
+    throw new BadRequestException('Filter must be a JSON object');
+  }
+  const chain = [
+    `db.getCollection(${JSON.stringify(collection)}).find(${JSON.stringify(filter)})`,
+    opts.sort ? `.sort(${JSON.stringify(opts.sort)})` : '',
+    `.skip(${opts.skip})`,
+    `.limit(${opts.limit})`,
+  ].join('');
+  // `mongo()` wraps this expression in `EJSON.stringify(..., {relaxed: true})`
+  // itself — returning the raw `.toArray()` call here (not pre-wrapped)
+  // avoids double-encoding it into a JSON string containing JSON text.
+  return `${chain}.toArray()`;
 }

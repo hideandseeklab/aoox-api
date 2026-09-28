@@ -1,6 +1,11 @@
 import { Injectable } from '@nestjs/common';
 import { ILike } from 'typeorm';
 import { Project } from '../project.entity';
+import {
+  ProjectResourceUsageSummary,
+  toResourceUsageSummary,
+} from '../project-resource-usage/project-resource-usage.util';
+import { ProjectResourceUsageService } from '../project-resource-usage/project-resource-usage.service';
 import { ProjectService } from '../project.service';
 import { ListProjectsDto } from './list-projects.dto';
 
@@ -24,11 +29,18 @@ export interface ProjectInstanceDto {
   deploying: boolean;
 }
 
-export type ProjectListItemDto = Project & { instances: ProjectInstanceDto[] };
+export type ProjectListItemDto = Project & {
+  instances: ProjectInstanceDto[];
+  /** CPU/RAM/network summary from the live sampler; null = nothing running. */
+  resourceUsage: ProjectResourceUsageSummary | null;
+};
 
 @Injectable()
 export class ListProjectsService {
-  constructor(private readonly projectService: ProjectService) {}
+  constructor(
+    private readonly projectService: ProjectService,
+    private readonly resourceUsage: ProjectResourceUsageService,
+  ) {}
 
   async execute(
     ownerId: string,
@@ -71,9 +83,14 @@ export class ListProjectsService {
     for (const { projectId, ...instance } of rows) {
       byProject.set(projectId, [...(byProject.get(projectId) ?? []), instance]);
     }
+    // One Docker/label lookup for every project's card, not one per card.
+    const usageByProject = await this.resourceUsage.usageByProject(ids);
     return projects.map((p) => ({
       ...p,
       instances: byProject.get(p.id) ?? [],
+      resourceUsage: toResourceUsageSummary(
+        usageByProject.get(p.id)?.current ?? null,
+      ),
     }));
   }
 }

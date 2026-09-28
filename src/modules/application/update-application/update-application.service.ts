@@ -77,6 +77,8 @@ export class UpdateApplicationService {
     if (dto.memoryMb !== undefined) app.memoryMb = dto.memoryMb;
     if (dto.healthcheckPath !== undefined)
       app.healthcheckPath = dto.healthcheckPath?.trim() || null;
+    if (dto.ignoreErrorLogs !== undefined)
+      app.ignoreErrorLogs = dto.ignoreErrorLogs;
     const limitsChanged =
       before.cpuMillicores !== app.cpuMillicores ||
       before.memoryMb !== app.memoryMb;

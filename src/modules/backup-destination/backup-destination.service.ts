@@ -202,6 +202,29 @@ export class BackupDestinationService {
     }
   }
 
+  /**
+   * Recursively removes everything under `dir` (a full remote path, already
+   * including the destination's own prefix — build it with `remoteKey()`).
+   * A directory that doesn't exist is not an error, same spirit as `remove()`.
+   */
+  async purgeDir(
+    id: string,
+    dir: string,
+    docker: DockerHandle = this.docker,
+  ): Promise<void> {
+    const { config } = await this.resolve(id);
+    try {
+      await this.rclone(
+        config,
+        ['purge', `${REMOTE}:${config.bucket}/${dir}`],
+        [],
+        docker,
+      );
+    } catch (err) {
+      if (!/directory not found/i.test(String(err))) throw err;
+    }
+  }
+
   /** Lists the prefix to prove credentials, endpoint and bucket are right. */
   async test(id: string): Promise<{ objects: number }> {
     const { config } = await this.resolve(id);

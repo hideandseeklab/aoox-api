@@ -129,4 +129,12 @@ export class CreateNotificationDto {
   @IsOptional()
   @IsBoolean()
   onContainerDown?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  onDnsIssue?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  onAppError?: boolean;
 }

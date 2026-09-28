@@ -102,4 +102,39 @@ export const BACKUP_RECIPES: Record<DatabaseEngine, BackupRecipe> = {
       'printf "file appendonly.aof.1.base.rdb seq 1 type b\nfile appendonly.aof.1.incr.aof seq 1 type i\n" > /data/appendonlydir/appendonly.aof.manifest',
     restoreMode: 'offline-volume',
   },
+  // Valkey ships `redis-cli` (verified) and uses the same appendonly/AOF
+  // layout (fork of Redis 7.x) — identical recipe.
+  valkey: {
+    extension: 'rdb',
+    dump: 'redis-cli -h "$DB_HOST" -p "$DB_PORT" -a "$DB_PASSWORD" --no-auth-warning --rdb "$BACKUP_FILE" > /dev/null',
+    restore:
+      'rm -rf /data/appendonlydir /data/dump.rdb && mkdir -p /data/appendonlydir && ' +
+      'cp "$BACKUP_FILE" /data/appendonlydir/appendonly.aof.1.base.rdb && ' +
+      ': > /data/appendonlydir/appendonly.aof.1.incr.aof && ' +
+      'printf "file appendonly.aof.1.base.rdb seq 1 type b\nfile appendonly.aof.1.incr.aof seq 1 type i\n" > /data/appendonlydir/appendonly.aof.manifest',
+    restoreMode: 'offline-volume',
+  },
+  // `mongodump`/`mongorestore --gzip` write/read their own gzip archive
+  // directly — no need for the `gzipped()` wrapper (that only exists to fix
+  // up the exit code of a `dump | gzip` pipe, which isn't happening here).
+  mongodb: {
+    extension: 'archive.gz',
+    dump:
+      'mongodump --host="$DB_HOST" --port="$DB_PORT" --username="$DB_USER" --password="$DB_PASSWORD" ' +
+      '--authenticationDatabase=admin --db="$DB_NAME" --archive="$BACKUP_FILE" --gzip',
+    restore:
+      'mongorestore --host="$DB_HOST" --port="$DB_PORT" --username="$DB_USER" --password="$DB_PASSWORD" ' +
+      '--authenticationDatabase=admin --archive="$BACKUP_FILE" --gzip --drop',
+    // Every database on the server, root user included in the archive —
+    // restoreAll excludes admin/local/config so a restore never overwrites
+    // the root user's own credentials or replication metadata.
+    dumpAll:
+      'mongodump --host="$DB_HOST" --port="$DB_PORT" --username="$DB_USER" --password="$DB_PASSWORD" ' +
+      '--authenticationDatabase=admin --archive="$BACKUP_FILE" --gzip',
+    restoreAll:
+      'mongorestore --host="$DB_HOST" --port="$DB_PORT" --username="$DB_USER" --password="$DB_PASSWORD" ' +
+      '--authenticationDatabase=admin --archive="$BACKUP_FILE" --gzip --drop ' +
+      '--nsExclude="admin.*" --nsExclude="local.*" --nsExclude="config.*"',
+    restoreMode: 'online',
+  },
 };

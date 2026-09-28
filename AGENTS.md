@@ -169,6 +169,43 @@ NestJS 11 backend for aoox (self-hosted PaaS).
 - Hanya role `owner`/`admin` (`TERMINAL_ROLES`): dicek saat membuat tiket (403) dan lagi di gateway dari `role` di payload tiket. Tiket sekali pakai (`jti`, in-memory).
 - Ini setara remote shell di host — hanya untuk lingkungan dev/self-hosted yang dipercaya. Host key SSH belum diverifikasi.
 
+## Console container
+
+- Beda dari Terminal (shell di **host** lewat SSH): Console (`src/modules/application/console.gateway.ts`, namespace `/console`) adalah `docker exec -it` masuk ke
+  **container aplikasi itu sendiri**, lewat Docker Engine API — bukan SSH sama sekali. `DockerEngineClient.execTty()` (`docker-engine.client.ts`): `POST /containers/{id}/exec`
+  dengan `Tty: true` lalu `POST /exec/{id}/start` di-**hijack** (`Connection: Upgrade`/`Upgrade: tcp`, sesuai docs.docker.com/reference/api/engine/ "Hijacking") lewat method privat
+  `hijack()` yang mendengarkan event `'upgrade'` Node `http.request` untuk mengambil socket duplex mentah — TTY mode tidak punya frame header 8-byte seperti `exec`/`execWithCode`
+  biasa, jadi stdout/stderr sudah byte polos. **Transport-agnostic otomatis**: `hijack()` memakai `this.connection` yang sama dengan seluruh client (socket lokal atau
+  `SshDockerAgent`/`docker system dial-stdio` untuk server remote) — tidak ada kode terpisah untuk app di server remote, karena `http.request` memperlakukan event `'upgrade'`
+  sama persis apa pun transportnya. `resizeExec()` = `POST /exec/{id}/resize?h=&w=`; `execExitCode()` = `GET /exec/{id}/json` setelah socket `close` untuk `ExitCode`.
+- Shell: `sh -c 'command -v bash >/dev/null 2>&1 && exec bash || exec sh'` (`SHELL_DETECT_CMD` di `console.gateway.ts`) — coba bash dulu (nyaman), fallback ke sh (hampir selalu ada).
+  **Diuji nyata**: container `debian:bookworm-slim` (bash) dan `alpine` (sh saja) dua-duanya kepilih shell yang benar; `registry.k8s.io/pause:3.9` (image scratch tanpa shell
+  sama sekali, tapi tetap berjalan selamanya — pengganti "distroless" yang bisa di-`docker run` tanpa command) meng-hijack **berhasil**, lalu daemon sendiri yang menstream
+  pesan `OCI runtime exec failed: ... executable file not found` sebagai output terminal biasa sebelum keluar kode 127 — **bukan** event `error` yang diterjemahkan;
+  ini disengaja dibiarkan apa adanya karena persis begitu juga tampilannya di `docker exec -it` CLI sungguhan. `describeExecError()` tetap ada sebagai jaring pengaman untuk
+  kasus daemon menolak **sebelum** hijack (container berhenti → pesan "is not running", diuji nyata dengan container yang di-stop).
+- **Tiket** (`create-console-ticket/`, `POST /applications/:id/console-ticket`, throttle 20/menit): berbeda dari `log-ticket`, tiket ini **mengikat container id yang sudah
+  di-resolve** ke payload (`ConsoleTicketPayload.containerId`) — bukan hanya `applicationId` — supaya handshake socket tidak pernah bisa memilih container sendiri, pola yang
+  sama dengan `serverId` di tiket terminal. Mode `container` → `RemoteDockerService.forServer(app.serverId).findContainerByName(containerNameFor(app))`, harus `State ===
+  'running'` atau 400. Mode `service` (swarm) → `SwarmDeployService.taskContainers(app)` (task **di node ini saja**, lihat bagian Docker Swarm); tanpa `containerId` di body →
+  task terbaru (indeks 0, sudah diurutkan `taskContainers()`); dengan `containerId` → divalidasi harus ada di daftar task saat ini, kalau tidak 400.
+  **Kontrol akses gratis dari infrastruktur yang sudah ada, tanpa kode baru**: route ini **sengaja tidak** ditambahkan ke `READ_ONLY_POSTS` di `request-context.ts` (yang
+  hanya berisi `/log-ticket`) — jadi `isWriteRequest()` menganggapnya tulis, dan `ProjectAccessService.assertAccess()` (dipanggil via `ApplicationService.findOwnedOrFail`)
+  otomatis menolak `viewer` dengan 403; `JwtAuthGuard` otomatis menolak token API `readOnly` dengan 403 juga (mekanisme yang persis sama dengan endpoint tulis lainnya).
+  Developer/admin/owner lolos. Karena request ini sampai ke handler (bukan ditolak guard), **audit log mencatatnya otomatis** lewat `AuditLogInterceptor` yang sudah ada
+  (`action: "POST /applications/:id/console-ticket"`, status 200/403, aktor, tanpa kode tambahan) — diuji nyata: viewer 403 tercatat, token readOnly 403 **tidak** tercatat
+  (ditolak di guard, konsisten dengan aturan "guard yang menolak tidak tercatat" di bagian Auth → API token).
+- `ConsoleGateway` meniru pola `TerminalGateway` persis: `usedTickets` Map in-memory (tiket sekali pakai), cek `Origin` ≠ `WEB_ORIGIN` → tolak, event protokol
+  (`input`/`resize`/`output`/`exit`/`error`) identik. `console.protocol.ts` (dicermin di web `features/console/console.protocol.ts`). Exec di-`destroy()` saat socket
+  Socket.IO putus (`handleDisconnect`); container yang mati/exec yang berakhir mengirim `exit` dengan kode dari `execExitCode()` lalu men-disconnect socket.
+- **Diuji end-to-end lewat HTTP + WebSocket sungguhan** (bukan cuma `DockerEngineClient` sendirian): sign-in sungguhan → buat tiket via `POST .../console-ticket` →
+  connect `socket.io-client` ke `/console` dengan tiket itu → kirim `input`, terima `output` (echo shell asli) → `resize` → `exit 0` → event `exit` kode 0. Juga: origin
+  salah ditolak, tiket dipakai dua kali ditolak di percobaan kedua, token API `readOnly` 403, project `viewer` 403, `developer` 200 — semua terhadap akun & tiket asli,
+  bukan mock.
+- **Belum diuji independen di sesi ini**: server remote sungguhan (SSH) dan cluster Swarm sungguhan untuk fitur ini spesifik — mekanisme hijack sendiri transport-agnostic
+  by construction (sama `this.connection` yang dipakai build/push/exec lain yang **sudah** diuji lewat SSH di bagian lain AGENTS ini), tapi kombinasi penuh
+  "console ke task swarm di server remote" belum dicoba end-to-end lewat VPS/cluster sungguhan — sarankan smoke test manual sebelum production.
+
 ## Prinsip
 
 - Selalu ikuti dokumentasi resmi framework/library (NestJS, TypeORM, dll.) untuk pemilihan paket dan pola kode.
@@ -233,6 +270,34 @@ NestJS 11 backend for aoox (self-hosted PaaS).
   Belum: migrasi data dari lokal ke S3 (atau sebaliknya) untuk registry yang sudah terlanjur di-provision.
 - Route dengan nama repo bergaris miring memakai wildcard Express 5 (`*repository`) yang tiba sebagai array → di-`@Transform` jadi string di DTO.
 - Hapus tag = hapus manifest (tag lain dengan digest sama ikut hilang); disk kembali setelah GC.
+- **Hapus image sepenuhnya** (`delete-repository/`, `DELETE /registries/:id/repositories/*repository?force=`, `@Roles('owner','admin')` — sama dengan `delete-tag`, karena secara efek
+  ini "delete-tag berkali-kali" ditambah pembersihan folder, bukan operasi seberat GC registry-wide yang owner-only): ditemukan user di VPS bahwa setelah semua tag sebuah repo dihapus
+  **dan** GC dijalankan, repo seperti `dummy/hello` tetap muncul di `_catalog` dengan "0 tag" — penyebabnya, `registry:3` membangun `_catalog` dari nama folder
+  `docker/registry/v2/repositories/<repo>/` di storage, dan **baik Distribution API maupun garbage-collect tidak pernah menghapus folder itu sendiri**, hanya blob/manifest tak terpakai
+  di dalamnya. Distribution API juga tidak punya endpoint "hapus repo". Alurnya: (1) `listTagNames` + `getTag` per tag untuk kumpulan digest unik (tag berbeda bisa berbagi digest,
+  seperti `delete-tag`) → `deleteManifest` per digest; (2) hapus foldernya — lokal lewat helper busybox sekali-jalan (`SelfHostedRegistryService.removeRepositoryData()`, `Cmd` array
+  `['rm','-rf', path]`, **tanpa shell** jadi nama repo tidak pernah lewat interpolasi shell) atau S3 lewat `BackupDestinationService.purgeDir()` (rclone `purge` ke
+  `<ROOTDIRECTORY>/docker/registry/v2/repositories/<repo>`, method baru — sebelumnya cuma ada `remove()` satu file); (3) `garbageCollect(false)` otomatis; (4) `restartRegistry()`
+  (method baru di `DockerEngineClient`, `POST /containers/{id}/restart`). Nama repo divalidasi dua kali: `@Matches` yang sama dengan `delete-tag` di DTO, **dan** lagi
+  `assertValidRepositoryName()` (`repository-name.ts`, di-unit-test) tepat sebelum dipakai membangun path/`Cmd` — menolak `..`, path absolut, dan apa pun di luar bentuk komponen OCI,
+  sebagai lapis kedua yang sengaja terpisah dari validasi DTO.
+  **Jebakan cache blob descriptor**: `registry:3` defaultnya (tanpa env apa pun, tidak pernah di-nonaktifkan di `createContainer()`) mengaktifkan `storage.cache.blobdescriptor: inmemory`
+  — setelah GC menghapus blob, cache di memori itu masih percaya blob itu ada, jadi `docker push` ulang layer yang sama berikutnya melihat "blob already exists" dan **tidak**
+  mengunggah ulang, padahal blobnya sudah hilang dari disk; manifest baru lalu menunjuk ke blob yang tidak ada dan `docker pull` gagal. Dipilih **restart container** setelah GC
+  (cache in-memory, hilang begitu proses baru) daripada mematikan cache-nya — lebih aman dan tidak mengubah perilaku registry di luar momen hapus-image ini. Diuji nyata dengan
+  `registry:3` sungguhan: push 2 repo (satu dengan 2 tag berdigest sama plus repo lain yang berbagi blob yang sama lewat `--mount`), hapus salah satu repo → hilang dari `_catalog`,
+  repo lain utuh, GC melaporkan blob yang benar-benar tidak dipakai lagi (3 blob) sementara blob yang masih dipakai repo lain tidak disentuh (0 blob) — lalu build image baru yang
+  blobnya **benar-benar** ter-GC, hapus repo-nya, **push ulang** persis konten yang sama dan **pull** hasilnya: berhasil penuh (membuktikan jebakan cache di atas benar dan restart
+  menyelesaikannya). Juga diuji: repo 0-tag persis skenario user (hapus tag lalu hapus repo, hilang dari katalog), registry eksternal ditolak 400, token API `readOnly` 403.
+  **Peringatan pemakaian**: sebelum menghapus (kecuali `?force=true`), `usage()` mencari `Application.currentImage`/`imageRef` yang cocok pola `%/<repo>:%` dan membalas 409 dengan
+  daftarnya (juga tersedia sendiri lewat `GET .../repositories/*repository/usage` untuk pratinjau di web sebelum konfirmasi) — diuji nyata dengan aplikasi `sourceType: 'image'`
+  yang `imageRef`-nya menunjuk repo yang mau dihapus: 409 tanpa `force`, 200 dengan `force=true`. **Belum diuji**: S3 (tidak ada MinIO di lingkungan pengujian ini; kode `purgeDir()`
+  memakai ulang `rcloneEnv()`/pola `rclone` yang sudah diuji nyata di tempat lain untuk upload/download/delete, hanya perintah `purge` yang baru).
+- **Jebakan ditemukan saat mengerjakan fitur di atas**: `RegistryService.apiBaseUrl()` memakai `config.get('REGISTRY_INTERNAL_URL') ?? fallback` — `.env`'s
+  `REGISTRY_INTERNAL_URL=` (kosong, bukan dihapus) adalah string kosong, bukan `undefined`, jadi `??` **tidak** jatuh ke fallback dan `RegistryClient` dibuat dengan `baseUrl` kosong,
+  membuat **setiap** panggilan lewat `RegistryClient` (`list-repositories`, `list-tags`, `delete-tag`, `test-registry`, dan fitur hapus-image di atas) gagal 500 `Invalid URL` —
+  pola yang persis sama dengan jebakan `DOCKER_SOCKET` yang sudah didokumentasikan (bagian Docker & Registry, klien Engine API). Ditemukan lewat verifikasi nyata dev server di sesi
+  ini (bukan lewat unit test — mock tidak pernah membaca `.env` sungguhan), diperbaiki dengan mengganti `??` jadi `||` di `apiBaseUrl()`.
 - **Kredensial untuk klien luar** (`get-registry-credentials/`, `GET /registries/:id/credentials`, `@Roles('owner','admin')` — sama dengan `delete-registry`): membalas `{url, username, password}` dengan password **terdekripsi**, pola yang sama dengan `database-credentials` (dipisah dari `GET /registries` supaya list tidak pernah membawa rahasia). Dipakai `aoox deploy` di CLI (`../aoox-cli`) untuk `docker login` sebelum `docker push` — `url` di sini APA ADANYA dari kolom `registries.url` (untuk registry self-hosted = `SelfHostedRegistryService.publicUrl`, sudah menghormati `REGISTRY_PUBLIC_HOST`), bukan `apiBaseUrl()` yang dipakai API sendiri untuk memanggil registry (itu bisa `REGISTRY_INTERNAL_URL`, tidak terjangkau dari luar container API).
 
 ## Application & Deploy
@@ -285,6 +350,8 @@ NestJS 11 backend for aoox (self-hosted PaaS).
   Efek samping yang disengaja: container yang kemudian jadi `unhealthy` dilepas Traefik (404) — itulah gunanya health check.
 - Rollback: `rollback-application/` (`POST /applications/:id/rollback {deploymentId}`) membuat Deployment `kind: 'rollback'` yang memakai `imageRef` lama
   (`ensureImage` → `replaceContainer`), tanpa build/push. Hanya target `success` yang boleh.
+- `Application.ignoreErrorLogs` (default `false`, diset lewat `update-application`): melewatkan app dari `app-error-watcher.service.ts` (lihat bagian
+  Notifikasi → "Error aplikasi dari log") — untuk app yang output normalnya memang berisik terlihat seperti error. Ikut diekspor/impor lewat `project-transfer`.
 - Environment: `Project.env` (bersama) + `Application.env`, keduanya teks `KEY=VALUE`; digabung oleh `env-resolver.service.ts` **saat container dibuat**
   (`replaceContainer`, bukan saat build — jadi password DB baru/rotasi terpakai di deploy berikutnya tanpa rebuild), app menang bila key sama.
   Nilai boleh merujuk `${{project.KEY}}` dan `${{database.<slug>.url|host|port|username|password|database}}` — database dicari **hanya di project yang sama**
@@ -339,14 +406,20 @@ NestJS 11 backend for aoox (self-hosted PaaS).
   lalu `replaceContainer`. Tidak butuh registry lokal. Pull gagal → deployment `failed`, container lama tetap jalan. Rollback tetap memakai `imageRef` deployment lama; webhook untuk app
   image mengabaikan cek branch (CI bisa memanggilnya setelah `docker push`); preview PR tidak berlaku. DTO: `gitUrl` wajib hanya bila `sourceType !== 'image'` (`ValidateIf`),
   `imageRef` wajib bila `image`. Web: select **Sumber** di form (git/image), field image + kredensial registry.
-  **Jebakan yang ditemukan** (`update-application.dto.ts`): field milik sumber yang tidak dipakai (mis. `imageRef` untuk app git) dikirim web sebagai `""`, bukan
-  `undefined`/`null` — bagian Image/Git di form React di-mount kondisional per `sourceType`, jadi field yang tidak relevan lenyap dari `FormData` dan action mengembalikannya
-  sebagai string kosong. `@IsOptional()` **hanya** melewatkan `null`/`undefined`, bukan `""`, sehingga `@Matches(...)` tetap jalan dan menolak string kosong dengan pesan
-  regex-nya (`imageRef must be an image reference like registry/repo:tag`) — user tidak bisa menyimpan Pengaturan sama sekali untuk app git karena field `imageRef` yang
-  sama sekali tidak mereka sentuh. Field bertipe string dengan pola serupa (`imageRef`, `gitUrl`, `gitBranch`, `dockerfilePath`, `staticOutputDir`, `previewDomain`) butuh
-  `@ValidateIf((_, v) => v !== '')` tambahan (di samping `v !== null` untuk yang nullable) supaya `""` dilewatkan seperti `null`/`undefined`; field UUID nullable
-  (`gitCredentialId`, `imageRegistryId`, `swarmNodeId`, `serverId`) aman karena `application.schema.ts` di web sudah men-transform `""` → `null` sebelum dikirim, jadi
-  `ValidateIf(v !== null)` yang ada di sana sudah cukup — hanya field string yang divalidasi `@Matches`/regex tanpa transform serupa yang rawan.
+  **Jebakan yang ditemukan** (`create-application.dto.ts` **dan** `update-application.dto.ts` — keduanya kena, ditemukan terpisah sehari berbeda karena form yang sama
+  dipakai untuk create dan update): field milik sumber/cara build yang tidak dipakai (mis. `imageRef` untuk app git, atau `dockerfilePath` untuk `buildType` selain
+  `dockerfile`) dikirim web sebagai `""`, bukan `undefined`/`null` — bagian Image/Git/Dockerfile/Static di form React di-mount kondisional per `sourceType`/`buildType`,
+  jadi field yang tidak relevan lenyap dari `FormData` dan action mengembalikannya sebagai string kosong. `@IsOptional()` **hanya** melewatkan `null`/`undefined`, bukan
+  `""`, sehingga `@Matches(...)` tetap jalan dan menolak string kosong dengan pesan regex-nya (mis. `dockerfilePath must match /^[\w./-]{1,200}$/ regular expression`) —
+  user tidak bisa membuat/menyimpan Pengaturan sama sekali untuk cara build yang field-nya sendiri tidak mereka sentuh. Field bertipe string dengan pola serupa (`imageRef`,
+  `gitUrl`, `gitBranch`, `dockerfilePath`, `staticOutputDir`, `staticBuildCommand`, `healthcheckPath`, `previewDomain`) butuh `@ValidateIf((_, v) => v !== '')` tambahan
+  (di samping `v !== null` untuk yang nullable) supaya `""` dilewatkan seperti `null`/`undefined`, di **kedua** DTO; field UUID nullable (`gitCredentialId`,
+  `imageRegistryId`, `swarmNodeId`, `serverId`) aman karena `application.schema.ts` di web sudah men-transform `""` → `null` sebelum dikirim, jadi `ValidateIf(v !== null)`
+  yang ada di sana sudah cukup — hanya field string yang divalidasi `@Matches`/regex tanpa transform serupa yang rawan. Service create juga sempat menyimpan `gitUrl`/
+  `staticBuildCommand` sebagai `""` alih-alih `null` (pola `?.trim() ?? null` tidak menangkap `""`, beda dari `?.trim() || null` yang dipakai field lain) — disamakan.
+  Diaudit juga `compose-app.dto.ts`/`create-compose-app.dto.ts` (pola serupa lain) dan `add-mount.dto.ts`: **tidak** kena — form compose memakai skema zod terpisah per
+  `source` (git vs template) yang menghilangkan field tak relevan sepenuhnya (bukan mengirim `""`), dan dialog mount membangun body request sebagai objek JS dengan
+  spread kondisional, jadi tidak pernah mengirim field yang bagiannya sendiri tidak dirender.
 - **Update otomatis image** (`Application.autoUpdate`, `autoUpdateIntervalMinutes` 5–1440 default 60, `imageDigest`, `imageCheckedAt`; hanya `sourceType='image'`):
   `image-reference.ts` `parseImageRef()` (pure, di-unit-test; Docker Hub → `registry-1.docker.io` + `library/`), `registry/remote-digest.ts` `fetchRemoteDigest()` =
   `HEAD /v2/<repo>/manifests/<tag>` dengan Accept manifest list/OCI index (digest yang sama dengan `docker pull`/`buildx imagetools`), token flow Docker Hub/GHCR
@@ -493,6 +566,31 @@ NestJS 11 backend for aoox (self-hosted PaaS).
   sering terjadi untuk penyesuaian rutin — mengirim untuk ini akan lebih berisik daripada berguna). Pesan: nama app, project, dan field **Trigger** dari
   `trigger-summary.ts` `triggerSummary()` (helper murni yang sudah dipakai baris pertama log deployment — commit pendek + pesan commit + pengirim untuk webhook,
   "Triggered by auto-update" untuk auto-update, "Triggered manually" selainnya), `level: 'info'`.
+- **Error aplikasi dari log** (`on_app_error`, **default `false`** untuk semua channel — deteksi dari teks log rawan salah tebak, jadi opt-in murni, beda dari toggle
+  lama yang defaultnya `true`): `app-error-watcher.service.ts` (application module, `@Cron` tiap menit, pola sama dengan `dns-watcher.service.ts`) memindai log tiap
+  aplikasi `running` dengan `Application.ignoreErrorLogs = false` (switch per app, default `false`, untuk app yang normal outputnya memang berisik seperti error).
+  **Bukan** stream `follow` permanen per container — `DockerEngineClient.containerLogsSince(id, sinceUnixSeconds)` (`GET /containers/{id}/logs?since=`) dipanggil
+  tiap tick dengan kursor in-memory per container id (bukan per app, karena mode `service` punya banyak task container); container yang baru pertama terlihat
+  cuma di-baseline (kursor = sekarang) tanpa memindai log lama, supaya app yang baru deploy/restart tidak langsung memicu notifikasi dari log historisnya sendiri.
+  App di server remote → `RemoteDockerService.forServer(app.serverId)`; mode `service` → `SwarmDeployService.taskContainers(app)` (selalu daemon lokal, swarm
+  memang host-only). **Stack compose dan preview PR di luar cakupan** (lihat bagian masing-masing).
+  Detektor murni `log-error-detector.ts` `detectLogErrors()` (di-unit-test luas): pola awal event `Traceback (most recent call last)`, `^panic:`,
+  `Unhandled(Promise)?Rejection`, `\w*(Error|Exception)\b[:\s]` (butuh huruf besar "Error"/"Exception" persis, jadi "retrying after error: x" berhuruf kecil
+  tidak kepicu), `level[=:]"?(error|fatal)"?`, `\bFATAL\b`, `\[ERROR\]`, atau baris JSON dengan field `level`/`severity` bernilai `error`/`fatal` (string) atau
+  `50`/`60` (angka, level pino) — dicek lebih dulu terhadap daftar **false positive** eksplisit (`0 errors`, `errors: 0`, `no error`, `error_count=0`, case-insensitive)
+  supaya tidak kepicu. Baris lanjutan (indentasi, `at …`, `File "…`) digabung ke event yang sama, dibatasi 20 baris total; baris pertama yang tidak diindentasi
+  mengakhiri penggabungan (kadang bikin baris ringkasan exception Python — yang memang tidak diindentasi — terdeteksi sebagai event terpisah dari Traceback-nya;
+  disengaja, tetap lebih baik daripada tidak terdeteksi sama sekali). Fingerprint = baris pertama yang dinormalisasi (`normalizeFingerprint()`: UUID/hex/timestamp/
+  durasi/angka polos → placeholder) supaya kejadian error yang sama bentuknya (beda id request) tidak dianggap error baru terus-menerus.
+  Kirim **satu notifikasi per app per tick** (bukan per baris): jumlah error, maksimal 3 contoh (fingerprint berbeda, dipotong 300 karakter), link
+  `${WEB_ORIGIN}/applications/<id>`, `level: 'failure'` (tidak ada level `'warning'` di `NotificationMessage`). **Cooldown** 15 menit per app — **kecuali** ada
+  fingerprint yang belum pernah terlihat sejak boot untuk app itu (`seenFingerprints` in-memory per app id), yang selalu tetap dikirim biar error baru tidak
+  ketahan cooldown punya error lama. Peta in-memory (`cursorSeconds` per container, `seenFingerprints`/`lastNotified` per app) dibersihkan tiap tick untuk
+  container/app yang sudah tidak aktif — app yang hilang lalu muncul lagi dianggap baru (di-baseline ulang, bukan melanjutkan cooldown lama).
+  **Redaksi**: nilai env mentah yang key-nya mengandung `PASSWORD`/`SECRET`/`TOKEN`/`KEY`, plus password database ter-resolve dari `EnvResolverService.resolve()`
+  (set yang sama yang didaftarkan `DeploymentLog.redact` saat deploy) — keduanya diganti `***` di teks contoh sebelum dikirim; referensi `${{...}}` yang rusak
+  hanya membuat redaksi database itu dilewati (tidak menggagalkan notifikasi). `EVENT_TOGGLE`/`CreateNotificationDto`/`notification.entity.ts` menambah
+  `onAppError` mengikuti pola `onDeploymentStarted`.
 
 ## Compose (stack docker-compose)
 
@@ -596,12 +694,51 @@ NestJS 11 backend for aoox (self-hosted PaaS).
   `docker compose up` biasa tanpa swarm** sejak Compose v2 — diverifikasi langsung terhadap image runner sendiri (`docker:29-cli`): container dengan `deploy.resources.limits.memory: 64M`
   muncul di `docker inspect` sebagai `HostConfig.Memory` 67108864, bukan 0. Tidak ada jalur update langsung seperti `POST /containers/{id}/update` milik app/db — compose selalu
   redeploy dari override, jadi ubah limit = berlaku di deploy berikutnya.
+- **Resource usage per project** (`src/modules/project/project-resource-usage/`, di dalam `ProjectModule` — modul ini meng-import `DockerModule`+`MonitoringModule` langsung,
+  bukan sebaliknya, jadi tanpa siklus): `GET /projects/:id/resource-usage` (halaman detail, live saja) dan field baru `resourceUsage` di tiap item `GET /projects`
+  (kartu overview, `ProjectResourceUsageSummary | null`) — keduanya CPU%/memori/jaringan saja, **tanpa storage** (sengaja dilewati: `docker system df -v` per volume
+  terlalu berat untuk dipanggil live per kartu/per project, beda dengan `MaintenanceService.usage()` yang sinkron dan dipanggil sekali per halaman Settings, bukan di-poll).
+  Sumber data = cache in-memory `MonitoringService` yang sudah ada (sampler 15 detik) — **tidak ada panggilan Docker baru per request**. `ProjectResourceUsageService.containerProjectMap()`
+  mengelompokkan container yang sudah disampel per project: container application/database langsung membawa label `aoox.project` (diset `deployment-runner.service.ts`/
+  `managed-database.service.ts` saat create), jadi tanpa query DB; stack compose **tidak** punya label project (`compose-runner.service.ts`'s override hanya menaruh
+  `aoox.component`/`aoox.compose`) — juga "bare" stack tanpa override sama sekali (tanpa domain/port/mount/limit, dikenali lewat `com.docker.compose.project` seperti
+  `MonitoringService.sampleAll()`) — keduanya di-resolve lewat **satu** query `compose_apps` (id/slug → project_id) untuk **semua** project sekaligus (bukan N+1 per project/per kartu).
+  `buildProjectUsage()` (`project-resource-usage.util.ts`, murni & di-unit-test) memakai ulang `aggregateMetrics()` (pola sama dengan jumlah task swarm/service compose) untuk
+  menjumlahkan seluruh container sebuah project jadi satu seri, lalu mengubah counter jaringan kumulatif yang sudah dijumlahkan itu jadi **rate** bytes/detik dari dua tick
+  sampler berurutan — angka kumulatif lintas container dengan waktu mulai berbeda tidak berarti apa-apa kalau tidak dikonversi ke rate; container yang keluar dari
+  jumlah di tengah jalan (redeploy/stop) di-clamp ke 0, bukan dilaporkan negatif. **Live saja, tanpa riwayat tersimpan** (`24h`/`7d`/`30d` seperti endpoint metrik lain) —
+  menambah retensi per project adalah pekerjaan terpisah (perlu skema rollup baru, bukan sekadar baca cache) dan belum diminta.
 
 ## Managed database
 
-- `src/modules/managed-database/` — entity `ManagedDatabase` (di bawah `Project`; engine `postgres`|`mysql`|`mariadb`|`redis`, `image_tag`, `db_slug` unik,
-  `password_encrypted` `select: false`, `host_port` opsional, status `creating`→`running`|`stopped`|`error`).
-- `engines.ts` = resep per engine mengikuti env resmi image Docker Hub (`POSTGRES_*`, `MYSQL_*`, `MARIADB_*`, redis `--requirepass`), port, path data, dan format URL.
+- `src/modules/managed-database/` — entity `ManagedDatabase` (di bawah `Project`; engine `postgres`|`mysql`|`mariadb`|`redis`|`valkey`|`mongodb`, `variant`
+  (hanya untuk `postgres`: `pgvector`|`postgis`|`timescaledb`|null), `image_tag`, `db_slug` unik, `password_encrypted` `select: false`, `host_port` opsional,
+  status `creating`→`running`|`stopped`|`error`).
+- `engines.ts` = resep per engine mengikuti env resmi image Docker Hub (`POSTGRES_*`, `MYSQL_*`, `MARIADB_*`, redis/valkey `--requirepass`), port, path data, dan format URL.
+  **Valkey** = drop-in Redis (fork Linux Foundation): resep identik dengan redis (`valkey-server --requirepass ... --appendonly yes`, url `redis://`) — image-nya
+  terverifikasi punya **kedua** binary `valkey-cli` **dan** `redis-cli` (symlink), jadi seluruh kode yang shell-out ke `redis-cli` (backup, data browser) jalan
+  tanpa modifikasi; hanya setiap `if (engine === 'redis')` yang perlu diperluas jadi `|| engine === 'valkey'` (semuanya di `data-browser/database-query.service.ts`
+  dan `schemas.service.ts`, sengaja lewat pengecekan literal per lokasi bukan helper terpusat, supaya `Record<DatabaseEngine, ...>` di `engines.ts`/`backup-recipes.ts`
+  tetap memaksa exhaustiveness compiler saat ada engine baru lagi nanti). **Varian PostgreSQL** (`POSTGRES_VARIANTS` di `engines.ts`, tipe `PostgresVariant`):
+  protokol/env/URL/backup (`pg_dump`/`pg_dumpall`) sama persis dengan postgres polos — hanya `imageNameFor(engine, variant)`/`defaultTagFor(engine, variant)`
+  yang berbeda (dipakai di `managed-database.service.ts` provision, `database-backup.service.ts`, dan data browser `spawn()`, ketiganya sebelumnya hardcode
+  `ENGINES[engine].image` langsung). Tag Docker Hub diverifikasi nyata: `pgvector/pgvector:pg16`, `postgis/postgis:16-3.4`, `timescale/timescaledb:latest-pg16`.
+  Ekstensi diaktifkan sekali lewat `ManagedDatabaseService.activateVariantExtension()` (`CREATE EXTENSION IF NOT EXISTS ...`, di container helper sekali-jalan
+  dengan `pg_isready` loop dulu — `provision()` sendiri tidak menunggu Postgres siap, cuma menunggu container start) setelah container start; gagal hanya di-log
+  warning, tidak menggagalkan provisioning (database tetap bisa dipakai tanpa ekstensinya). **Diuji nyata**: pgvector (ekstensi + kolom `vector` + insert +
+  backup `pg_dump`/restore `psql` penuh, data kembali setelah wipe), PostGIS & TimescaleDB (image resminya sudah mengaktifkan ekstensi sendiri saat init —
+  panggilan `CREATE EXTENSION IF NOT EXISTS` di sini jadi no-op idempoten dengan NOTICE, bukan error; TimescaleDB juga diuji `create_hypertable()` + insert + select),
+  Valkey (siklus penuh backup `redis-cli --rdb` → wipe volume → restore lewat manifest AOF yang sama dengan Redis → data kembali). Ganti engine/varian setelah
+  dibuat **tidak didukung** dari dashboard (hapus + buat ulang, opsional restore backup ke yang baru).
+  **MongoDB** sengaja jadi `engine: 'mongodb'` tersendiri (bukan varian) — protokol/tooling backup sama sekali beda dari SQL. Mongo membuat database secara
+  **lazy** (tanpa `CREATE DATABASE` — database baru "ada" begitu punya isi), jadi `ManagedDatabaseService.initMongoDatabase()` (dipanggil di `provision()` setelah
+  start, pola sama dengan `activateVariantExtension`: container helper sekali-jalan, loop `mongosh --eval "db.adminCommand('ping')"` menunggu server siap, kredensial
+  lewat `Env` bukan diinterpolasi ke script) menulis satu dokumen placeholder ke koleksi `_aoox_init` supaya database utama langsung muncul di `schemas/` tanpa
+  menunggu tulisan pertama dari aplikasi; gagal hanya di-log warning. `SchemasService.engineOf()` punya cabang `'mongodb'` sungguhan (bukan ditolak seperti
+  redis/valkey) — `mongoDatabaseNames`/`mongoCreateDatabase`/`mongoDropDatabase` (`DatabaseQueryService`) lewat `db.adminCommand({listDatabases:1,...})`/
+  `insertOne`/`dropDatabase`. `BACKUP_RECIPES.mongodb` pakai `mongodump`/`mongorestore --archive --gzip` (gzip bawaan mongodump, tanpa wrapper `gzipped()`);
+  `restoreAll` menolak `admin`/`local`/`config` lewat `--nsExclude` supaya restore server penuh tidak pernah menimpa kredensial root user. Diuji nyata: provision
+  → init placeholder → `mongoFind` → backup → wipe (`dropDatabase`) → restore → data kembali, semuanya lewat HTTP API sungguhan (bukan cuma `docker exec` manual).
 - `managed-database.service.ts`: container `aoox-db-<slug>` di network `aoox` + volume `aoox_db_<slug>`, label compose; provisioning **detached**
   (`provisionInBackground`, pull image bisa lama) → status `running`/`error`. `connection()` memberi URL internal (host = nama container) dan eksternal (bila port host dipublikasikan).
 - Flow: `create-database` (202), `list-databases?projectId`, `get-database` (+ state container), `database-credentials` (password & URL — terpisah agar list tidak membawa rahasia),
@@ -617,6 +754,18 @@ NestJS 11 backend for aoox (self-hosted PaaS).
   `CREATE TABLE`) dikembalikan sebagai `message`. Redis: `tables` = key hasil `SCAN 0 COUNT 500`, `rows` = isi key per tipe (GET/HGETALL/LRANGE/SMEMBERS/ZRANGE),
   `query` = satu perintah (`tokenize` menghormati kutip; whitelist `REDIS_READ_COMMANDS` untuk member; `error:"…"` redis-cli → 400). Image `mariadb` hanya punya CLI `mariadb`
   (tanpa alias `mysql`) — `sql()` memilih CLI per engine.
+- **Data browser untuk MongoDB**: `mongo()` (private helper) menjalankan `mongosh --eval` di container sekali-jalan dan membungkus **setiap** ekspresi dalam
+  `EJSON.stringify((expr), {relaxed: true})` secara terpusat sebelum eval — output default mongosh untuk nilai bukan-string adalah format shell-inspect
+  (`[ 'a', 'b' ]`), bukan JSON, jadi tanpa pembungkusan ini `JSON.parse` di sisi API gagal untuk `listTables`/`mongoDatabaseNames`/`mongoCreateDatabase`/
+  `mongoDropDatabase` (ditemukan lewat run Docker sungguhan, bukan dari unit test — `mongoFind` kebetulan lolos karena sudah membungkus sendiri sebelum
+  perubahan ini). `listTables` = `db.getCollectionNames()`, `tableRows`/`exportTableCsv` lewat `mongoFind()` + `mongoDocsToRows()` (fungsi murni & di-unit-test:
+  union key di seluruh batch urutan first-seen, `_id` dipin pertama, nilai bukan-string di-`JSON.stringify`). `columns()`/`updateRow()`/`deleteRow()`/ekspor
+  &impor SQL semuanya menolak 400 (skema bebas, belum didukung). Query box hanya `<koleksi>.find({...})` (`buildMongoFindScript()`, fungsi murni & di-unit-test):
+  filter di-`JSON.parse` ketat lalu di-`JSON.stringify` ulang sebelum ditempel ke script `mongosh` yang di-generate — itulah yang mencegah filter seperti
+  `{}); db.dropDatabase(); ({` lolos dari pemanggilan `.find(...)` dan berjalan sebagai JS mongosh bebas (hanya literal JSON valid yang bisa lolos `JSON.parse`,
+  jadi yang sampai ke shell selalu data mati). Operator extended-JSON (`{"$oid":"..."}`) belum diterjemahkan khusus di filter (jadi cuma memfilter field bernama
+  literal `$oid`, bukan error). **Belum**: insert/update/delete/aggregate lewat query box (baca-saja untuk sekarang), tab Struktur/buat-koleksi/edit-hapus baris
+  di web (backend menolak 400, web tidak pernah memanggilnya untuk engine ini).
 - **Data browser tahap 2** (struktur tabel, edit/hapus baris, ekspor CSV, riwayat query): `GET /databases/:id/tables/:table/columns` → `ColumnInfoDto[]` (name/dataType/nullable/
   defaultValue/isPrimaryKey) dari `information_schema.columns` (Postgres: PK lewat `EXISTS` ke `table_constraints`+`key_column_usage`; MySQL/MariaDB: `column_key = 'PRI'`),
   dipakai tab **Struktur** di web dan sebagai sumber kebenaran validasi edit — **bukan** `assertIdentifier` yang menolak spasi/non-ASCII (kolom seperti `"first name"` valid di
@@ -641,26 +790,32 @@ NestJS 11 backend for aoox (self-hosted PaaS).
   berbeda dari `/audit-logs` yang platform-wide owner/admin.
 - **Banyak database per server** (`schemas/`): `GET /databases/:id/schemas` (semua member) → `[{name, isPrimary}]` (`pg_database` non-template / `SHOW DATABASES`, minus
   `SYSTEM_SCHEMAS`), `POST` (owner/admin; Postgres `CREATE DATABASE … OWNER <user>` — user provisioning adalah superuser; MySQL/MariaDB `CREATE DATABASE` + `GRANT ALL … TO 'user'@'%'`
-  agar URL koneksi tinggal ganti nama db), `DELETE /:name` (owner/admin; primary & sistem ditolak; Postgres `WITH (FORCE)`). Redis → 400 (db bernomor, bukan nama).
+  agar URL koneksi tinggal ganti nama db; MongoDB tidak butuh grant terpisah — `mongoCreateDatabase` cukup menulis satu dokumen placeholder, user root sudah punya akses ke semua
+  database), `DELETE /:name` (owner/admin; primary & sistem ditolak; Postgres `WITH (FORCE)`; MongoDB `db.dropDatabase()`). Redis/Valkey → 400 (db bernomor, bukan nama).
   Data browser menerima `?db=` / `{db}` (`DatabaseSelectDto`) → `DatabaseQueryService.sql(db, stmt, {database})` menimpa `DB_NAME` di env helper (entri terakhir menang).
   Env app: `${{database.<slug>.url:<nama>}}` / `.database:<nama>` → URL/nama database lain di server yang sama (`REFERENCE` punya grup `:name`; cache per `slug:name`).
-  Backup: `ManagedDatabase.backupAllDatabases` (PATCH `backup-schedule`) → `DatabaseBackup.scope` `all` (file `*.all.sql.gz`): Postgres `pg_dumpall --clean --if-exists`, restore ke db
+  Backup: `ManagedDatabase.backupAllDatabases` (PATCH `backup-schedule`) → `DatabaseBackup.scope` `all` (file `*.all.<ext>`): Postgres `pg_dumpall --clean --if-exists`, restore ke db
   `postgres` tanpa `ON_ERROR_STOP` (DROP DATABASE gagal selagi app terhubung — objek lalu diganti in-place); MySQL/MariaDB `mysqldump --databases <non-sistem> --add-drop-database`
-  (bukan `--all-databases`, supaya tabel grant `mysql` tidak ikut), restore tanpa nama db. Diuji E2E di Postgres & MariaDB (drop db → restore → data kembali).
+  (bukan `--all-databases`, supaya tabel grant `mysql` tidak ikut), restore tanpa nama db; MongoDB `mongodump` tanpa `--db` (seluruh server) lalu `mongorestore --nsExclude`
+  `admin`/`local`/`config` supaya root user tidak ikut ditimpa. Diuji E2E di Postgres & MariaDB (drop db → restore → data kembali), dan manual untuk MongoDB
+  (`admin.system.users` tetap utuh setelah restore-all).
 - **Ekspor/impor SQL** (data-browser): `GET /databases/:id/export?db=` men-stream `pg_dump --no-owner --no-privileges --clean --if-exists` / `mysqldump`/`mariadb-dump`
   polos (tanpa gzip, tanpa row backup) sebagai `<slug>[-db].sql` — `DatabaseQueryService.spawn()` (create+seed `/in` via `putArchive`+start+wait, timeout 30 menit untuk
   transfer) lalu `streamFileFromContainer('/out/stdout')`. `POST /databases/:id/import?db=` (owner/admin, throttle 10/menit, multipart `file` via `FileInterceptor` —
   `@types/multer` dev dep sesuai docs Nest; maks `IMPORT_MAX_BYTES` 64 MB karena file di-tar di memori) → `psql -v ON_ERROR_STOP=1 -f` / `mysql <`; gagal di statement
   pertama yang error → 400 dengan pesan engine, statement sebelumnya tetap berlaku (perilaku CLI; tanpa transaksi pembungkus). Web mem-proxy ekspor lewat
-  `/api/databases/[id]/export` (cookie → Bearer) dan impor lewat server action multipart (`importSqlAction`).
+  `/api/databases/[id]/export` (cookie → Bearer) dan impor lewat server action multipart (`importSqlAction`). Redis/Valkey dan MongoDB tidak punya SQL untuk
+  di-ekspor/impor — keduanya ditolak 400 (`dumpScript()`/`importSql()`; pakai backup/restore sebagai gantinya).
 
 ## Backup database
 
 - `src/modules/database-backup/` — entity `DatabaseBackup` (`database_backups`, FK cascade ke `managed_databases`; `filename` = `<slug>/<ISO stamp>.<ext>`,
   status `running`→`success`|`failed`, `trigger` `manual`|`scheduled`, `size_bytes`). `ManagedDatabase` punya `backup_cron` (null = nonaktif) & `backup_keep` (default 7).
 - Semua dump ada di **satu volume** `aoox_backups`, di-mount `/backups` ke container sekali-jalan dari image engine itu sendiri (`backup-recipes.ts`:
-  `pg_dump | gzip`, `mysqldump`/`mariadb-dump` sebagai root, `redis-cli --rdb`). Kredensial hanya lewat env (`DB_HOST DB_PORT DB_USER DB_PASSWORD DB_NAME BACKUP_FILE`), tidak di `Cmd`.
-- Restore SQL = `online` (stream ke `psql`/`mysql`). Redis = `offline-volume`: container di-stop, volume data di-mount ke `/data`, snapshot dipasang sebagai
+  `pg_dump | gzip`, `mysqldump`/`mariadb-dump` sebagai root, `redis-cli --rdb`, `mongodump --archive --gzip`). Kredensial hanya lewat env
+  (`DB_HOST DB_PORT DB_USER DB_PASSWORD DB_NAME BACKUP_FILE`), tidak di `Cmd`.
+- Restore SQL = `online` (stream ke `psql`/`mysql`). MongoDB juga `online` (`mongorestore --archive --gzip --drop`, tidak perlu stop container). Redis/Valkey =
+  `offline-volume`: container di-stop, volume data di-mount ke `/data`, snapshot dipasang sebagai
   **base file multi-part AOF** + manifest (Redis 7 dengan `appendonly yes` mengabaikan `dump.rdb`), lalu container di-start lagi (`finally`).
 - Unduh/hapus file lewat helper `busybox:stable` (`GET /containers/{id}/archive` → `SingleFileUntar` di klien Docker; `DockerService.runOnceWithOutput` untuk exit code + output).
 - Jadwal: `backup-scheduler.service.ts` (`@nestjs/schedule@6` + `SchedulerRegistry`/`CronJob` dari `cron`), job per DB didaftarkan saat boot dan `reschedule(db)` saat jadwal diubah;

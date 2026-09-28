@@ -5,7 +5,7 @@ import { Repository } from 'typeorm';
 import { BackupDestinationService } from '../backup-destination/backup-destination.service';
 import { ProjectAccessService } from '../project/project-access.service';
 import { composeLabels, DockerService } from '../docker/docker.service';
-import { ENGINES } from '../managed-database/engines';
+import { ENGINES, imageNameFor } from '../managed-database/engines';
 import { ManagedDatabase } from '../managed-database/managed-database.entity';
 import {
   containerNameForDb,
@@ -229,7 +229,7 @@ export class DatabaseBackupService {
     extraBinds: string[] = [],
   ): Promise<{ code: number; output: string }> {
     const spec = ENGINES[db.engine];
-    const image = `${spec.image}:${db.imageTag}`;
+    const image = `${imageNameFor(db.engine, db.variant)}:${db.imageTag}`;
     await this.docker.ensureImage(image);
     await this.docker.engine.createVolume(BACKUPS_VOLUME);
     const password = await this.databases.password(db);

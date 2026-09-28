@@ -11,7 +11,7 @@ import { GitCredentialService } from '../git-credential/git-credential.service';
 import { JobSchedulerService } from '../job/job-scheduler.service';
 import { Job } from '../job/job.entity';
 import { JobService } from '../job/job.service';
-import { ENGINES } from '../managed-database/engines';
+import { defaultTagFor, ENGINES } from '../managed-database/engines';
 import { ManagedDatabaseService } from '../managed-database/managed-database.service';
 import { ProjectService } from '../project/project.service';
 import { RegistryService } from '../registry/registry.service';
@@ -139,6 +139,7 @@ export class ProjectImportService {
           env: a.env ?? '',
           buildArgs: a.buildArgs ?? '',
           healthcheckPath: a.healthcheckPath ?? null,
+          ignoreErrorLogs: a.ignoreErrorLogs ?? false,
           deploymentKeep: a.deploymentKeep ?? 10,
           backupCron: validCron(a.backupCron, where, warnings),
           backupKeep: a.backupKeep ?? 7,
@@ -226,7 +227,13 @@ export class ProjectImportService {
           name: d.name,
           slug,
           engine: d.engine,
-          imageTag: d.imageTag || spec.defaultTag,
+          variant: d.engine === 'postgres' ? (d.variant ?? null) : null,
+          imageTag:
+            d.imageTag ||
+            defaultTagFor(
+              d.engine,
+              d.engine === 'postgres' ? (d.variant ?? null) : null,
+            ),
           databaseName: spec.hasDatabase
             ? d.databaseName || slug.replace(/-/g, '_')
             : '',

@@ -21,6 +21,8 @@ export class CreateNotificationService {
       onDiskLow: dto.onDiskLow ?? true,
       onCertificateFailure: dto.onCertificateFailure ?? true,
       onContainerDown: dto.onContainerDown ?? true,
+      onDnsIssue: dto.onDnsIssue ?? true,
+      onAppError: dto.onAppError ?? false,
     });
     const saved = await this.notifications.repo.save(entity);
     return this.notifications.toDto(saved, config);

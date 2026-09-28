@@ -91,8 +91,11 @@ export class RegistryService {
    */
   apiBaseUrl(registry: Registry): string {
     if (registry.type === 'self-hosted') {
+      // `?? fallback` doesn't catch an empty string, and `.env`'s
+      // `REGISTRY_INTERNAL_URL=` (unset, left blank) is exactly that — same
+      // pitfall already hit with DOCKER_SOCKET (see AGENTS.md "Docker & Registry").
       return (
-        this.config.get<string>('REGISTRY_INTERNAL_URL') ??
+        this.config.get<string>('REGISTRY_INTERNAL_URL') ||
         `http://${registry.url}`
       );
     }

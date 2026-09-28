@@ -5,12 +5,13 @@ import { Repository } from 'typeorm';
 import { resourceLimits } from '../docker/resource-limits';
 import { Mount } from '../application/mount.entity';
 import { bindsFor, prepareMounts } from '../application/mounts';
+import { shellQuote } from '../application/nixpacks-builder.service';
 import { composeLabels, DockerService } from '../docker/docker.service';
 import { SwarmService } from '../swarm/swarm.service';
 import { ProjectAccessService } from '../project/project-access.service';
 import { decryptSecret, encryptSecret } from '../docker/secret.util';
 import { APP_NETWORK } from '../proxy/proxy.service';
-import { ENGINES } from './engines';
+import { ENGINES, imageNameFor, POSTGRES_VARIANTS } from './engines';
 import { ManagedDatabase } from './managed-database.entity';
 
 export function containerNameForDb(db: ManagedDatabase): string {
@@ -102,7 +103,7 @@ export class ManagedDatabaseService {
   /** Pulls the image, creates the volume and starts the container. Async caller. */
   async provision(db: ManagedDatabase, password: string): Promise<void> {
     const spec = ENGINES[db.engine];
-    const image = `${spec.image}:${db.imageTag}`;
+    const image = `${imageNameFor(db.engine, db.variant)}:${db.imageTag}`;
     const name = containerNameForDb(db);
     const volume = volumeNameForDb(db);
     const port = `${spec.port}/tcp`;
@@ -157,6 +158,115 @@ export class ManagedDatabaseService {
     await this.swarm.connectIfActive(id);
     await this.docker.engine.startContainer(id);
     this.logger.log(`Database ${name} (${image}) started`);
+    if (db.engine === 'postgres' && db.variant) {
+      await this.activateVariantExtension(db, password);
+    }
+    if (db.engine === 'mongodb') {
+      await this.initMongoDatabase(db, password);
+    }
+  }
+
+  /**
+   * Runs `CREATE EXTENSION IF NOT EXISTS` for the chosen Postgres variant in
+   * a one-off helper (same image, so `psql`/`pg_isready` are guaranteed to
+   * exist). Waits for the server to accept connections first — `provision()`
+   * doesn't otherwise wait for Postgres to be ready, only for the container
+   * to start. Idempotent (`IF NOT EXISTS`), so safe to call again after a
+   * variant Postgres restarts. Logs a warning rather than failing
+   * provisioning if the extension can't be created — the database itself is
+   * still usable without it.
+   */
+  private async activateVariantExtension(
+    db: ManagedDatabase,
+    password: string,
+  ): Promise<void> {
+    if (!db.variant) return;
+    const image = `${imageNameFor(db.engine, db.variant)}:${db.imageTag}`;
+    const statements = POSTGRES_VARIANTS[db.variant].extensionSql;
+    const script = [
+      'for i in $(seq 1 30); do pg_isready -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" >/dev/null 2>&1 && break; sleep 1; done',
+      ...statements.map(
+        (stmt) =>
+          `PGPASSWORD="$DB_PASSWORD" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -v ON_ERROR_STOP=1 -c ${shellQuote(stmt)}`,
+      ),
+    ].join(' && ');
+    const id = await this.docker.engine.createContainer({
+      Image: image,
+      Entrypoint: ['sh', '-c', script],
+      Env: [
+        `DB_HOST=${containerNameForDb(db)}`,
+        `DB_PORT=${ENGINES.postgres.port}`,
+        `DB_USER=${db.username}`,
+        `DB_PASSWORD=${password}`,
+        `DB_NAME=${db.databaseName}`,
+      ],
+      Labels: {
+        'aoox.component': 'query',
+        ...composeLabels('db-variant-init'),
+      },
+      HostConfig: { NetworkMode: APP_NETWORK },
+    });
+    try {
+      await this.docker.engine.startContainer(id);
+      await this.docker.engine.waitContainer(id);
+    } catch (err) {
+      this.logger.warn(
+        `Could not activate ${db.variant} extension for ${db.slug}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    } finally {
+      await this.docker.engine.removeContainer(id, true).catch(() => undefined);
+    }
+  }
+
+  /**
+   * MongoDB creates databases lazily (no `CREATE DATABASE`) — a database
+   * only "exists" once it holds a collection with data, so without this the
+   * primary `databaseName` wouldn't show up in `schemas/` until the app's
+   * first write. Waits for `mongod` to accept connections (same idea as
+   * `activateVariantExtension`'s `pg_isready` loop, via `mongosh --eval`
+   * instead), then writes one placeholder document. Logs a warning rather
+   * than failing provisioning — the database is still usable without it.
+   */
+  private async initMongoDatabase(
+    db: ManagedDatabase,
+    password: string,
+  ): Promise<void> {
+    const image = `${imageNameFor(db.engine, db.variant)}:${db.imageTag}`;
+    // Credentials stay in Env (not interpolated into the script/Entrypoint
+    // literal) so they never show up in `docker inspect`/`docker top`, same
+    // rule as every other recipe in this codebase.
+    const uri =
+      'mongodb://$DB_USER:$DB_PASSWORD@$DB_HOST:$DB_PORT/$DB_NAME?authSource=admin';
+    const script = [
+      `for i in $(seq 1 30); do mongosh "${uri}" --quiet --eval "db.adminCommand('ping')" >/dev/null 2>&1 && break; sleep 1; done`,
+      `mongosh "${uri}" --quiet --eval "db.getCollection('_aoox_init').insertOne({createdAt: new Date()})"`,
+    ].join(' && ');
+    const id = await this.docker.engine.createContainer({
+      Image: image,
+      Entrypoint: ['sh', '-c', script],
+      Env: [
+        `DB_HOST=${containerNameForDb(db)}`,
+        `DB_PORT=${ENGINES.mongodb.port}`,
+        `DB_USER=${db.username}`,
+        `DB_PASSWORD=${password}`,
+        `DB_NAME=${db.databaseName}`,
+      ],
+      Labels: {
+        'aoox.component': 'query',
+        ...composeLabels('db-mongo-init'),
+      },
+      HostConfig: { NetworkMode: APP_NETWORK },
+    });
+    try {
+      await this.docker.engine.startContainer(id);
+      await this.docker.engine.waitContainer(id);
+    } catch (err) {
+      this.logger.warn(
+        `Could not initialize database for ${db.slug}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    } finally {
+      await this.docker.engine.removeContainer(id, true).catch(() => undefined);
+    }
   }
 
   /** Detached provisioning; always leaves the row in `running` or `error`. */

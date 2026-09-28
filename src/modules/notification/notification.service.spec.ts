@@ -27,6 +27,7 @@ function channel(name: string, toggles: Partial<Notification>): Notification {
     onDiskLow: false,
     onCertificateFailure: false,
     onDnsIssue: false,
+    onAppError: false,
     createdAt: new Date(),
     ...toggles,
   };

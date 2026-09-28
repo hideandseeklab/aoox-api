@@ -46,6 +46,7 @@ export interface ExportedApplication {
   env: string;
   buildArgs: string;
   healthcheckPath: string | null;
+  ignoreErrorLogs?: boolean;
   deploymentKeep: number;
   backupCron: string | null;
   backupKeep: number;
@@ -67,7 +68,8 @@ export interface ExportedApplication {
 export interface ExportedDatabase {
   name: string;
   slug: string;
-  engine: 'postgres' | 'mysql' | 'mariadb' | 'redis';
+  engine: 'postgres' | 'mysql' | 'mariadb' | 'redis' | 'valkey' | 'mongodb';
+  variant: 'pgvector' | 'postgis' | 'timescaledb' | null;
   imageTag: string;
   databaseName: string;
   username: string;

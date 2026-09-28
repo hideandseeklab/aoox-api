@@ -158,6 +158,11 @@ export class Application {
   @Column({ name: 'healthcheck_path', type: 'varchar', nullable: true })
   healthcheckPath: string | null;
 
+  /** Opt out of `app-error-watcher.service.ts` scanning this app's container logs — for apps whose
+   * normal output looks like an error (e.g. verbose framework logging) and would otherwise be noisy. */
+  @Column({ name: 'ignore_error_logs', default: false })
+  ignoreErrorLogs: boolean;
+
   /** Successful deployments (and their images) kept for rollback; older ones are pruned nightly. */
   @Column({ name: 'deployment_keep', type: 'int', default: 10 })
   deploymentKeep: number;

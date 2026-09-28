@@ -85,6 +85,10 @@ export class UpdateApplicationDto {
   @Matches(/^\/[^\s]*$/, { message: 'healthcheckPath must start with /' })
   healthcheckPath?: string | null;
 
+  @IsOptional()
+  @IsBoolean()
+  ignoreErrorLogs?: boolean;
+
   /** Memory limit in MiB; null = unlimited. */
   @ValidateIf((_, v) => v !== null)
   @IsOptional()

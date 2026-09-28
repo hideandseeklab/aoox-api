@@ -19,10 +19,16 @@ export class CreateDatabaseDto {
   @Length(1, 100)
   name: string;
 
-  @IsIn(['postgres', 'mysql', 'mariadb', 'redis'])
-  engine: 'postgres' | 'mysql' | 'mariadb' | 'redis';
+  @IsIn(['postgres', 'mysql', 'mariadb', 'redis', 'valkey', 'mongodb'])
+  engine: 'postgres' | 'mysql' | 'mariadb' | 'redis' | 'valkey' | 'mongodb';
 
-  /** Image tag; defaults per engine (e.g. `16-alpine`). */
+  /** Only meaningful when `engine === 'postgres'`; null/omitted = plain Postgres. */
+  @ValidateIf((_, v) => v !== null)
+  @IsOptional()
+  @IsIn(['pgvector', 'postgis', 'timescaledb'])
+  variant?: 'pgvector' | 'postgis' | 'timescaledb' | null;
+
+  /** Image tag; defaults per engine/variant (e.g. `16-alpine`, or `pg16` for pgvector). */
   @IsOptional()
   @IsString()
   @Matches(/^[\w.-]{1,64}$/)

@@ -32,6 +32,9 @@ import { ApplicationMetricsController } from './application-metrics/application-
 import { ApplicationService } from './application.service';
 import { CreateLogTicketController } from './create-log-ticket/create-log-ticket.controller';
 import { CreateLogTicketService } from './create-log-ticket/create-log-ticket.service';
+import { CreateConsoleTicketController } from './create-console-ticket/create-console-ticket.controller';
+import { CreateConsoleTicketService } from './create-console-ticket/create-console-ticket.service';
+import { ConsoleGateway } from './console.gateway';
 import { NixpacksBuilderService } from './nixpacks-builder.service';
 import { RailpackBuilderService } from './railpack-builder.service';
 import { StaticSiteBuilderService } from './static-site-builder.service';
@@ -43,6 +46,7 @@ import { ImageUpdateWatcherService } from './image-update-watcher.service';
 import { CheckImageUpdateService } from './check-image-update/check-image-update.service';
 import { CheckImageUpdateController } from './check-image-update/check-image-update.controller';
 import { EnvResolverService } from './env-resolver.service';
+import { AppErrorWatcherService } from './app-error-watcher.service';
 import { ContainerDownNotifierService } from './container-down-notifier.service';
 import { DnsWatcherService } from './dns-watcher.service';
 import { DeletePreviewController } from './delete-preview/delete-preview.controller';
@@ -129,6 +133,7 @@ import { UpdateApplicationService } from './update-application/update-applicatio
     DeleteDomainController,
     CheckDomainDnsController,
     CreateLogTicketController,
+    CreateConsoleTicketController,
     GetWebhookController,
     RegenerateWebhookController,
     WebhookSecretController,
@@ -155,6 +160,7 @@ import { UpdateApplicationService } from './update-application/update-applicatio
     AddDomainService,
     AddMountService,
     CreateLogTicketService,
+    CreateConsoleTicketService,
     GetWebhookService,
     CheckDomainDnsService,
     WebhookDeployService,
@@ -163,6 +169,7 @@ import { UpdateApplicationService } from './update-application/update-applicatio
     PreviewService,
     ContainerDownNotifierService,
     DnsWatcherService,
+    AppErrorWatcherService,
     EnvResolverService,
     NixpacksBuilderService,
     RailpackBuilderService,
@@ -173,6 +180,7 @@ import { UpdateApplicationService } from './update-application/update-applicatio
     ImageUpdateWatcherService,
     CheckImageUpdateService,
     LogsGateway,
+    ConsoleGateway,
   ],
   exports: [
     EnvResolverService,

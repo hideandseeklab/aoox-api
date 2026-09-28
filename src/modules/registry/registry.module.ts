@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { Application } from '../application/application.entity';
 import { BackupDestinationModule } from '../backup-destination/backup-destination.module';
 import { DockerModule } from '../docker/docker.module';
 import { ProxyModule } from '../proxy/proxy.module';
@@ -7,6 +8,8 @@ import { CreateRegistryController } from './create-registry/create-registry.cont
 import { CreateRegistryService } from './create-registry/create-registry.service';
 import { DeleteRegistryController } from './delete-registry/delete-registry.controller';
 import { DeleteRegistryService } from './delete-registry/delete-registry.service';
+import { DeleteRepositoryController } from './delete-repository/delete-repository.controller';
+import { DeleteRepositoryService } from './delete-repository/delete-repository.service';
 import { DeleteTagController } from './delete-tag/delete-tag.controller';
 import { DeleteTagService } from './delete-tag/delete-tag.service';
 import { GarbageCollectController } from './garbage-collect/garbage-collect.controller';
@@ -35,7 +38,7 @@ import { TestRegistryService } from './test-registry/test-registry.service';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Registry]),
+    TypeOrmModule.forFeature([Registry, Application]),
     DockerModule,
     ProxyModule,
     BackupDestinationModule,
@@ -53,6 +56,10 @@ import { TestRegistryService } from './test-registry/test-registry.service';
     ListRepositoriesController,
     ListTagsController,
     DeleteTagController,
+    // DeleteTagController's `/tags/:tag` suffix must be registered before
+    // DeleteRepositoryController's bare `*repository` DELETE route, or the
+    // greedy wildcard would swallow tag-delete requests too.
+    DeleteRepositoryController,
     GetRegistryCredentialsController,
     SetRegistryDomainController,
   ],
@@ -70,6 +77,7 @@ import { TestRegistryService } from './test-registry/test-registry.service';
     ListRepositoriesService,
     ListTagsService,
     DeleteTagService,
+    DeleteRepositoryService,
     GetRegistryCredentialsService,
     SetRegistryDomainService,
   ],

@@ -13,6 +13,7 @@ export const REGISTRY_IMAGE = 'registry:3';
 export const REGISTRY_DATA_VOLUME = 'aoox_registry_data';
 export const REGISTRY_AUTH_VOLUME = 'aoox_registry_auth';
 export const REGISTRY_USERNAME = 'aoox';
+const HELPER_IMAGE = 'busybox:stable';
 
 export interface SelfHostedStatus {
   installed: boolean;
@@ -181,5 +182,50 @@ export class SelfHostedRegistryService {
         '/etc/distribution/config.yml',
       ],
     });
+  }
+
+  /**
+   * Removes a repository's folder from local disk storage — the `_catalog`
+   * registry:3 reports is just `docker/registry/v2/repositories/*` on disk,
+   * and neither the Distribution API nor garbage-collect ever deletes that
+   * folder itself, only the blobs/manifests inside other repos' folders they
+   * still reference. No-op for S3-backed registries; use
+   * `BackupDestinationService.purgeDir()` there instead (see AGENTS.md
+   * "Docker & Registry"). `repository` must already be validated by
+   * `assertValidRepositoryName` — passed as a `Cmd` argument (no shell), so
+   * there is no injection risk here even so.
+   */
+  async removeRepositoryData(repository: string): Promise<void> {
+    await this.docker.ensureImage(HELPER_IMAGE);
+    const code = await this.docker.runOnce({
+      Image: HELPER_IMAGE,
+      Cmd: [
+        'rm',
+        '-rf',
+        `/var/lib/registry/docker/registry/v2/repositories/${repository}`,
+      ],
+      HostConfig: { Binds: [`${REGISTRY_DATA_VOLUME}:/var/lib/registry`] },
+    });
+    if (code !== 0) {
+      throw new Error(`removing repository data failed (exit ${code})`);
+    }
+  }
+
+  /**
+   * Restarts the registry container. registry:3's default config keeps an
+   * in-memory blob-descriptor cache (`storage.cache.blobdescriptor:
+   * inmemory` — on by default, nothing in `createContainer()` turns it off);
+   * after garbage-collect deletes blobs, that cache can still believe they
+   * exist, so a subsequent `docker push` of the same layer sees "blob
+   * already exists" and skips re-uploading it — the manifest ends up
+   * pointing at a blob that is no longer on disk, and `docker pull` then
+   * fails. Restarting clears the cache (it is per-process, not persisted)
+   * without touching data; used after the GC that follows a repository
+   * delete, when blobs are actually removed.
+   */
+  async restartRegistry(): Promise<void> {
+    const c = await this.docker.findContainerByName(REGISTRY_CONTAINER);
+    if (!c) return;
+    await this.docker.engine.restartContainer(c.Id);
   }
 }

@@ -118,11 +118,14 @@ export class CreateApplicationDto {
   @Max(1440)
   autoUpdateIntervalMinutes?: number;
 
+  /** Empty string is allowed (a form section for a different build type wasn't mounted) and left unvalidated. */
+  @ValidateIf((_, v) => v !== '')
   @IsOptional()
   @IsString()
   @Matches(/^[\w./-]{1,100}$/)
   gitBranch?: string;
 
+  @ValidateIf((_, v) => v !== '')
   @IsOptional()
   @IsString()
   @Matches(/^[\w./-]{1,200}$/)
@@ -155,7 +158,7 @@ export class CreateApplicationDto {
   cpuMillicores?: number | null;
 
   /** e.g. `/health`; null = no health check (plain replace). */
-  @ValidateIf((_, v) => v !== null)
+  @ValidateIf((_, v) => v !== null && v !== '')
   @IsOptional()
   @IsString()
   @MaxLength(255)
@@ -185,13 +188,14 @@ export class CreateApplicationDto {
   buildType?: BuildType;
 
   /** `static` build type: build command (null = files already in the repo). */
-  @ValidateIf((_, v) => v !== null)
+  @ValidateIf((_, v) => v !== null && v !== '')
   @IsOptional()
   @IsString()
   @MaxLength(500)
   staticBuildCommand?: string | null;
 
   /** `static` build type: output folder relative to the repo root. */
+  @ValidateIf((_, v) => v !== '')
   @IsOptional()
   @IsString()
   @MaxLength(200)
@@ -214,6 +218,7 @@ export class CreateApplicationDto {
   previewsEnabled?: boolean;
 
   /** e.g. `preview.example.com` (wildcard DNS `*.preview.example.com` -> this host). */
+  @ValidateIf((_, v) => v !== null && v !== '')
   @IsOptional()
   @IsString()
   @MaxLength(253)

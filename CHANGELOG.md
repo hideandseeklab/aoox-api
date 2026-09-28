@@ -8,6 +8,177 @@ Versions below 1.0.0 may include breaking changes in a minor release.
 
 ## [Unreleased]
 
+## [0.1.0-alpha.3] - 2026-09-28
+
+### Added
+
+- Interactive **Console** for applications (`docker exec -it` into the app's container from the
+  dashboard, namespace `/console`): `DockerEngineClient.execTty()` creates a TTY exec and hijacks
+  `POST /exec/{id}/start` (`Connection: Upgrade`/`Upgrade: tcp`, docs.docker.com/reference/api/engine/
+  "Hijacking") to get the raw duplex socket instead of a buffered response — no 8-byte frame header to
+  strip in TTY mode, so stdout/stderr flow as plain bytes exactly like a real terminal. Works
+  unmodified for apps on a remote server: the hijack just rides whatever transport `DockerEngineClient`
+  already had (`{socketPath}` locally, the SSH `docker system dial-stdio` agent remotely — both are
+  plain `Duplex`es to Node's `http.request`). Shell: `sh -c 'command -v bash >/dev/null 2>&1 && exec
+  bash || exec sh'` (bash if present, else sh); a distroless/scratch container with no shell at all
+  hijacks fine and streams the daemon's own `OCI runtime exec failed: ... executable file not found`
+  error as normal terminal output before exiting non-zero — verified against `registry.k8s.io/pause`
+  (a real always-running, shell-less image) rather than translating a synthetic message, since that's
+  exactly what a real `docker exec -it` CLI shows too.
+  Access: `POST /applications/:id/console-ticket` (`create-console-ticket/`, throttle 20/menit) resolves
+  and **binds** a specific already-running container into a 60s single-use JWT ticket (`scope:
+  'console'`) — never derived from the socket handshake, same pattern as the terminal ticket's
+  `serverId`. Container mode → `aoox-app-<appName>` via `RemoteDockerService.forServer(app.serverId)`;
+  swarm service mode → `SwarmDeployService.taskContainers(app)` (tasks on this node only), default =
+  newest, or an explicit `containerId` validated against that list. This route is **not** in
+  `request-context.ts`'s `READ_ONLY_POSTS`, so — unlike `log-ticket` — it counts as a write: a project
+  `viewer` gets 403 and a `readOnly` API token gets 403, both for free from the existing
+  `ProjectAccessService`/`JwtAuthGuard` machinery, with no new access-control code. Every ticket
+  request is an ordinary non-GET request reaching the handler, so it's captured by the existing audit
+  log interceptor automatically (`POST /applications/:id/console-ticket`, actor + status). `ConsoleGateway`
+  mirrors `TerminalGateway`'s ticket-consumption/origin-check pattern; event protocol (`input`/`resize`/
+  `output`/`exit`/`error`) is identical to the host terminal's. Verified for real: bash and sh-only
+  (alpine) containers both hijack and echo correctly with the right shell picked, `resize` doesn't
+  throw, a stopped container is rejected before hijacking with a clear message, exit codes come back
+  correctly via `GET /exec/{id}/json` after the socket closes — and the full ticket→gateway→exec chain
+  end-to-end through the real HTTP + WebSocket stack (not just the Docker client in isolation),
+  including viewer 403, read-only-token 403, developer 200, wrong-origin rejection, and ticket-reuse
+  rejection, each against a real signed-in account. Not independently tested in this session: a real
+  remote SSH server or a real Swarm cluster (both simulated/verified for other Docker Engine API calls
+  elsewhere in the codebase; the hijack mechanism itself is transport-agnostic by construction, but
+  recommend a real-VPS/real-swarm smoke test before fully trusting either path).
+- New notification event **Application error** (`on_app_error`, off by default for every channel —
+  log-based detection is prone to false positives; migration `AppErrorDetection` adds the column plus
+  `applications.ignore_error_logs`): `app-error-watcher.service.ts` polls each running
+  application's container log every minute (`GET /containers/{id}/logs?since=`, not a permanent
+  `follow` stream) for lines matching common error shapes (tracebacks, panics, unhandled rejections,
+  `FooError:`/`[ERROR]`/`level=error` markers, structured JSON `level`/`severity`), and sends one
+  notification per app per check with up to 3 example snippets and a link to the app. Cooldown 15
+  minutes per app, except a never-seen-before error shape always gets through. Env values that look
+  like secrets (key contains PASSWORD/SECRET/TOKEN/KEY) and resolved database passwords are redacted
+  from the snippets. New per-application switch **Ignore error logs** (`ignoreErrorLogs`, Pengaturan
+  tab) opts an app out entirely, for apps whose normal output just looks like errors.
+- Managed database: new engine **Valkey** (`valkey/valkey`, drop-in Redis replacement — same
+  `--requirepass`/AOF setup, `redis-cli`/`redis://` compatible, verified the image ships both
+  `valkey-cli` and a `redis-cli` symlink) and three **PostgreSQL variants** —
+  `ManagedDatabase.variant` (`pgvector` | `postgis` | `timescaledb` | null; migration
+  `DatabaseVariantAndValkey`): same `engine: 'postgres'`, same wire protocol/env/URL/backup
+  (`pg_dump`/`pg_dumpall`), just a different image (`pgvector/pgvector:pg16`,
+  `postgis/postgis:16-3.4`, `timescale/timescaledb:latest-pg16` — tags verified against Docker Hub)
+  with the extension activated automatically (`CREATE EXTENSION IF NOT EXISTS`) once the container
+  accepts connections (`ManagedDatabaseService.activateVariantExtension`, non-fatal on failure).
+  `engines.ts` gained `imageNameFor()`/`defaultTagFor()` (variant-aware image/tag resolution, used by
+  provisioning, backups, and the data browser's one-off helper containers) and
+  `POSTGRES_VARIANTS`/`PostgresVariant`. Every `engine === 'redis'` special case in the data browser
+  and schemas service now also covers `'valkey'` (`Record<DatabaseEngine, ...>` types caught every
+  spot at compile time). Tested for real against Docker: pgvector (extension + vector column +
+  backup/restore), PostGIS and TimescaleDB (extension activation is a no-op — both images already
+  self-activate on first start — plus a hypertable smoke test), and Valkey (full backup → wipe →
+  restore cycle using the existing Redis AOF-manifest recipe, unmodified). Web: create-database
+  dialog gets an engine option for Valkey and a "Varian" picker for PostgreSQL (pgvector/PostGIS/
+  TimescaleDB, each with a one-line description and its own default tag placeholder).
+- Managed database: new engine **MongoDB** (`mongo:7`, root user via `MONGO_INITDB_ROOT_*`, kept as
+  its own `engine: 'mongodb'` rather than folded into the Postgres variant model — different wire
+  protocol/backup tooling entirely). Since Mongo creates databases lazily (no `CREATE DATABASE`),
+  `ManagedDatabaseService.initMongoDatabase()` waits for `mongod` to accept connections then writes
+  one placeholder document (`_aoox_init` collection) so the primary database shows up in `schemas/`
+  immediately, mirroring the `activateVariantExtension` pattern (non-fatal on failure, credentials
+  passed via `Env` not interpolated into the script). `SchemasService` gained a real `mongodb` branch
+  (`mongoDatabaseNames`/`mongoCreateDatabase`/`mongoDropDatabase` on `DatabaseQueryService`, backed by
+  `db.adminCommand({listDatabases:1,...})`/`insertOne`/`dropDatabase`) — unlike Redis/Valkey, Mongo
+  does support named databases. `BACKUP_RECIPES.mongodb` uses `mongodump`/`mongorestore --archive
+  --gzip` (self-contained gzip, no `gzipped()` wrapper needed); `dumpAll`/`restoreAll` excludes
+  `admin`/`local`/`config` via `--nsExclude` so a full-server restore never overwrites the root user's
+  own credentials. Data browser: `listTables`/`tableRows`/`exportTableCsv` work against collections
+  (`mongoFind()` + new `mongoDocsToRows()` pure renderer — union of keys across the batch, `_id`
+  pinned first); `columns()`/`updateRow()`/`deleteRow()`/SQL export/import all reject with a clear
+  400 (schemaless, no fixed columns yet). Query box supports `<collection>.find({...})` only
+  (read-only for this first pass) via `buildMongoFindScript()` — the filter is parsed as strict JSON
+  and re-serialized before being embedded in the generated `mongosh --eval` script, which is what
+  stops a filter like `{}); db.dropDatabase(); ({` from escaping the `.find(...)` call and running as
+  arbitrary mongosh JS (verified: the real API rejects it with 400, database left untouched). Every
+  `mongosh` result is wrapped centrally in `EJSON.stringify(..., {relaxed: true})` inside the new
+  `mongo()` helper — mongosh's default REPL output for a plain value is shell-inspect format
+  (`[ 'a', 'b' ]`), not JSON, which would otherwise make `listTables`/`mongoDatabaseNames`/
+  `mongoCreateDatabase`/`mongoDropDatabase` fail to parse their own output (caught before release via
+  a real Docker run, not just the unit tests). Web: engine option "MongoDB" in the create-database
+  dialog (no Variant field, since Mongo has no variants); data browser UI gets a third `isMongo` mode
+  alongside SQL/Redis — collection list ("Koleksi"), rows grid, sorting, and CSV export all work;
+  Structure tab, create-table dialog, row edit/delete, and SQL export/import are hidden (not
+  supported yet). Tested for real end-to-end through the actual HTTP API (not just standalone Docker
+  commands): provision → tables → schemas (create/list/drop) → rows → query (including the injection
+  attempt, rejected) → backup → restore → cleanup, plus a plain-Postgres regression check after the
+  change (still works unmodified) and a visual pass through the create-database dialog and data
+  browser in a real browser.
+- **Resource usage per project**: `GET /projects/:id/resource-usage` (CPU%/memory/network, live only,
+  for the project detail page) and a new `resourceUsage` field on every item of `GET /projects` (list
+  page cards) — both read the existing 15-second `MonitoringService` sampler, no new Docker calls per
+  request. `ProjectResourceUsageService.containerProjectMap()` groups the containers the sampler
+  already tracks by the project that owns them: application/database containers carry an `aoox.project`
+  label directly (no DB round-trip), compose stacks don't (`compose-runner.service.ts`'s override only
+  stamps `aoox.component`/`aoox.compose`) so those — and "bare" stacks with no override at all,
+  recognised the same way `MonitoringService.sampleAll()` does via `com.docker.compose.project` —
+  are resolved with one `compose_apps` lookup by id/slug, batched across every project in a single
+  call (not per card). `buildProjectUsage()` (`project-resource-usage.util.ts`, pure, unit-tested)
+  reuses `aggregateMetrics()` (already used for swarm tasks/compose services) to sum a project's
+  containers into one series, then converts the summed cumulative network counters into a bytes/sec
+  rate from consecutive sampler ticks (a raw cumulative sum across containers with different start
+  times is meaningless) — a container leaving the sum mid-window clamps the rate to zero instead of
+  reporting negative. Live only, no stored history (`24h`/`7d`/`30d` ranges): see AGENTS.md for why
+  storage usage specifically stays out of this endpoint.
+- **Delete image** (`DELETE /registries/:id/repositories/*repository?force=`, self-hosted registry
+  only): removes an entire repository — every tag's manifest, the repository's own folder in storage,
+  then an automatic garbage-collect pass and a registry restart — found by the user on a VPS after
+  deleting every tag of a repo and running garbage collect: the repo still showed up in the catalog
+  with "0 tag" forever, because `registry:3` builds its catalog from folder names on disk and neither
+  the Distribution API nor GC ever deletes a repository's own folder, only unreferenced blobs/manifests
+  inside it. `GET /registries/:id/repositories/*repository/usage` previews which applications'
+  `currentImage`/`imageRef` look like they came from the repo; deleting without `?force=true` 409s with
+  that same list (rollback or a config-only redeploy to that image would fail after deletion). Local
+  storage is cleaned via a one-off busybox helper (`Cmd` array, no shell); S3-backed registries get a
+  new `BackupDestinationService.purgeDir()` (`rclone purge`). The registry container is restarted after
+  GC because `registry:3`'s default in-memory blob-descriptor cache would otherwise still believe a
+  just-deleted blob exists, making a later `docker push` of the same layer skip re-uploading it and
+  leaving a manifest that points at nothing — verified for real: pushed two repos sharing a blob,
+  deleted one, confirmed the other survived and disk actually shrank after GC, then rebuilt and pushed
+  the exact same content and confirmed it both re-uploads and pulls correctly. Also verified: the exact
+  reported 0-tag scenario, an external registry rejected with 400, and a read-only API token rejected
+  with 403.
+
+### Fixed
+
+- `RegistryService.apiBaseUrl()` used `config.get('REGISTRY_INTERNAL_URL') ?? fallback` — `.env`'s
+  `REGISTRY_INTERNAL_URL=` (left blank, not removed) is an empty string, not `undefined`, so `??` never
+  fell back and every `RegistryClient` call (list repositories/tags, delete tag, test registry, and the
+  new delete-image above) failed with a 500 `Invalid URL` against a self-hosted registry — the same
+  pitfall already known for `DOCKER_SOCKET`. Found running the delete-image feature above against a
+  real dev server (a mocked unit test never reads the real `.env`); fixed by switching to `||`.
+- `POST /applications` rejected creating an application with `dockerfilePath must match
+  /^[\w./-]{1,200}$/ regular expression` for `buildType: 'nixpacks'`/`'railpack'` — same root cause as
+  the `update-application.dto.ts` fix, this time in `create-application.dto.ts`: the web form only
+  mounts the Dockerfile-path field for `buildType: 'dockerfile'`, so creating an app with any other
+  build type submits `dockerfilePath: ""` (found testing Nixpacks against a real VPS). Applied the
+  same `@ValidateIf((_, v) => v !== '')` fix to every affected field in the create DTO
+  (`dockerfilePath`, `gitBranch`, `staticOutputDir`, `staticBuildCommand`, `healthcheckPath`,
+  `previewDomain`); `gitUrl`/`imageRef` were already correctly gated on `sourceType` and needed no
+  change. Also fixed `create-application.service.ts` normalizing `gitUrl: dto.gitUrl?.trim() ?? null`
+  (only defaults on `null`/`undefined`, not `""`) to `|| null` like every other nullable field, and
+  `staticBuildCommand` to trim + default to `null` instead of storing `""` verbatim — both could leave
+  an application with `""` in a nullable column instead of `null`. Audited `compose-app.dto.ts` /
+  `create-compose-app.dto.ts` and `add-mount.dto.ts` for the same shape: not affected — the compose
+  form uses a completely different zod schema per `source` (git vs template) that omits irrelevant
+  fields entirely rather than sending them as `""`, and the mount dialog builds its request body as a
+  plain JS object with conditional spreads, so neither ever sends an empty string for a field its own
+  form section didn't render.
+- `POST /notifications` had no way to set `onDnsIssue` — the entity/event-broadcast side of the "DNS
+  domain bermasalah" toggle (`on_dns_issue`, `dns-watcher.service.ts`) has existed since that feature
+  shipped, but `CreateNotificationDto` never declared the field and `CreateNotificationService`
+  hardcoded every other toggle's default without it, so a new channel's DNS toggle was silently stuck
+  at the column default (`true`) no matter what the create form sent. Found auditing every `on_*`
+  column against its DTO/web/docs coverage for an unrelated web task. Added `onDnsIssue?: boolean` to
+  the DTO and `onDnsIssue: dto.onDnsIssue ?? true` to the service, matching every other toggle's
+  pattern.
+
 ## [0.1.0-alpha.2] - 2026-09-27
 
 ### Added
@@ -136,7 +307,8 @@ Versions below 1.0.0 may include breaking changes in a minor release.
 - Monitoring with metrics history, disk cleanup tooling, and project/instance export-import for
   backup and migration between hosts.
 
-[Unreleased]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-alpha.2...HEAD
+[Unreleased]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-alpha.3...HEAD
+[0.1.0-alpha.3]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-alpha.2...v0.1.0-alpha.3
 [0.1.0-alpha.2]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-alpha.1...v0.1.0-alpha.2
 [0.1.0-alpha.1]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-alpha.0...v0.1.0-alpha.1
 [0.1.0-alpha.0]: https://github.com/hideandseeklab/aoox-api/releases/tag/v0.1.0-alpha.0
