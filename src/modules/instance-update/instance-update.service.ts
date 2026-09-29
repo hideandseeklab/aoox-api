@@ -30,8 +30,18 @@ export interface InstanceUpdateStatus {
   currentVersion: string;
   installDirConfigured: boolean;
   checkedAt: Date | null;
+  /** True from `apply()` until this process's own version has changed. */
+  applying: boolean;
+  applyStartedAt: Date | null;
   api: ImageUpdateStatus;
   web: ImageUpdateStatus;
+}
+
+/** Cheap poll target for the web UI while an update is applying — no registry calls. */
+export interface InstanceUpdateProgress {
+  currentVersion: string;
+  applying: boolean;
+  applyStartedAt: Date | null;
 }
 
 /**
@@ -87,8 +97,46 @@ export class InstanceUpdateService {
         apiDigest: null,
         webDigest: null,
         checkedAt: null,
+        applyStartedAt: null,
+        applyFromVersion: null,
       })
     );
+  }
+
+  /** `Date.now() - process.uptime()*1000` — when this Node process itself started. */
+  private get processBootedAt(): number {
+    return Date.now() - process.uptime() * 1000;
+  }
+
+  /**
+   * `applyStartedAt`/`applyFromVersion` mark "an update is being applied" —
+   * cleared here (not by the restart itself, which this process has no
+   * hook into) the first time a check happens to run on a process that is
+   * either on a different `currentVersion` than when `apply()` was called,
+   * or is simply a **newer process** than `applyStartedAt` (a `docker
+   * compose up` recreate always starts a fresh process, even when a `:latest`
+   * tag was republished under the same `package.json` version — e.g. a
+   * hotfix, or a local `docker-compose.build.yml` build — in which case the
+   * version alone would never change and the card would sit on "applying"
+   * until the client's own timeout, despite the update having actually
+   * worked). `BOOT_TOLERANCE_MS` only guards against clock-precision noise;
+   * a real recreate takes far longer than that to pull and start. Mutates
+   * `row` in place; caller is responsible for saving.
+   */
+  private clearApplyingIfDone(
+    row: InstanceUpdateState,
+    currentVersion: string,
+  ): void {
+    const BOOT_TOLERANCE_MS = 5000;
+    if (row.applyStartedAt === null) return;
+    const versionChanged =
+      row.applyFromVersion !== null && row.applyFromVersion !== currentVersion;
+    const isNewProcess =
+      this.processBootedAt >= row.applyStartedAt.getTime() - BOOT_TOLERANCE_MS;
+    if (versionChanged || isNewProcess) {
+      row.applyStartedAt = null;
+      row.applyFromVersion = null;
+    }
   }
 
   private async remoteDigestFor(imageRef: string): Promise<string> {
@@ -108,6 +156,9 @@ export class InstanceUpdateService {
    */
   async check(): Promise<InstanceUpdateStatus> {
     const row = await this.state();
+    const currentVersion = this.currentVersion;
+    this.clearApplyingIfDone(row, currentVersion);
+
     const [apiDigest, webDigest] = await Promise.all([
       this.remoteDigestFor(this.apiImage),
       this.remoteDigestFor(this.webImage),
@@ -132,11 +183,34 @@ export class InstanceUpdateService {
     await this.repo.save(row);
 
     return {
-      currentVersion: this.currentVersion,
+      currentVersion,
       installDirConfigured: this.installDir !== null,
       checkedAt: row.checkedAt,
+      applying: row.applyStartedAt !== null,
+      applyStartedAt: row.applyStartedAt,
       api,
       web,
+    };
+  }
+
+  /**
+   * Poll target for the "applying update" UI: no registry HTTP calls (the
+   * full `check()` fetches both remote digests every time, too heavy to hit
+   * every few seconds for up to several minutes while polling for the
+   * restart to finish).
+   */
+  async pingApplyStatus(): Promise<InstanceUpdateProgress> {
+    const row = await this.state();
+    const currentVersion = this.currentVersion;
+    const wasApplying = row.applyStartedAt !== null;
+    this.clearApplyingIfDone(row, currentVersion);
+    if (wasApplying && row.applyStartedAt === null) {
+      await this.repo.save(row);
+    }
+    return {
+      currentVersion,
+      applying: row.applyStartedAt !== null,
+      applyStartedAt: row.applyStartedAt,
     };
   }
 
@@ -163,6 +237,8 @@ export class InstanceUpdateService {
     row.apiDigest = apiDigest;
     row.webDigest = webDigest;
     row.checkedAt = new Date();
+    row.applyStartedAt = new Date();
+    row.applyFromVersion = this.currentVersion;
     await this.repo.save(row);
 
     setTimeout(() => {

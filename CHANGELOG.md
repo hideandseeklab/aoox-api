@@ -8,6 +8,36 @@ Versions below 1.0.0 may include breaking changes in a minor release.
 
 ## [Unreleased]
 
+### Added
+
+- `instance_update_state` gets two new columns, `apply_started_at`/`apply_from_version`, so
+  `GET /instance/update` and a new lightweight `GET /instance/update/progress` (no registry calls —
+  see below) can report `applying: boolean` for the "Terapkan update" flow on the dashboard: set by
+  `apply()` (the version this process was on when the restart was triggered), cleared the next time
+  either endpoint runs on a process that's either on a different `currentVersion` than recorded, or
+  is simply a newer OS process than `applyStartedAt` (`Date.now() - process.uptime() * 1000`, a few
+  seconds of tolerance for clock precision) — a `docker compose up` recreate always starts a fresh
+  process even when a `:latest` tag gets republished under the same `package.json` version (a hotfix,
+  or a local `docker-compose.build.yml` build), which the version-only comparison alone could never
+  detect, leaving the dashboard stuck on "applying" until its own timeout despite the update having
+  actually worked. Survives both a browser reload and the API's own restart, since it's DB state
+  rather than anything in-memory.
+- `GET /instance/update/progress` (owner): a second, cheap poll target for the same "is the update
+  done yet" question `GET /instance/update` already answers, but without `GET /instance/update`'s two
+  Docker Hub digest lookups — needed because the web dashboard now polls every few seconds for up to
+  several minutes while an update applies, and hitting the registry that often was unnecessary load
+  for a question ("has this process's version changed") that never needed a registry call in the
+  first place.
+
+### Fixed
+
+- The "Terapkan update" button's UX bug reported by a user upgrading a real VPS from alpha.2 to
+  alpha.3: clicking it briefly showed a red "Tidak dapat terhubung ke server" error (expected — the
+  `api`/`web` containers were mid-restart) and then just sat there on the old version number forever
+  with no indication anything was happening, even though the update itself had actually succeeded.
+  The fix is entirely on the web side (see its changelog) — the API changes above exist to give the
+  dashboard something durable and cheap to poll while it waits out the restart.
+
 ## [0.1.0-alpha.3] - 2026-09-28
 
 ### Added
