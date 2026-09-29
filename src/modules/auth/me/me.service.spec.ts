@@ -55,16 +55,20 @@ describe('MeService', () => {
   });
 
   describe('updateAvailable', () => {
+    // A marker no real release can ever equal: the response also carries the
+    // RUNNING version (read from package.json), so a real-looking version string
+    // here would collide with it the day that version is released.
+    const LATEST = '99.99.99-test';
     const available = {
       updateAvailable: true,
-      latestVersion: '0.1.0-alpha.4',
+      latestVersion: LATEST,
       applying: false,
     };
 
     it('is given to the owner, with the version and applying flag', async () => {
       const { svc } = build('owner', { ...available, applying: true });
       await expect(svc.execute('u1')).resolves.toMatchObject({
-        updateAvailable: { version: '0.1.0-alpha.4', applying: true },
+        updateAvailable: { version: LATEST, applying: true },
       });
     });
 
@@ -74,7 +78,9 @@ describe('MeService', () => {
         const { svc, infoFn } = build(role, available);
         const me = await svc.execute('u1');
         expect(me).not.toHaveProperty('updateAvailable');
-        expect(JSON.stringify(me)).not.toContain('0.1.0-alpha.4');
+        expect(JSON.stringify(me)).not.toContain(LATEST);
+        // the running version is still shown to every role
+        expect(me).toMatchObject({ role, version: pkgVersion });
         expect(infoFn).not.toHaveBeenCalled();
       },
     );
@@ -82,7 +88,7 @@ describe('MeService', () => {
     it('is absent for the owner when nothing newer is known', async () => {
       const { svc } = build('owner', {
         updateAvailable: false,
-        latestVersion: '0.1.0-alpha.3',
+        latestVersion: '0.0.1-test',
       });
       expect(await svc.execute('u1')).not.toHaveProperty('updateAvailable');
     });
