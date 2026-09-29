@@ -55,6 +55,15 @@ export function renderStaticDockerfile(o: StaticSiteOptions): string {
   return `${lines.join('\n')}\n`;
 }
 
+/** Serves the repo's own `404.html` for misses (nginx falls back to its default page when the file is absent). */
+const NOT_FOUND_PAGE = [
+  '  error_page 404 /404.html;',
+  '  location = /404.html {',
+  '    internal;',
+  '  }',
+  '',
+].join('\n');
+
 export function renderNginxConf(spa: boolean): string {
   return `server {
   listen 80;
@@ -70,7 +79,7 @@ export function renderNginxConf(spa: boolean): string {
   location / {
     try_files $uri $uri/ ${spa ? '/index.html' : '=404'};
   }
-}
+${spa ? '' : NOT_FOUND_PAGE}}
 `;
 }
 

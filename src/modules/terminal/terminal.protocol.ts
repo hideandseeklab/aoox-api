@@ -10,8 +10,15 @@ export interface TerminalClientEvents {
 export interface TerminalServerEvents {
   output: (data: string) => void;
   exit: (code: number) => void;
-  error: (message: string) => void;
+  /**
+   * `hint` is set when the failure is about how the target is configured, so
+   * the client can link to the page that fixes it (`environment` = the host's
+   * SSH settings, `servers` = a registered remote server).
+   */
+  error: (message: string, hint?: TerminalErrorHint) => void;
 }
+
+export type TerminalErrorHint = 'environment' | 'servers';
 
 export interface TerminalSize {
   cols: number;

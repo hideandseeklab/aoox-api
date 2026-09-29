@@ -138,6 +138,8 @@ export class CreateApplicationDto {
   gitCredentialId?: string | null;
 
   @IsOptional()
+  // Deliberately not tied to buildType: a static site is served by nginx on 80, but a
+  // different value is allowed (the web form pre-fills 80 and hints; it never blocks).
   @IsInt()
   @Min(1)
   @Max(65535)

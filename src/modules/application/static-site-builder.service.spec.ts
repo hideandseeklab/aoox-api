@@ -43,5 +43,8 @@ describe('static site builder', () => {
       'try_files $uri $uri/ /index.html;',
     );
     expect(renderNginxConf(false)).toContain('try_files $uri $uri/ =404;');
+    // a repo-provided 404.html is served for misses; SPA mode never 404s
+    expect(renderNginxConf(false)).toContain('error_page 404 /404.html;');
+    expect(renderNginxConf(true)).not.toContain('error_page');
   });
 });

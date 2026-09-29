@@ -18,11 +18,26 @@ export type TerminalMode = 'ssh' | 'local';
 /** Where the SSH credential comes from, in order of precedence. */
 export type TerminalKeySource = 'env-key' | 'env-password' | 'generated';
 
+/**
+ * Login used for the SSH-to-host backend when `TERMINAL_SSH_USER` is empty —
+ * the same default the installers write into `.env.dist` (the install itself
+ * needs root). Installs made before that default existed have no such line,
+ * and `aoox update` never touches `.env.dist`. Not applied to remote servers,
+ * which carry their own `username`.
+ */
+export const DEFAULT_TERMINAL_SSH_USER = 'root';
+
+/** Whether the login came from `TERMINAL_SSH_USER` or the built-in default. */
+export type TerminalUserSource = 'env' | 'default';
+
 export interface TerminalStatus {
   mode: TerminalMode;
   host: string | null;
   port: number | null;
+  /** Effective login (env value, or the default when unset). */
   username: string | null;
+  /** null for local mode. */
+  usernameSource: TerminalUserSource | null;
   keySource: TerminalKeySource | null;
   /** authorized_keys line to install on the host (null for local / password). */
   publicKey: string | null;
@@ -35,7 +50,8 @@ export interface TerminalStatus {
 interface SshEnv {
   host: string;
   port: number;
-  username: string | null;
+  username: string;
+  usernameSource: TerminalUserSource;
   privateKey?: string;
   /** Read lazily so a missing file is a status error, not a boot failure. */
   keyFile?: string;
@@ -67,7 +83,7 @@ export class TerminalBackendService {
     this.ssh = TerminalBackendService.readSshEnv(config);
     this.logger.log(
       this.ssh
-        ? `Terminal backend: ssh (${this.ssh.username ?? '?'}@${this.ssh.host}:${this.ssh.port}, ${this.keySource})`
+        ? `Terminal backend: ssh (${this.ssh.username}@${this.ssh.host}:${this.ssh.port}, ${this.keySource})`
         : 'Terminal backend: local pty',
     );
   }
@@ -126,6 +142,7 @@ export class TerminalBackendService {
       host: this.ssh?.host ?? null,
       port: this.ssh?.port ?? null,
       username: this.ssh?.username ?? null,
+      usernameSource: this.ssh?.usernameSource ?? null,
       keySource: this.keySource,
       publicKey: null,
       authorizeCommand: null,
@@ -138,7 +155,6 @@ export class TerminalBackendService {
         ...base,
         publicKey,
         authorizeCommand: publicKey ? authorizeCommand(publicKey) : null,
-        error: this.ssh.username ? null : 'TERMINAL_SSH_USER is not set',
       };
     } catch (err) {
       return { ...base, error: describeKeyError(err) };
@@ -147,7 +163,6 @@ export class TerminalBackendService {
 
   private resolveTarget(): SshTarget {
     const ssh = this.ssh!;
-    if (!ssh.username) throw new Error('TERMINAL_SSH_USER is not set');
     const privateKey =
       this.envPrivateKey() ??
       (ssh.password ? undefined : this.keys.load().privateKey);
@@ -177,10 +192,13 @@ export class TerminalBackendService {
       .get<string>('TERMINAL_SSH_PRIVATE_KEY')
       ?.replace(/\\n/g, '\n');
 
+    const user = config.get<string>('TERMINAL_SSH_USER')?.trim();
+
     return {
       host,
       port: Number(config.get<string>('TERMINAL_SSH_PORT') || 22),
-      username: config.get<string>('TERMINAL_SSH_USER')?.trim() || null,
+      username: user || DEFAULT_TERMINAL_SSH_USER,
+      usernameSource: user ? 'env' : 'default',
       privateKey: privateKey || undefined,
       keyFile:
         config.get<string>('TERMINAL_SSH_PRIVATE_KEY_FILE')?.trim() ||

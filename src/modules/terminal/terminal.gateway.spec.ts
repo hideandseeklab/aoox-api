@@ -113,6 +113,40 @@ describe('TerminalGateway authentication', () => {
     backend.mode = 'local';
   });
 
+  it('hints where to fix a failed open: environment for the host, servers for a remote, nothing for the local pty', async () => {
+    const failOnce = () =>
+      backend.open.mockRejectedValueOnce(new Error('connect ECONNREFUSED'));
+
+    backend.mode = 'ssh';
+    failOnce();
+    const host = fakeClient({ ticket: ticket() });
+    await gateway.handleConnection(host as never);
+    expect(host.emit).toHaveBeenCalledWith(
+      'error',
+      expect.stringContaining('ECONNREFUSED') as string,
+      'environment',
+    );
+
+    failOnce();
+    const remote = fakeClient({ ticket: ticket({ serverId: 'srv-1' }) });
+    await gateway.handleConnection(remote as never);
+    expect(remote.emit).toHaveBeenCalledWith(
+      'error',
+      expect.any(String) as string,
+      'servers',
+    );
+
+    backend.mode = 'local';
+    failOnce();
+    const local = fakeClient({ ticket: ticket() });
+    await gateway.handleConnection(local as never);
+    expect(local.emit).toHaveBeenCalledWith(
+      'error',
+      'Failed to start shell (local)',
+      undefined,
+    );
+  });
+
   it('targets the server bound in the ticket and ignores serverId from the handshake', async () => {
     const bound = fakeClient({
       ticket: ticket({ serverId: 'srv-1' }),

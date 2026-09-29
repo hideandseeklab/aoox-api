@@ -6,6 +6,7 @@ import { UserModule } from '../user/user.module';
 import { JwtStrategy } from './jwt.strategy';
 import { MeController } from './me/me.controller';
 import { MeService } from './me/me.service';
+import { InstanceUpdateModule } from '../instance-update/instance-update.module';
 import { SetupController } from './setup/setup.controller';
 import { SetupService } from './setup/setup.service';
 import { SetupStatusController } from './setup-status/setup-status.controller';
@@ -18,6 +19,7 @@ import { TwoFactorService } from './two-factor/two-factor.service';
 @Module({
   imports: [
     UserModule,
+    InstanceUpdateModule,
     PassportModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],

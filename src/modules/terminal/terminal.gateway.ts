@@ -19,6 +19,7 @@ import { TerminalBackendService } from './terminal-backend.service';
 import {
   TERMINAL_ROLES,
   TerminalClientEvents,
+  TerminalErrorHint,
   TerminalHandshakeAuth,
   TerminalServerEvents,
   TerminalSize,
@@ -74,7 +75,11 @@ export class TerminalGateway
       session = await this.backend.open(size, serverId);
     } catch (err) {
       this.logger.error(`Failed to open shell: ${String(err)}`);
-      client.emit('error', await this.describeOpenError(err, serverId));
+      client.emit(
+        'error',
+        await this.describeOpenError(err, serverId),
+        this.configHint(serverId),
+      );
       client.disconnect(true);
       return;
     }
@@ -128,6 +133,12 @@ export class TerminalGateway
       cols: clampSize(size?.cols, 80, MAX_COLS),
       rows: clampSize(size?.rows, 24, MAX_ROWS),
     });
+  }
+
+  /** Where the user fixes a failed open: undefined for the local PTY (nothing to configure). */
+  private configHint(serverId?: string): TerminalErrorHint | undefined {
+    if (serverId) return 'servers';
+    return this.backend.mode === 'ssh' ? 'environment' : undefined;
   }
 
   /**

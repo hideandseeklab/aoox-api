@@ -1,6 +1,10 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+} from '@nestjs/common';
+import { In } from 'typeorm';
 import { limitsRemoved, resourceLimits } from '../../docker/resource-limits';
-import { ContainerSummary } from '../../docker/docker-engine.client';
 import { HostPortService } from '../../host-port/host-port.service';
 import { RemoteDockerService } from '../../server/remote-docker.service';
 import { ServerService } from '../../server/server.service';
@@ -10,9 +14,13 @@ import { SwarmService } from '../../swarm/swarm.service';
 import { ApplicationService, containerNameFor } from '../application.service';
 import { DeploymentRunnerService } from '../deployment-runner.service';
 import { EnvReferenceError, EnvResolverService } from '../env-resolver.service';
+import { isOwnContainer } from '../own-container';
 import { UpdateApplicationDto } from './update-application.dto';
 
-/** Settings only; they take effect on the next deployment. */
+/**
+ * Settings. Most take effect on the next deployment; the host port, domains
+ * and resource limits are applied to the running app right away.
+ */
 @Injectable()
 export class UpdateApplicationService {
   constructor(
@@ -148,6 +156,16 @@ export class UpdateApplicationService {
         );
       }
     }
+    const hostPortChanged = app.hostPort !== hostPortBefore;
+    // Refuse rather than race a running deployment: it holds its own copy of
+    // the app (loaded when it was queued) and would create its container with
+    // the old port — and its final save would write that old port back over
+    // this change.
+    if (hostPortChanged && (await this.hasActiveDeployment(app.id))) {
+      throw new ConflictException(
+        'A deployment is in progress; change the host port after it finishes',
+      );
+    }
     // A moved server needs the new daemon re-checked even for an unchanged
     // port; an unchanged port on the same daemon has already proven itself.
     if (
@@ -155,14 +173,9 @@ export class UpdateApplicationService {
       (app.hostPort !== hostPortBefore || app.serverId !== serverIdBefore)
     ) {
       const docker = await this.remote.forServer(app.serverId);
-      const ownName = containerNameFor(app);
       await this.hostPorts.assertFree([app.hostPort], docker, {
         excludeApplicationId: app.id,
-        isOwnContainer: (c: ContainerSummary) => {
-          if (c.Labels?.['aoox.application'] === app.id) return true;
-          const name = c.Names[0]?.replace(/^\//, '');
-          return name === ownName || name === `${ownName}-next`;
-        },
+        isOwnContainer: isOwnContainer(app),
       });
     }
     const saved = await this.applications.repo.save(app);
@@ -179,7 +192,13 @@ export class UpdateApplicationService {
       await this.runner.queueRuntimeConfig(saved, actorEmail);
       return saved;
     }
-    // Limits are the one setting that applies now rather than at the next
+    // A stopped app keeps its container (and its old ports): the next start
+    // notices the drift and recreates it (see StartApplicationService).
+    if (hostPortChanged && saved.currentImage && saved.status === 'running') {
+      await this.applyHostPort(saved, hostPortBefore, actorEmail);
+      return saved;
+    }
+    // Limits apply now rather than at the next
     // deployment: live via ContainerUpdate, or by recreating the container
     // when a limit is being removed (0 = "unchanged" for the update call).
     if (limitsChanged) {
@@ -191,6 +210,60 @@ export class UpdateApplicationService {
       else await this.applyLimits(saved);
     }
     return saved;
+  }
+
+  private async hasActiveDeployment(applicationId: string): Promise<boolean> {
+    return (
+      (await this.applications.deployments.count({
+        where: {
+          applicationId,
+          status: In(['queued', 'building', 'pushing', 'starting']),
+        },
+      })) > 0
+    );
+  }
+
+  /**
+   * Publishing (or dropping) a host port lives on the container, so the
+   * running app is recreated from its current image — no rebuild. A service
+   * is a rolling update, so it runs as a queued `config` deployment.
+   *
+   * The container path removes the old container before creating the new
+   * one (a host port cannot be bound twice), so if that fails (e.g. another
+   * process took the port after the conflict check) the previous port is
+   * restored — in the database and on the daemon — instead of leaving the
+   * app with no container and a setting that was never applied.
+   */
+  private async applyHostPort(
+    saved: Application,
+    hostPortBefore: number | null,
+    actorEmail: string,
+  ): Promise<void> {
+    if (saved.deployMode === 'service') {
+      await this.runner.queueRuntimeConfig(saved, actorEmail);
+      return;
+    }
+    try {
+      await this.runner.applyRuntimeConfig(saved);
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      saved.hostPort = hostPortBefore;
+      await this.applications.repo.save(saved);
+      try {
+        await this.runner.applyRuntimeConfig(saved);
+      } catch (restoreErr) {
+        saved.status = 'error';
+        await this.applications.repo.save(saved).catch(() => undefined);
+        const restore =
+          restoreErr instanceof Error ? restoreErr.message : String(restoreErr);
+        throw new ConflictException(
+          `Could not apply the new host port (${reason}) and restoring the previous one failed (${restore}); redeploy the application`,
+        );
+      }
+      throw new ConflictException(
+        `Could not apply the new host port (${reason}); the previous port was restored`,
+      );
+    }
   }
 
   private async applyLimits(app: Application): Promise<void> {

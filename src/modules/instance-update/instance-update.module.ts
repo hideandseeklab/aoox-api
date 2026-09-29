@@ -6,6 +6,7 @@ import { GetInstanceUpdateController } from './get-instance-update.controller';
 import { GetInstanceUpdateProgressController } from './get-instance-update-progress.controller';
 import { InstanceUpdateState } from './instance-update-state.entity';
 import { InstanceUpdateService } from './instance-update.service';
+import { InstanceVersionService } from './instance-version.service';
 
 /** Checks for and applies aoox-api/aoox-web image updates (owner only). */
 @Module({
@@ -15,6 +16,7 @@ import { InstanceUpdateService } from './instance-update.service';
     GetInstanceUpdateProgressController,
     ApplyInstanceUpdateController,
   ],
-  providers: [InstanceUpdateService],
+  providers: [InstanceUpdateService, InstanceVersionService],
+  exports: [InstanceVersionService],
 })
 export class InstanceUpdateModule {}

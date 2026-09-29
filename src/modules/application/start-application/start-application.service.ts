@@ -1,7 +1,11 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { HostPortService } from '../../host-port/host-port.service';
+import { ContainerInspect } from '../../docker/docker-engine.client';
 import { RemoteDockerService } from '../../server/remote-docker.service';
 import { Application } from '../application.entity';
 import { ApplicationService, containerNameFor } from '../application.service';
+import { DeploymentRunnerService } from '../deployment-runner.service';
+import { isOwnContainer } from '../own-container';
 import { SwarmDeployService } from '../swarm-deploy.service';
 
 @Injectable()
@@ -10,6 +14,8 @@ export class StartApplicationService {
     private readonly applications: ApplicationService,
     private readonly remote: RemoteDockerService,
     private readonly swarmDeploy: SwarmDeployService,
+    private readonly runner: DeploymentRunnerService,
+    private readonly hostPorts: HostPortService,
   ) {}
 
   async execute(ownerId: string, id: string): Promise<Application> {
@@ -26,8 +32,38 @@ export class StartApplicationService {
       throw new NotFoundException(
         'Application has no container; deploy it first',
       );
-    await docker.engine.startContainer(c.Id);
+    // The host port may have been changed while the app was stopped (the
+    // stopped container keeps its old publishing): recreate it instead of
+    // just starting it, after re-checking the port is still free — the
+    // recreate removes the old container first.
+    const inspected = await docker.engine.inspectContainer(c.Id);
+    if (
+      app.currentImage &&
+      inspected &&
+      publishedPort(app, inspected) !== (app.hostPort ?? null)
+    ) {
+      if (app.hostPort != null) {
+        await this.hostPorts.assertFree([app.hostPort], docker, {
+          excludeApplicationId: app.id,
+          isOwnContainer: isOwnContainer(app),
+        });
+      }
+      await this.runner.applyRuntimeConfig(app);
+    } else {
+      await docker.engine.startContainer(c.Id);
+    }
     app.status = 'running';
     return this.applications.repo.save(app);
   }
+}
+
+/** Host port a (possibly stopped) container was created to publish for the app's container port. */
+export function publishedPort(
+  app: Pick<Application, 'containerPort'>,
+  inspected: ContainerInspect,
+): number | null {
+  const bound =
+    inspected.HostConfig?.PortBindings?.[`${app.containerPort}/tcp`]?.[0]
+      ?.HostPort;
+  return bound ? Number(bound) : null;
 }

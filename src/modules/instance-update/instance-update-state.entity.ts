@@ -35,6 +35,18 @@ export class InstanceUpdateState {
   @Column({ name: 'apply_started_at', type: 'timestamptz', nullable: true })
   applyStartedAt: Date | null;
 
+  /**
+   * Newest semver tag published for the API image, as of `latestCheckedAt`
+   * (the last *successful* lookup — a failed one leaves both untouched).
+   * Whether it counts as an update is derived on read against the running
+   * version, so the badge disappears the moment an update lands.
+   */
+  @Column({ name: 'latest_version', type: 'varchar', nullable: true })
+  latestVersion: string | null;
+
+  @Column({ name: 'latest_checked_at', type: 'timestamptz', nullable: true })
+  latestCheckedAt: Date | null;
+
   /** `currentVersion` at the moment `apply()` was called. */
   @Column({ name: 'apply_from_version', type: 'varchar', nullable: true })
   applyFromVersion: string | null;

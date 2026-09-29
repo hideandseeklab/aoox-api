@@ -47,7 +47,8 @@ NestJS 11 backend for aoox (self-hosted PaaS).
   Artefak non-flow (`jwt.strategy.ts`, `jwt-auth.guard.ts`, `current-user.decorator.ts`) di root module.
 - `src/modules/user/` — entity `User` (`users`), `UserService` untuk query lintas flow.
 - Onboarding: `setup-status/` (`GET /auth/setup-status`) dan `setup/` (`POST /auth/setup`, hanya saat tabel `users` kosong, transaksi SERIALIZABLE) membuat owner pertama.
-  `me/` (`GET /auth/me`) dipakai web untuk memverifikasi session.
+  `me/` (`GET /auth/me`) dipakai web untuk memverifikasi session **dan** membawa `version` (versi API yang sedang berjalan dari `package.json`, `me/app-version.ts`, dibaca sekali) untuk semua peran —
+  sidebar web menampilkannya di bawah logo tanpa panggilan tambahan (layout dashboard sudah memanggil `/auth/me`); `GET /instance/update` tetap owner-only.
 - `AdminBootstrapService` (user module): kalau `ADMIN_EMAIL`+`ADMIN_PASSWORD` di-set dan belum ada user, buat owner saat boot. Idempotent — tidak pernah menimpa user yang ada.
   Dev: `.env` berisi `admin@gmail.com` / `admin` untuk ini (tidak ada lagi migrasi seed).
 - Hash password lewat `src/modules/user/password.util.ts` (bcryptjs).
@@ -139,6 +140,14 @@ NestJS 11 backend for aoox (self-hosted PaaS).
   API tidak bisa menulis `authorized_keys` host, jadi user menjalankan satu perintah sekali di host. Perintah + public key tampil di
   `GET /terminal/status` (`terminal-status/`, owner/admin) dan dikirim gateway sebagai event `error` saat SSH gagal auth (`isAuthFailure`);
   dir key tidak writable (uid 1000) → `SshKeyPermissionError` + petunjuk `chown`. Masalah kredensial tidak pernah menggagalkan boot — hanya muncul per koneksi/status.
+- **`TERMINAL_SSH_USER` kosong → `root`** (`DEFAULT_TERMINAL_SSH_USER` di `terminal-backend.service.ts`): `install.sh`/`aoox install` menulis `TERMINAL_SSH_USER=root` hanya untuk
+  instalasi BARU, sedangkan `aoox update`/"Terapkan update" hanya mengganti image dan tidak pernah menyentuh `.env.dist` — instalasi lama tidak punya barisnya, dan dulu terminal
+  melempar `TERMINAL_SSH_USER is not set` walau `TERMINAL_SSH_HOST` terisi. Sekarang backend SSH-ke-host memakai `root` (default installer; install-nya sendiri butuh root).
+  **Hanya** untuk backend env — server remote tetap memakai `Server.username`-nya sendiri. `GET /terminal/status` tidak lagi punya error itu dan membalas `username` efektif +
+  `usernameSource: 'env' | 'default'` (null di mode lokal) supaya web membedakan "diset eksplisit" dari "default". Event Socket.IO `error` kini punya argumen kedua opsional
+  `hint` (`'environment'` = gagal membuka shell host, `'servers'` = server remote; `undefined` untuk PTY lokal dan error tiket/origin) — dihitung `TerminalGateway.configHint()`
+  dan dicermin di web (`terminal.protocol.ts`), dipakai `terminal-view.tsx` untuk menampilkan tautan ke Infrastruktur → Environment / Server remote (Environment hanya owner,
+  jadi admin melihat nama halamannya, bukan tautan).
 - **Server remote** (`src/modules/server/`, entity `Server` di `servers`: host/port/username, `private_key_encrypted` nullable `select:false` — null = pakai key platform):
   flow `create/list/delete-server`, `test-server` (buka+tutup shell; gagal auth → `authorizeCommand` bila memakai key platform), `platform-ssh-key/` (`GET /servers/ssh-key`).
   Semua `@Roles('owner','admin')`. `ServerService.resolve(id)` → `SshTarget` (+`usesPlatformKey`).
@@ -315,6 +324,19 @@ NestJS 11 backend for aoox (self-hosted PaaS).
   container lewat `RemoteDockerService.forServer(serverId)`, bukan daemon lokal — cek tabel tetap global. Saat `update`, container milik app sendiri (`aoox-app-<appName>`,
   `-next` blue/green, atau task swarm berlabel `aoox.application`) dan baris app itu sendiri dikecualikan; cek hanya jalan kalau `hostPort` atau `serverId` berubah.
   Sebelumnya app yang dibuat tanpa domain **dan** tanpa host port bebas dipilih port yang sudah dipakai lalu gagal diam-diam saat container dibuat — sekarang 400 di awal.
+- **Ubah Port host pada app yang sudah jalan berlaku langsung** (`update-application.service.ts`): port hanya hidup di `HostConfig.PortBindings` container, jadi dulu PATCH cuma menyimpan
+  baris DB dan port baru baru terbuka setelah deploy/rollback berikutnya. Sekarang `hostPort` berubah (null→angka, angka→angka, angka→null) + `currentImage` + `status==='running'` →
+  `runner.applyRuntimeConfig` (mode container: sinkron, recreate dari `currentImage`, tanpa build; dengan port host **tidak ada blue/green** karena dua container tak bisa bind port yang sama
+  → downtime singkat; server remote lewat `RemoteDockerService.forServer` di dalam `replaceContainer`) atau `queueRuntimeConfig` (mode service — rolling update). **Aplikasi `stopped` tidak
+  dinyalakan**: hanya disimpan, dan `start-application` membandingkan `HostConfig.PortBindings[<containerPort>/tcp]` container yang berhenti dengan `app.hostPort` (`publishedPort()`) — beda →
+  cek `assertFree` lalu `applyRuntimeConfig` (recreate + start) alih-alih `startContainer` (container berhenti masih membawa port lamanya). Mode service yang di-scale 0 belum punya jalur ini
+  (berlaku pada deploy/config berikutnya). **Deployment aktif → 409** (bukan "biarkan deployment membacanya"): runner memegang salinan entity `Application` dari saat di-queue, jadi ia
+  membuat container dengan port lama **dan** `repo.save(app)` di akhir menulis balik port lama, menghapus perubahan user diam-diam (TypeORM men-diff terhadap DB). **Kegagalan penerapan**:
+  `replaceContainer` menghapus container lama *sebelum* membuat yang baru (port yang sama), jadi bila create/start gagal (port direbut proses lain setelah `assertFree`) tak ada container tersisa;
+  `applyHostPort()` lalu mengembalikan `hostPort` lama di DB **dan** me-recreate container dengan port lama, dan membalas 409 "…the previous port was restored" (bila restore ikut gagal →
+  status `error` + pesan "redeploy"). Diuji nyata dengan `nginx:alpine` (sumber image): tambah/ganti/hapus port mengikuti tanpa deployment baru, bentrok dengan container lain 400 dan container
+  utuh, stopped tetap stopped lalu start memakai port baru, deployment aktif 409. **Belum diuji nyata**: jalur restore saat gagal (Docker Desktop tidak menolak bind meski Windows menahan
+  port atau port dikecualikan — hanya tes unit), server remote, swarm.
 - `deployment-runner.service.ts` berjalan **detached** dari request: `POST /build?remote=<git>#<branch>` (daemon meng-clone sendiri — tidak butuh git/tar di API)
   → `POST /images/{name}/push` dengan `X-Registry-Auth` (base64url **dengan padding**, seperti Go) ke registry lokal
   → hapus container lama → create+start container baru (label `aoox.application`). Image ref: `<registry.url>/<project-slug>/<appName>:<12 char id deployment>`.
@@ -400,7 +422,7 @@ NestJS 11 backend for aoox (self-hosted PaaS).
   (`staticBuildCommand`, null = file sudah ada) → `nginx:1.27-alpine` menyalin `staticOutputDir` (`dist`/`build`/`out`/`.`) ke `/usr/share/nginx/html`; `renderNginxConf(spa)` =
   gzip, cache aset 7 hari, `try_files … /index.html` bila `staticSpa`. Pipeline = jalur nixpacks tanpa planner: helper `aoox-nixpacks` meng-clone, Dockerfile & nginx.conf
   dimasukkan lewat env (`printf` ke `.aoox/`), tar → `buildFromTar` (`dockerfile=.aoox/Dockerfile`, builder klasik — tanpa cache mount). Port container = 80.
-  Diuji: repo HTML polos dan build stage + fallback SPA. Belum: pnpm/yarn workspace butuh perintah build eksplisit (tidak ada deteksi otomatis).
+  Diuji: repo HTML polos dan build stage + fallback SPA. Mode non-SPA menyajikan `404.html` milik repo untuk path yang tidak ada (`error_page 404`; tanpa file itu = halaman 404 bawaan nginx). Diuji ulang lewat halaman create baru + deploy nyata: `/` & `/about.html` 200, path tak dikenal 404 dengan halaman kustom. Belum: pnpm/yarn workspace butuh perintah build eksplisit (tidak ada deteksi otomatis).
 - **Sumber image** (`Application.sourceType = 'image'`, `image_ref`, `image_registry_id` FK registries SET NULL; `git_url` nullable): runner melewati build/push —
   `pullSourceImage()` selalu `pullImage(ref, auth?)` (tag bergerak ikut terbarui; `X-Registry-Auth` dari kredensial registry eksternal untuk image privat, password di-redact dari log)
   lalu `replaceContainer`. Tidak butuh registry lokal. Pull gagal → deployment `failed`, container lama tetap jalan. Rollback tetap memakai `imageRef` deployment lama; webhook untuk app
@@ -966,7 +988,22 @@ NestJS 11 backend for aoox (self-hosted PaaS).
   untuk ditampilkan, bukan dipakai untuk logika pembanding update (channel alpha belum tentu naik linear per tag, digest tetap sumber kebenaran).
 - CLI: `aoox update` (cek) / `aoox update --apply` (terapkan). Web: `instance-update-card.tsx` di Settings → Infrastruktur (owner), tombol "Cek update" (server action, bukan cuma
   render awal) dan "Terapkan update" (disabled kalau `INSTALL_DIR` kosong atau tidak ada update).
-  Belum: notifikasi otomatis saat ada update tersedia (beda dari `ImageUpdateWatcherService` aplikasi yang jalan `@Cron`), rollback otomatis kalau `docker compose up` gagal setelah pull.
+  Belum: notifikasi (email/webhook) saat ada update tersedia — sinyal versi di bawah hanya untuk badge sidebar/halaman Update —, rollback otomatis kalau `docker compose up` gagal setelah pull.
+- **Sinyal "ada versi lebih baru" untuk sidebar** (`instance-version.service.ts`, `semver.ts`, `registry/remote-tags.ts`): sinyal digest di atas tidak cukup — baseline `null` di cek pertama tidak bisa
+  tahu versi berjalan sudah basi, dan hanya jalan saat owner menekan tombol. Jadi ada sumber kedua yang **berbasis versi**: `fetchRemoteTags()` (`GET /v2/hideandseeklab/aoox-api/tags/list?n=1000`, alur
+  Bearer yang sama dengan `fetchRemoteDigest`) → `newestVersion(tags, currentVersion)` (semver.org 2.0.0 murni: `alpha.9 < alpha.10`, stabil > pre-release dengan inti sama; tag non-semver seperti
+  `latest` diabaikan; instalasi **stabil tidak pernah ditawari pre-release**, instalasi pre-release ditawari apa pun yang lebih baru) → disimpan di kolom `latest_version`/`latest_checked_at`
+  (`instance_update_state`, migrasi `InstanceUpdateLatestVersion`, additive). Dipicu `@Cron('17 */6 * * *')` (+ jitter acak ≤5 menit) dan sekali ±20–60 detik setelah boot
+  (`OnApplicationBootstrap`, `setTimeout(...).unref()`), **tidak pernah** per request; gagal jaringan/registry = `debug` saja, cache lama dipertahankan, `latest_checked_at` hanya untuk sukses
+  (instalasi tanpa internet tetap normal tanpa badge). `check()` (`GET /instance/update`, tombol "Cek update") memanggil `refresh()` juga dan mengembalikan blok `version`, jadi halaman dan sidebar
+  selalu konsisten. **`updateAvailable` diturunkan saat dibaca** (versi cache lebih baru dari `appVersion()` proses ini), bukan disimpan: badge hilang seketika begitu container baru menyala.
+  **Instalasi dengan tag di-pin**: `docker-compose.dist.yml` tidak meneruskan `API_IMAGE`/`WEB_IMAGE` ke container api, jadi tag tidak bisa dibaca dari env; `tracked()` memakai `API_IMAGE` bila ada,
+  kalau tidak `Config.Image` container sendiri (`inspectContainer(os.hostname())`, sekali per proses) → `latest` (badge boleh), `pinned` (tag versi/channel/digest — `pull` tidak akan menggesernya,
+  jadi **tanpa badge**, halaman Update hanya menginformasikan versi terbaru) atau `unknown` (daemon tak terjangkau/bukan container — **tanpa badge**, sengaja daripada menyesatkan).
+  `GET /auth/me` menambah `updateAvailable: {version, applying}` **hanya untuk `owner`** (`MeService`, dibaca dari cache tanpa panggilan registry; error apa pun → field dihilangkan, `/auth/me` tidak pernah
+  rusak karenanya; peran lain bahkan tidak memicu pembacaan cache). `applying` dibatasi 10 menit sejak `applyStartedAt` supaya apply yang gagal tidak mengunci teks "Sedang memperbarui…" selamanya.
+  Env `INSTANCE_UPDATE_REGISTRY_URL` mengganti basis URL registry (mirror/uji). Diuji nyata dengan registry palsu + Postgres terpisah: versi lebih tinggi → owner dapat field, admin/member tidak;
+  sama/lebih lama → hilang; `alpha.10` > `alpha.9`; registry 500 → tanpa error log, cache dipertahankan. **Belum diuji nyata**: tag `pinned` terhadap container Docker sungguhan (hanya tes unit).
 - **Keterbatasan penting**: `apply()` hanya `docker compose pull && up -d` — **tidak pernah** menulis ulang `docker-compose.dist.yml` di `INSTALL_DIR` host. Jadi perbaikan/fitur baru
   yang butuh baris baru di file compose itu sendiri (var `environment:` baru, service baru, dll — mis. `PUBLIC_API_URL` yang sekarang juga diteruskan ke service `api`, lihat bagian
   Git credential & Webhook) **tidak sampai** ke instalasi yang sudah ada lewat `aoox update` / tombol "Terapkan update" — image baru dijalankan dengan compose file **lama** di host,
@@ -976,6 +1013,12 @@ NestJS 11 backend for aoox (self-hosted PaaS).
   bisa juga menulis ulang `docker-compose.dist.yml` dari salinan yang dibundel di image `api` sendiri (image sudah membawa versi baru file itu untuk keperluan lain) sebelum
   `up -d`, supaya update compose ikut ter-apply otomatis — belum dikerjakan, perlu hati-hati karena bisa menimpa modifikasi manual operator di file itu (mis. `docker-compose.build.yml`
   override lokal, atau baris yang sengaja ditambah operator sendiri).
+- **Perbaikan instalasi lama**: `aoox reinstall` di `../aoox-cli` menutup keterbatasan di atas — menulis ulang `docker-compose.dist.yml` (+ `docker-compose.domain.yml` bila ada) dari salinan
+  bundel CLI, **menggabung** `.env.dist` (nilai/urutan/komentar dipertahankan, hanya key hilang yang punya default aman ditambah, mis. `TERMINAL_SSH_USER=root`; secret tidak pernah dibuat
+  ulang, berhenti bila `POSTGRES_PASSWORD`/`JWT_SECRET`/`ENCRYPTION_KEY` hilang), backup ke `<dir>/backups/<waktu>/`, lalu `pull` + `up -d --force-recreate` dengan daftar `-f` yang
+  sama dengan stack berjalan (label `com.docker.compose.project.config_files` container api). `docker-compose.override.yml` (milik panel-domain/instance-env) tidak disentuh. Rekomendasikan ini
+  — **bukan** `aoox install --force` (secret baru) — untuk instalasi yang ketinggalan compose/env. Karena default key diturunkan dari `buildEnvFile` + `${VAR}` di compose bundel,
+  perubahan compose/env baru di sini tetap harus disalin ke `aoox-cli/assets/install/` (lihat bagian Docker / distribusi).
 
 ## Environment instance (`.env.dist` sebagian, dari dashboard)
 
@@ -989,6 +1032,8 @@ NestJS 11 backend for aoox (self-hosted PaaS).
 - `GET /instance/env` (owner) membalas nilai aktif sekarang (`ConfigService.get()`, sama seperti `panel-domain.status()` membaca `WEB_ORIGIN`) — bukan isi file `.env.dist`
   yang belum diterapkan. `terminalSshPassword` **tidak pernah** dikembalikan (hanya `terminalSshPasswordSet: boolean`), pola yang sama dengan notifikasi/webhook DTO yang
   tidak pernah membawa rahasia di endpoint list/status.
+- `GET /instance/env` juga membalas `terminalSshUserDefault` (`root`, dari konstanta yang sama dengan backend terminal): `terminalSshUser` tetap **nilai mentah** (null bila kosong)
+  supaya form tidak menyimpan `root` yang tak pernah diketik user; web menampilkan `root (default)` sebagai placeholder + catatan selagi kosong.
 - `PATCH /instance/env` (owner, throttle 5/menit, 202): tiap field independen — field yang di-omit dibiarkan, string kosong **menghapus** nilai (kembali ke default
   `${VAR:-default}` di compose, mis. `REGISTRY_PUBLIC_HOST=` kosong → balik ke `localhost`). Hanya key yang benar-benar dikirim yang di-upsert ke `.env.dist`
   (`envUpsertLine()`), jadi menyimpan bagian "SSH Terminal" saja tidak menyentuh `PUBLIC_IP`/`REGISTRY_PUBLIC_HOST`. Web: `instance-env-card.tsx` di Settings → Infrastruktur

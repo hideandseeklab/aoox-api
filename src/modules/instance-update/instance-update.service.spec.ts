@@ -44,12 +44,17 @@ describe('InstanceUpdateService', () => {
     const config = {
       get: jest.fn().mockImplementation((key: string) => configValues[key]),
     };
+    const versions = {
+      refresh: jest.fn().mockResolvedValue(true),
+      info: jest.fn().mockResolvedValue({ updateAvailable: false }),
+    };
     const service = new InstanceUpdateService(
       repo as never,
       docker as never,
       config as never,
+      versions as never,
     );
-    return { service, repo };
+    return { service, repo, versions };
   }
 
   function mockVersion(service: InstanceUpdateService, version: string) {

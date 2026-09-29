@@ -12,6 +12,10 @@ import {
 import { DockerService } from '../docker/docker.service';
 import { fetchRemoteDigest } from '../registry/remote-digest';
 import {
+  InstanceVersionInfo,
+  InstanceVersionService,
+} from './instance-version.service';
+import {
   INSTANCE_UPDATE_STATE_ID,
   InstanceUpdateState,
 } from './instance-update-state.entity';
@@ -35,6 +39,11 @@ export interface InstanceUpdateStatus {
   applyStartedAt: Date | null;
   api: ImageUpdateStatus;
   web: ImageUpdateStatus;
+  /**
+   * Newest published version vs the running one (what the sidebar badge
+   * uses) — refreshed by every manual check, so the two never disagree.
+   */
+  version: InstanceVersionInfo;
 }
 
 /** Cheap poll target for the web UI while an update is applying — no registry calls. */
@@ -61,6 +70,7 @@ export class InstanceUpdateService {
     private readonly repo: Repository<InstanceUpdateState>,
     private readonly docker: DockerService,
     private readonly config: ConfigService,
+    private readonly versions: InstanceVersionService,
   ) {}
 
   get currentVersion(): string {
@@ -99,6 +109,8 @@ export class InstanceUpdateService {
         checkedAt: null,
         applyStartedAt: null,
         applyFromVersion: null,
+        latestVersion: null,
+        latestCheckedAt: null,
       })
     );
   }
@@ -181,6 +193,8 @@ export class InstanceUpdateService {
     if (row.webDigest === null) row.webDigest = webDigest;
     row.checkedAt = new Date();
     await this.repo.save(row);
+    // The manual check also refreshes the cached version the sidebar reads.
+    await this.versions.refresh();
 
     return {
       currentVersion,
@@ -190,6 +204,7 @@ export class InstanceUpdateService {
       applyStartedAt: row.applyStartedAt,
       api,
       web,
+      version: await this.versions.info(),
     };
   }
 

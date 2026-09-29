@@ -8,9 +8,38 @@ Versions below 1.0.0 may include breaking changes in a minor release.
 
 ## [Unreleased]
 
+## [0.1.0-alpha.4] - 2026-09-29
+
 ### Added
 
-- `instance_update_state` gets two new columns, `apply_started_at`/`apply_from_version`, so
+- **"Update available" signal for the dashboard sidebar.** The API now looks up the newest published
+  `hideandseeklab/aoox-api` version on its own — once ~20-60 s after boot and every 6 hours (plus
+  jitter), never per request — and caches it in two new nullable columns on `instance_update_state`
+  (`latest_version`, `latest_checked_at`; migration `InstanceUpdateLatestVersion`, additive, tested up
+  and down with data present). The source is the registry tag list (`GET /v2/<repo>/tags/list`, same
+  Bearer flow as the digest check), compared with the running `package.json` version by a real
+  semver comparator (`0.1.0-alpha.9 < 0.1.0-alpha.10`, a stable release outranks its pre-releases; a
+  stable install is never offered a pre-release). Whether it counts as an update is derived on read,
+  so it disappears the moment the running version catches up. Registry/network failures are silent
+  (debug log only) and keep the previous cache: an install without internet access behaves as before.
+  It only shows for installs that follow `:latest`: the tag is read from `API_IMAGE`, or, because the
+  stock compose file does not pass that variable to the container, from the image the running container
+  was created from (one Docker `inspect` per process); an exact version, another tag, a digest, or a tag
+  that cannot be determined never produces a badge. `GET /auth/me` returns `updateAvailable: { version,
+  applying }` **for the owner only** (from the cached row, no registry call); `GET /instance/update`
+  now includes a `version` block and every manual "Cek update" refreshes the cache, so the sidebar and
+  the Update page cannot disagree. `INSTANCE_UPDATE_REGISTRY_URL` overrides the registry base URL
+  (mirrors, tests).
+- Static sites (`buildType: static`, SPA mode off) now serve the repo's own `404.html` for missing paths
+  (`error_page 404 /404.html` + an `internal` location in the generated nginx conf); when the repo has no
+  `404.html`, nginx falls back to its default 404 page as before. SPA mode is unchanged (everything falls back
+  to `/index.html`). Found while testing a sample static site end to end against the dev stack.
+
+- `GET /auth/me` now also returns `version`, the API version actually running (from `package.json`,
+  read once), for every role. The web sidebar shows it under the logo; `GET /instance/update`, which
+  also reports it, stays owner-only.
+- `instance_update_state` gets two new columns, `apply_started_at`/`apply_from_version` (migration
+  `InstanceUpdateApplyState`, additive), so
   `GET /instance/update` and a new lightweight `GET /instance/update/progress` (no registry calls —
   see below) can report `applying: boolean` for the "Terapkan update" flow on the dashboard: set by
   `apply()` (the version this process was on when the restart was triggered), cleared the next time
@@ -31,6 +60,27 @@ Versions below 1.0.0 may include breaking changes in a minor release.
 
 ### Fixed
 
+- Changing an application's Port host in Settings did nothing to the running container: only the
+  database row changed, so the port stayed closed until the next deploy or rollback (reported on a real
+  VPS with a nixpacks app: `docker ps` showed `3000/tcp` with no `0.0.0.0:5434->3000`). `PATCH
+  /applications/:id` now applies it right away, for a port added, changed or removed: the running
+  container is recreated from `currentImage` (no build); a swarm service gets a queued `config`
+  deployment; a stopped app is left stopped and `POST /applications/:id/start` recreates its container
+  when the container's published port no longer matches (re-checking the port is free first, since the
+  recreate removes the old container). While a deployment is active the change is refused with 409,
+  because a deployment holds its own copy of the app and would both create its container with the old
+  port and write the old port back on finishing. If recreating fails (e.g. the port was taken between
+  the conflict check and the create), the previous port is restored in the database and on the daemon
+  and the request fails with a 409 saying so, rather than leaving the app without a container.
+- The web Terminal on installs made before the installer wrote `TERMINAL_SSH_USER=root` failed with
+  `TERMINAL_SSH_USER is not set` even with `TERMINAL_SSH_HOST` filled in: those `.env.dist` files have
+  no such line, and `aoox update` / "Terapkan update" only swap images, never `.env.dist`. The
+  SSH-to-host backend now defaults to `root` when the variable is empty (the same default the
+  installers use — the install itself needs root); remote servers keep their own `username`.
+  `GET /terminal/status` no longer reports that error and gains `usernameSource: 'env' | 'default'`
+  (null in local mode), `GET /instance/env` gains `terminalSshUserDefault`, and the Socket.IO `error`
+  event carries an optional second argument `hint` (`'environment'` for the host, `'servers'` for a
+  remote server) so the web app can link to the page that fixes a failed connection.
 - The "Terapkan update" button's UX bug reported by a user upgrading a real VPS from alpha.2 to
   alpha.3: clicking it briefly showed a red "Tidak dapat terhubung ke server" error (expected — the
   `api`/`web` containers were mid-restart) and then just sat there on the old version number forever
@@ -337,7 +387,8 @@ Versions below 1.0.0 may include breaking changes in a minor release.
 - Monitoring with metrics history, disk cleanup tooling, and project/instance export-import for
   backup and migration between hosts.
 
-[Unreleased]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-alpha.3...HEAD
+[Unreleased]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-alpha.4...HEAD
+[0.1.0-alpha.4]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-alpha.3...v0.1.0-alpha.4
 [0.1.0-alpha.3]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-alpha.2...v0.1.0-alpha.3
 [0.1.0-alpha.2]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-alpha.1...v0.1.0-alpha.2
 [0.1.0-alpha.1]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-alpha.0...v0.1.0-alpha.1

@@ -91,14 +91,65 @@ describe('TerminalBackendService credential precedence', () => {
     expect(load).not.toHaveBeenCalled();
   });
 
-  it('reports a missing user and key-dir permission problems instead of throwing', () => {
+  it('defaults the login to root when TERMINAL_SSH_USER is empty or missing (installs older than the installer default)', async () => {
+    for (const env of [
+      { TERMINAL_SSH_HOST: 'host' },
+      { TERMINAL_SSH_HOST: 'host', TERMINAL_SSH_USER: '' },
+      { TERMINAL_SSH_HOST: 'host', TERMINAL_SSH_USER: '   ' },
+    ]) {
+      const svc = new TerminalBackendService(config(env), keys, servers);
+      expect(svc.status()).toMatchObject({
+        username: 'root',
+        usernameSource: 'default',
+        error: null,
+      });
+      await svc.open({ cols: 80, rows: 24 });
+      expect(sshOpen).toHaveBeenLastCalledWith(
+        expect.objectContaining({ host: 'host', username: 'root' }),
+        { cols: 80, rows: 24 },
+      );
+    }
+  });
+
+  it('keeps an explicit TERMINAL_SSH_USER and reports its source', () => {
+    const svc = new TerminalBackendService(
+      config({ TERMINAL_SSH_HOST: 'host', TERMINAL_SSH_USER: ' deploy ' }),
+      keys,
+      servers,
+    );
+    expect(svc.status()).toMatchObject({
+      username: 'deploy',
+      usernameSource: 'env',
+    });
+  });
+
+  it('has no username source in local mode', () => {
+    const svc = new TerminalBackendService(config({}), keys, servers);
+    expect(svc.status()).toMatchObject({
+      username: null,
+      usernameSource: null,
+    });
+  });
+
+  it('never applies the default to a remote server, which keeps its own username', async () => {
+    resolve.mockResolvedValueOnce({
+      target: { host: 'vps', port: 22, username: 'ubuntu' },
+      usesPlatformKey: false,
+      server: {},
+    });
     const svc = new TerminalBackendService(
       config({ TERMINAL_SSH_HOST: 'host' }),
       keys,
       servers,
     );
-    expect(svc.status().error).toBe('TERMINAL_SSH_USER is not set');
+    await svc.open({ cols: 80, rows: 24 }, 'srv-1');
+    expect(sshOpen).toHaveBeenLastCalledWith(
+      expect.objectContaining({ username: 'ubuntu' }),
+      expect.anything(),
+    );
+  });
 
+  it('reports key-dir permission problems instead of throwing', () => {
     const denied = {
       load: jest.fn(() => {
         throw new SshKeyPermissionError('/run/secrets/aoox');

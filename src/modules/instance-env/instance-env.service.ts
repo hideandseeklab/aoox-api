@@ -6,6 +6,7 @@ import {
   runComposeHelper,
 } from '../docker/compose-apply.util';
 import { DockerService } from '../docker/docker.service';
+import { DEFAULT_TERMINAL_SSH_USER } from '../terminal/terminal-backend.service';
 import { UpdateInstanceEnvDto } from './update-instance-env.dto';
 
 /** DTO field -> the `.env.dist` key it maps to; also the whitelist of what this feature may ever touch. */
@@ -22,7 +23,10 @@ export interface InstanceEnvStatus {
   installDirConfigured: boolean;
   terminalSshHost: string | null;
   terminalSshPort: string | null;
+  /** Raw value from `.env.dist` (null when unset/empty). */
   terminalSshUser: string | null;
+  /** What the terminal logs in as when `terminalSshUser` is empty. */
+  terminalSshUserDefault: string;
   /** Never the actual value — same reason notification/webhook DTOs never carry secrets. */
   terminalSshPasswordSet: boolean;
   publicIp: string | null;
@@ -56,6 +60,7 @@ export class InstanceEnvService {
       terminalSshHost: this.config.get<string>('TERMINAL_SSH_HOST') || null,
       terminalSshPort: this.config.get<string>('TERMINAL_SSH_PORT') || null,
       terminalSshUser: this.config.get<string>('TERMINAL_SSH_USER') || null,
+      terminalSshUserDefault: DEFAULT_TERMINAL_SSH_USER,
       terminalSshPasswordSet: !!this.config.get<string>(
         'TERMINAL_SSH_PASSWORD',
       ),
