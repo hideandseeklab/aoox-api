@@ -1,6 +1,6 @@
 {
   "name": "aoox-api",
-  "version": "0.1.0-alpha.4",
+  "version": "0.1.0-alpha.5",
   "description": "Self-hosted PaaS backend for aoox: deploy from Git or images on Docker, managed databases, custom domains with automatic HTTPS, and monitoring (NestJS)",
   "keywords": [
     "self-hosted",
