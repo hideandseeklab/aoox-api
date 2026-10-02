@@ -6,6 +6,8 @@ import {
   UpdateDateColumn,
 } from 'typeorm';
 
+export type ServerHealthStatus = 'unknown' | 'up' | 'down';
+
 /**
  * A remote machine aoox can open a shell on over SSH. By default the platform's own generated key
  * (SshKeyService) is used and the user authorizes its public half on the
@@ -49,6 +51,24 @@ export class Server {
 
   @Column({ name: 'acme_staging', default: false })
   acmeStaging: boolean;
+
+  /** Last result of the periodic reachability check (ServerHealthService). */
+  @Column({ name: 'health_status', type: 'varchar', default: 'unknown' })
+  healthStatus: ServerHealthStatus;
+
+  @Column({ name: 'health_checked_at', type: 'timestamptz', nullable: true })
+  healthCheckedAt: Date | null;
+
+  /** When `healthStatus` last changed — "down since". */
+  @Column({ name: 'health_changed_at', type: 'timestamptz', nullable: true })
+  healthChangedAt: Date | null;
+
+  @Column({ name: 'health_error', type: 'text', nullable: true })
+  healthError: string | null;
+
+  /** Running `aoox.component` containers seen by the last check. */
+  @Column({ name: 'monitored_containers', type: 'int', nullable: true })
+  monitoredContainers: number | null;
 
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;

@@ -162,7 +162,7 @@ NestJS 11 backend for aoox (self-hosted PaaS).
   `RemoteDockerService.forServer(serverId|null)` (server module, cache satu sesi per server, `forget(id)`) dipakai runner, get/stop/start/delete, logs, logs gateway, metrics,
   dan builder nixpacks (`build(input, onLine, docker)`). Di server remote: build di daemon server, **tidak ada push** ke registry (registry lokal tidak terjangkau dari sana;
   imageRef `aoox/<project>/<app>:<tag>`, rollback memakai image yang masih ada di server), **tanpa label Traefik** (proxy hanya di host — pakai port host),
-  monitoring & notifikasi container-mati tetap lokal saja. `test-server` juga mengecek Docker lewat tunnel (`dockerVersion`/`dockerError`).
+  metrik & notifikasi container-mati **ikut dipantau** (lihat "Pemantauan server remote" di bawah); disk-watcher, certificate-watcher, dan retensi disk tetap lokal. `test-server` juga mengecek Docker lewat tunnel (`dockerVersion`/`dockerError`).
 - **Proxy per server**: `ProxyService` kini bekerja pada `DockerHandle` mana pun dengan `ProxySettings` eksplisit (`statusOn/provisionOn/removeOn`; `status/provision/remove` =
   handle lokal + `localSettings` dari env). `Server` punya `proxy_http_port`/`proxy_https_port`/`acme_email`/`acme_staging` (`proxySettingsOf(server)`); flow `server-proxy/`
   (`GET/POST/DELETE /servers/:id/proxy`, POST menyimpan setting lalu **mengganti** container proxy yang ada). Runner `replaceContainer` tidak lagi membuang domain untuk app remote:
@@ -225,7 +225,7 @@ NestJS 11 backend for aoox (self-hosted PaaS).
   Image berjalan sebagai user `node`, `DB_MIGRATIONS_RUN=true` → migrasi dijalankan TypeORM saat boot (`migrationsRun`).
 - Semua container yang dibuat API (registry, proxy, app) diberi label `com.docker.compose.project=aoox` (`composeLabels()` di `docker.service.ts`)
   dan kedua compose file memakai `name: aoox`, sehingga Docker Desktop menampilkannya sebagai satu grup. Volume dev Postgres dipin ke nama lama `aoox-api_postgres_data`.
-- `docker-compose.yml` = Postgres untuk dev saja. `docker-compose.dist.yml` = stack distribusi (postgres + api + web, image dari GitLab registry; `-f docker-compose.build.yml` untuk build lokal dari `../aoox-web`);
+- `docker-compose.yml` = Postgres untuk dev saja. `docker-compose.dist.yml` = stack distribusi (postgres + api + web, image `hideandseeklab/aoox-api`/`aoox-web` dari Docker Hub; `-f docker-compose.build.yml` untuk build lokal dari `../aoox-web`);
   konfigurasi lewat `.env.dist` (contoh: `.env.dist.example`). `POSTGRES_PASSWORD` dan `JWT_SECRET` wajib, tanpa default.
 - Tes cold start: `docker compose -p x -f docker-compose.dist.yml --env-file .env.dist down -v && ... up -d --build`, lalu buka `/setup`.
 - **`docker-compose.dist.yml` dan `docker-compose.domain.yml` punya salinan ter-bundle di `../aoox-cli/assets/install/`**,
@@ -238,8 +238,8 @@ NestJS 11 backend for aoox (self-hosted PaaS).
 
 - `npm test` — unit spec (Jest) untuk invarian penting: `setup` hanya saat kosong, bootstrap idempotent, gateway menolak tiket salah/role member/tiket bekas, throttle 429.
   Spec baru diletakkan di samping file yang diuji (`*.spec.ts`), mock repo/DataSource — tidak perlu Postgres.
-- Belum ada CI otomatis di GitHub (config GitLab CI lama sudah dihapus setelah repo pindah ke GitHub).
-  `docker-compose.dist.yml` memakai image registry (kosong secara default, lihat `.env.dist.example`); `docker-compose.build.yml` untuk build lokal.
+- CI GitHub: `.github/workflows/ci.yml` menjalankan lint/build/test di tiap pull request dan push ke main; `docker-publish.yml` menerbitkan image ke Docker Hub pada tag versi (config GitLab CI lama sudah dihapus setelah repo pindah ke GitHub).
+  `docker-compose.dist.yml` memakai image Docker Hub (`API_IMAGE`/`WEB_IMAGE` untuk pin versi, lihat `.env.dist.example`); `docker-compose.build.yml` untuk build lokal.
 
 ## Docker & Registry
 
@@ -317,6 +317,8 @@ NestJS 11 backend for aoox (self-hosted PaaS).
 - Kepemilikan lewat project: `ApplicationService.findOwnedOrFail(id, ownerId)` join `project.ownerId`.
 - Flow: `create/list/get/update/delete-application`, `deploy-application` (202, tolak 409 kalau masih ada deployment aktif),
   `list-deployments` (tanpa logs), `get-deployment` (dengan logs, di-poll web), `stop/start-application`, `application-logs` (log container).
+  `list-applications` (`GET /applications?projectId=`) membalas app + `domains: [{host, https}]` (satu query `IN (...)` untuk seluruh daftar, bukan per app) supaya kartu
+  halaman detail project bisa menautkan ke app yang berjalan; compose (`serviceDomains`/`servicePorts`) dan database (`hostPort`) sudah ada di row list masing-masing.
 - **Cek tabrakan host port** saat `create`/`update-application` men-set `hostPort`: `HostPortService` (`src/modules/host-port/`, hanya meng-impor entity
   `Application`/`ManagedDatabase`/`ComposeApp` langsung — bukan module-nya — supaya bisa dipakai `ApplicationModule` **dan** `ComposeModule` tanpa siklus,
   karena `ComposeModule` sudah meng-import `ApplicationModule`). Logika sama dengan `ComposeService.assertHostPortsFree()` (lihat bagian Compose): `applications.host_port`
@@ -463,7 +465,58 @@ NestJS 11 backend for aoox (self-hosted PaaS).
   Cache BuildKit tidak terlihat `POST /build/prune` daemon, jadi `MaintenanceService.cleanup()` memanggil `railpack.pruneCache(BUILDKIT_CACHE_KEEP_GB × 1 GB, default 10)`
   (`buildctl prune --keep-storage` lewat exec) dan melaporkannya sebagai `buildkitCache` di `CleanupReport` (tampil di kartu Disk). Catatan: batasan "tanpa cache dependensi" di paragraf
   nixpacks hanya berlaku untuk nixpacks/static, bukan railpack.
+- **Root directory / monorepo** (`Application.rootDirectory` nullable + `watchRootOnly` bool, migrasi `ApplicationRootDirectory`; `root-directory.ts`): membangun **subfolder** repo untuk
+  SEMUA build type git, termasuk preview PR (yang lewat `buildImage` yang sama). Null/kosong = root repo (perilaku lama). **Mekanisme per jalur**: Dockerfile →
+  `POST /build?remote=<git>#<branch>:<dir>` (`gitContextRef()`; sintaks git context + subdirektori Engine API — konteks build = `<dir>`, jadi `dockerfilePath` relatif terhadapnya; `:` aman
+  karena git melarangnya di nama branch); nixpacks/railpack/static → helper tetap `git clone` ke `/src` lalu membangun dari `$APP` = `/src/<dir>` (`appDirPrologue()`: nixpacks `build "$APP" --out "$APP"`
+  dan `tar -C "$APP"`, railpack `build "$APP"`, static menulis `.aoox/` di `$APP`, tar `$APP`, jadi `staticOutputDir` relatif terhadap folder itu tanpa kode khusus). **Keamanan path**:
+  `isValidRootDirectory()` (segmen `[A-Za-z0-9._-]` dipisah `/`, tanpa awalan/akhiran `/`, tanpa segmen titik-saja atau `.git`, maks 200) dipakai **dua kali** — validator DTO create & update
+  (`IsRootDirectoryConstraint`, plus `@ValidateIf(v !== '')` untuk `""` dari web) dan lagi `assertValidRootDirectory()` tepat sebelum dipakai (`gitContextRef`, `rootDirectoryEnv`). Nilainya **tidak pernah**
+  diinterpolasi ke skrip shell: dikirim sebagai env `AOOX_ROOT` ke helper dan prologue shell hanya merujuk `"$AOOX_ROOT"`; prologue juga menolak (exit 3) folder yang tidak ada **dan** symlink yang
+  resolve ke luar `/src` (`pwd -P`). Service menyimpan `null`, bukan `""` (`normalizeRootDirectory`). Folder yang tidak ada → deployment `failed` dengan `Root directory "x" was not found in the
+  repository`: helper exit 3 → `rootDirectoryError`, dan untuk jalur Dockerfile error `stat <tmp>/<dir>: no such file or directory` dari daemon diterjemahkan ke pesan yang sama; container lama tidak
+  tersentuh (build gagal sebelum replace). Baris log `Building …` menyebut `(root directory: apps/web)`. **Batasan**: file di luar folder tidak ada di konteks build (Dockerfile di `apps/web` tidak bisa
+  `COPY ../packages/x`). **Webhook** (`watchRootOnly`, default false): `pushTouchesRoot()` (pure, di-unit-test) membaca `commits[].added/modified/removed` (GitHub & GitLab) dan membalas `ignored`
+  (`no changes under <dir>`) hanya bila setiap commit terbukti di luar folder; **fail-open** (deploy) bila tanpa root, tanpa/kosong `commits`, satu commit tanpa daftar file (merge commit GitHub), ≥ 20 commit
+  (batas payload), `total_commits_count` > yang dimuat (GitLab), `forced`, atau `created`. Event PR/preview tidak difilter. Ekspor/impor project membawa kedua field (opsional di file lama; nilai tidak valid saat
+  impor → `null` + warning). Diuji nyata (git daemon lokal, repo `apps/web`+`apps/site`+`services/api`): Dockerfile root `apps/web` dan `dockerfilePath` relatif, statis root `apps/site` (SPA on/off, output
+  relatif), root salah (Dockerfile & static) gagal jelas dengan container lama tetap jalan, root kosong = lama, path berbahaya 400 (create & update), symlink keluar ditolak, webhook ignored/queued, preview PR
+  membangun dari subfolder. **Belum diuji penuh**: nixpacks dan railpack (TLS intercept AV mencegat unduhan di dalam container) — hanya perakitan skrip/env (unit test); contoh di `dummy-apps/monorepo-sample`.
 - Prasyarat deploy dari git: registry lokal sudah di-provision. Belum: buildpacks lain, notifikasi khusus "image diperbarui" (memakai notifikasi deployment biasa).
+
+## Sumber secret eksternal (Infisical)
+
+- `src/modules/secret-source/` — aoox hanya menjadi **klien API** ke Infisical milik user (Cloud atau self-hosted); **bukan** template Infisical (itu ditolak user). Entity `SecretConnection`
+  (`secret_connections`: `name` unik, `provider` `infisical`, `url` nullable = `https://app.infisical.com`, `client_id`, `client_secret_encrypted` `select:false`, AES lewat `secret.util` + `ENCRYPTION_KEY`).
+  Flow: `POST /secret-connections` (owner/admin; url http(s) tanpa kredensial/query, nama unik 409), `GET` (semua anggota, DTO tanpa secret — untuk dropdown), `DELETE /:id` (owner/admin; FK
+  `applications.secret_connection_id` `ON DELETE SET NULL`, SQL migrasi `SecretSource`, tanpa relasi TypeORM supaya modul ini tidak meng-import application), `POST /:id/test` (login Universal Auth saja,
+  throttle 20/menit, `{ok, message}`). `SecretSourceModule` di-import `ApplicationModule` dan `ProjectTransferModule`, tidak pernah sebaliknya.
+- **Klien** (`infisical.client.ts`, `fetch` + `AbortSignal.timeout(10 s)`, tanpa SDK): `POST /api/v1/auth/universal-auth/login {clientId, clientSecret}` → `accessToken`; lalu
+  `GET /api/v4/secrets?projectId&environment&secretPath&recursive=false&includeImports=true&expandSecretReferences=true` (Bearer). Diverifikasi ke dokumentasi resmi (infisical.com/docs/api-reference).
+  Bila v4 menjawab **404** dicoba `GET /api/v3/secrets/raw?workspaceId&…&include_imports=true` (instalasi self-hosted lama) — endpoint v3 ini **tidak** terverifikasi dari dokumentasi (halamannya
+  tidak ada), hanya dari pengetahuan sebelumnya; 404 di keduanya = galat nyata. Hasil: key → value (import dulu, secret folder sendiri menang; `secretValueHidden` dilewati). Galat = `SecretSourceError`
+  dengan pesan pendek dari status HTTP + field `message` Infisical (dipotong 160), timeout `no answer within 10s`, `could not reach the server (ECONNREFUSED)` — **tidak pernah** memuat client secret,
+  token, URL berkredensial, atau nilai secret. Token login hanya hidup di dalam satu panggilan `fetchSecrets`; **tidak ada cache lintas panggilan** (tiap resolve = login + list baru).
+- **Aplikasi** (kolom `secret_connection_id`, `secret_project_id`, `secret_environment`, `secret_path` default `/`, `secret_sync` default false): `PUT /applications/:id/secret-source
+  {connectionId|null, projectId, environment, path, sync}` (developer+: PUT = tulis, viewer 403 lewat `assertAccess`; **409 selama ada deployment aktif** karena runner menyimpan salinan entity dan
+  menimpa perubahan, sama dengan host port). `connectionId` `null`/`""` = lepas sumber: field lain diterima tapi diabaikan (web mengirimnya), disimpan `null`/`'/'`/`false`. Validasi
+  (`secret-selection.ts`): `projectId` `[A-Za-z0-9_-]{1,100}`, `environment` `[A-Za-z0-9_-]{1,64}`, `path` `/` atau `/seg/seg` (`[A-Za-z0-9._-]`, tanpa `..`, tanpa `/` akhir), `path` kosong → `/`.
+  `POST /applications/:id/secret-source/preview` → `{keys: string[]}` **nama saja**, terurut (POST ⇒ viewer 403, throttle 20/menit, memakai konfigurasi tersimpan; galat sumber → 400 dengan pesan pendek).
+  `get-application` menambah `secretSource: {connectionId, connectionName, projectId, environment, path, sync} | null`.
+- **Resolver** (`EnvResolverService.resolve(app, {secretSource?, lenient?})`): prioritas **env project < secret Infisical (hanya bila `secretSync`) < env aplikasi**; `${{secret.KEY}}` didukung di env
+  project dan aplikasi. Secret baru diambil bila `secretSync` atau ada referensi; key yang bukan nama env valid (`[A-Za-z_][A-Za-z0-9_]*`) dilewati; **nilai dari sumber literal** (`${{…}}` di dalamnya
+  tidak diperluas). Key tak dikenal → `EnvReferenceError` (400 saat `update-application` memvalidasi env, atau deployment `failed`). Fetch gagal saat container dibuat (deploy, `applyRuntimeConfig`, rollback,
+  job `run`) → deployment `failed` dengan pesan ringkas; env di-resolve **sebelum** container lama disentuh, jadi container lama tetap jalan (diuji nyata). Validasi simpan-env memakai `lenient`: sumber tak
+  terjangkau bukan galat dan referensi `secret.*` tidak dicek (sumber yang flaky tidak boleh memblokir edit). Semua nilai yang diambil (≥ 6 karakter, supaya log biasa tidak rusak) masuk `secrets`
+  → `DeploymentLog.redact`, redaksi `app-error-watcher` (bila sumber tak terbaca saat notifikasi, contoh log **tidak dikirim**) dan keluaran job `run`. Env yang ada di `docker inspect` container
+  tentu terlihat oleh siapa pun yang punya akses Docker host — sama dengan password database.
+- **Preview PR tidak mewarisi sumber** (`replaceContainer` memanggil resolver dengan `secretSource: !override`): branch PR = kode arbitrer, aturan yang sama dengan mount. Env aplikasi yang memakai
+  `${{secret.KEY}}` membuat preview-nya gagal dengan pesan "not available in pull-request previews" (bukan nilai kosong diam-diam). Stack compose tidak punya sumber (referensi `secret.*` = galat jelas).
+- Ekspor/impor project: `applications[].secretSource {connection (NAMA), projectId, environment, path, sync}`, **tanpa kredensial**; impor mencocokkan nama, koneksi tak ada atau lokasi tidak valid →
+  sumber kosong + warning.
+- **Belum diuji nyata terhadap Infisical sungguhan** (user akan menguji): semua diuji lewat server tiruan lokal yang memeriksa path/parameter persis dari dokumentasi (login 401, v4 200, folder 404,
+  server mati) dan tes unit dengan `fetch` palsu. Tidak terverifikasi: perilaku `imports` (urutan prioritas antar import), jalur fallback v3, `viewSecretValue`/`secretValueHidden` pada identitas tanpa izin baca nilai,
+  organisasi dengan banyak sub-organisasi (`organizationSlug` tidak dikirim), dan TLS self-hosted dengan CA privat (fetch Node memakai trust store default).
 
 ## Git credential & Webhook
 
@@ -613,6 +666,10 @@ NestJS 11 backend for aoox (self-hosted PaaS).
   (set yang sama yang didaftarkan `DeploymentLog.redact` saat deploy) — keduanya diganti `***` di teks contoh sebelum dikirim; referensi `${{...}}` yang rusak
   hanya membuat redaksi database itu dilewati (tidak menggagalkan notifikasi). `EVENT_TOGGLE`/`CreateNotificationDto`/`notification.entity.ts` menambah
   `onAppError` mengikuti pola `onDeploymentStarted`.
+- **Toggle baru harus ada di SEMUA titik** (pelajaran `onDnsIssue`/`onServerDown`/`onHttpDown`): kolom entity `on_*`, `NotificationEvent` + `EVENT_TOGGLE` (diekspor), `NotificationDto`/`toDto()`,
+  `CreateNotificationDto`, `CreateNotificationService.execute()` (`repo.create`), entity web, skema zod + `formData` di `notification.actions.ts`, `EVENT_LABEL` di `notifications-card.tsx`, docs.
+  `notification-toggles.spec.ts` membaca kolom `on_*` dari metadata TypeORM dan memastikan tiap toggle ada di DTO validasi, `EVENT_TOGGLE`, dan benar-benar disimpan/dikembalikan `create` — toggle yang
+  hanya ditambah di entity gagal di sana. `serverDown` (`on_server_down`) dan `httpDown` (`on_http_down`) default **`true`**: keduanya opt-in per server/aplikasi, jadi tidak berisik untuk yang tidak memakainya.
 
 ## Compose (stack docker-compose)
 
@@ -730,6 +787,72 @@ NestJS 11 backend for aoox (self-hosted PaaS).
   sampler berurutan — angka kumulatif lintas container dengan waktu mulai berbeda tidak berarti apa-apa kalau tidak dikonversi ke rate; container yang keluar dari
   jumlah di tengah jalan (redeploy/stop) di-clamp ke 0, bukan dilaporkan negatif. **Live saja, tanpa riwayat tersimpan** (`24h`/`7d`/`30d` seperti endpoint metrik lain) —
   menambah retensi per project adalah pekerjaan terpisah (perlu skema rollup baru, bukan sekadar baca cache) dan belum diminta.
+
+## Pemantauan server remote
+
+- **Sampler** (`MonitoringService`, monitoring module — sekarang meng-import `ServerModule`): selain sapuan lokal 15 detik, tiap **30 detik** (`REMOTE_SAMPLE_INTERVAL_MS`; dua `stats`
+  per container lewat SSH terlalu berat untuk 15 detik) `sampleRemote()` membaca daftar `servers` dan **memulai satu putaran per server tanpa menunggu yang lain**: `listContainers`
+  (`aoox.component`, running) lewat `RemoteDockerService.forServer(id)` (sesi SSH yang di-cache — tidak ada koneksi baru per tick), lalu `sampleContainer` dengan paralelisme 3 per server.
+  Putaran dibatasi `REMOTE_CYCLE_TIMEOUT_MS` 25 detik (`server/with-timeout.ts`) dan **tidak ditumpuk** (`remoteRunning`), jadi satu server lambat/mati hanya menahan putarannya sendiri;
+  sapuan lokal tak tersentuh (diuji nyata: `docker pause` pada server remote → metrik database lokal tetap bertambah tiap 15 detik). Hasil disimpan di peta **terpisah**
+  (`remoteHistory` + `remoteInfo` = label & serverId per container): sapuan lokal menghapus semua id yang tidak ia lihat, dan `managedTotals()`/host live tidak boleh menjumlahkan container
+  mesin lain. id container Docker acak 256-bit, jadi tidak bentrok antar daemon. `metricsFor`/`sampledContainers` membaca keduanya, sehingga endpoint metrik aplikasi
+  (`findContainerByName` di daemon remote + `metricsFor`) dan retensi jalan tanpa perubahan di sisi pemakai. `remoteContainers()` memberi label yang sudah ditangkap sampler ke
+  `MetricRetentionService.ownersByContainer()` (owner dari `aoox.application/.database/.compose`) dan `ProjectResourceUsageService.containerProjectMap()` (`aoox.project`) — keduanya
+  **tanpa panggilan SSH sendiri**, jadi kartu resource project dan riwayat 24h/7d/30d memuat aplikasi remote. Gagal menjangkau server → bacaannya dikosongkan (angka basi lebih buruk
+  daripada kosong); container yang hilang dibuang; server yang dihapus dibuang di tick berikutnya (`forgetServer`).
+- **Event `die`** (`server/remote-events.service.ts`, di-export `ServerModule`): satu stream `GET /events` (`type=container`, `event=die`, `label=aoox.component`) per server lewat terowongan
+  yang sama, reconnect dengan backoff sendiri (1 s → 60 s, kembali ke 1 s bila sempat hidup > 30 s), `reconcile()` tiap 30 detik mengikuti tabel `servers` (mulai untuk server baru, hentikan untuk
+  yang dihapus), dan **restart segera** saat `RemoteDockerService.forget(id)` dipanggil (`onForget` — kredensial diubah / test-server). Generasi (`generation`) membuat callback stream yang sudah
+  diganti diabaikan, jadi tidak ada koneksi ganda. `ContainerDownNotifierService` berlangganan juga (`handle(event, serverId)`): aturan yang sama (grace 5 s, cooldown 10 menit per container,
+  diabaikan bila container sudah diganti deploy / row `stopped` / exit 0) tetapi pengecekan ulang lewat daemon server itu; aplikasi yang sekarang ada di server lain atau server yang sudah dihapus
+  diabaikan; database tidak pernah remote; pesan menyebut nama server (`Application went down: X on server NAME`, field `Server`, `data.server`). Server yang sendiri mati tidak bisa dicek ulang —
+  itu tugas health check di bawah.
+- **Kesehatan server** (`server/server-health.service.ts`, `@Cron` tiap menit): probe paralel per server (`listContainers` lewat terowongan, timeout 12 s) — jawabannya membuktikan server,
+  SSH, dan Docker hidup, dan jumlahnya = "container dipantau". Hasil ditulis ke baris `servers` (`health_status` unknown|up|down, `health_checked_at`, `health_changed_at` = sejak kapan,
+  `health_error`, `monitored_containers`; migrasi `ServerHealthAndMonitorToggles`) dan **itulah yang dibaca web** (`ServerDto.health`, tanpa panggilan ke server saat halaman dibuka).
+  `down` butuh **2 kegagalan berturut-turut** (`DOWN_AFTER_FAILURES`); notifikasi `serverDown` (toggle `on_server_down`, **default `true`**: hanya relevan untuk yang menambah server) dikirim sekali,
+  diingatkan maksimal 1×/jam selama masih down, dan **satu pesan pulih** ("Server reachable again", level `success`, `Down for`) lewat event & toggle yang sama (dibedakan level dan
+  `data.event` `server.down`/`server.recovered`; paling sederhana dan sejajar dengan `dnsIssue`). Cek pertama yang sukses hanya menandai `up` (tak ada yang diumumkan). State in-memory
+  (`failures`, `lastDownNotice`) dibersihkan untuk server yang hilang; **API restart saat server sudah down** tidak mengirim ulang (status dibaca dari DB, pengingat berikutnya 1 jam lagi).
+- **Batas sengaja**: `disk-watcher`, `certificate-watcher`, retensi disk/`disk` card, dan DNS tetap hanya host lokal; compose/database/job tetap hanya host. Lama deteksi server mati ≈ 2 menit
+  (cek tiap menit, dua gagal). Stream `die` dan sampler untuk server baru mulai paling lambat 30 detik setelah server ditambahkan.
+- Diuji nyata dengan server simulasi terisolasi (`docker:dind` + sshd, image `docker save | load`): metrik CPU ~99% bergerak untuk aplikasi di server remote (live + rollup 24h) dan masuk
+  resource usage project; container dimatikan → tepat satu notifikasi "on server …"; `docker pause` server → down setelah dua cek + satu notifikasi, unpause → satu notifikasi pulih;
+  server yang tak terjangkau (IP blackhole) tidak menghambat yang lain; hapus server menghentikan stream-nya.
+
+## Monitor HTTP per aplikasi
+
+- `src/modules/http-monitor/` — pemeriksaan HTTP **opsional** per aplikasi (container hidup tapi 5xx/macet tidak tertangkap `container-down`). Entity `HttpMonitor` (`http_monitors`, satu per
+  aplikasi, FK cascade): `enabled`, `path` (default `/`), `interval_minutes` 1–60 (5), `timeout_seconds` 1–30 (10), `expected_codes` (`200-399`; daftar kode/rentang), `failure_threshold` 1–10 (2),
+  `use_internal`, **plus state hidup** (`status` unknown|up|down, `consecutive_failures`, `status_since`, `last_*`, `last_alert_at`) — state ikut di baris itu sehingga **API restart tidak melupakan
+  outage yang berlangsung dan tidak mengumumkan app sehat sebagai down** (diuji nyata: restart di tengah outage → tidak ada alert baru, pulih tetap terkirim). `HttpCheck` (`http_checks`, hanya hasil:
+  waktu, ok, kode, latensi, error ≤ 200 char — **isi respons tidak pernah disimpan**) dan `HttpIncident` (`http_incidents`: mulai dari cek gagal **pertama** di rangkaian, selesai saat sehat; baris terbuka
+  = outage sedang berlangsung). Migrasi `HttpMonitors` (+ kolom `on_http_down`).
+- **SSRF — hanya path yang berasal dari pengguna**. Host **tidak pernah** dari request (DTO `forbidNonWhitelisted`: `host`/`url` = 400): `resolveTarget()` menurunkannya dari aplikasi itu sendiri —
+  domain pertama (URL publik lewat proxy, port proxy dipakai bila bukan 80/443; `useInternal` melewatinya), lalu app di server remote → `Server.host:hostPort`, app lokal di dalam Docker
+  (`/.dockerenv`, mode container) → `http://aoox-app-<appName>:<containerPort>` di jaringan `aoox`, selain itu `127.0.0.1:hostPort`; tanpa semuanya → "no reachable address" (masalah konfigurasi:
+  ditampilkan di UI, **tidak pernah** alert). `validateMonitorPath()` (`http-probe.ts`, pure, di-unit-test luas): awalan `/` tunggal (bukan `//`/URL absolut), ≤ 200 char, tanpa kontrol/spasi/`\`/`#`, tanpa
+  segmen `..` (juga yang di-percent-encode); lalu URL final dicek `origin` sama dengan basis. `probe()`: `fetch` `redirect: 'manual'` dengan timeout keras (`AbortSignal.timeout`), maks 3 redirect
+  dan **hanya ke hostname + port yang sama** (`sameService`; redirect ke host/port lain tidak diikuti, 3xx-nya yang dinilai — diuji: `Location: http://169.254.169.254/…` → 302 tercatat dalam 18 ms, tidak
+  diikuti), badan dibaca paling banyak 64 KB lalu dibuang, galat dipendekkan (`ECONNREFUSED`, `timeout after 5s`). Yang diuji adalah **dari mesin panel**: tidak membuktikan aksesibilitas dari internet luar,
+  dan dengan domain publik bisa kena hairpin NAT — UI menampilkan target yang dipakai + catatan itu.
+- **Penjadwal**: `@Cron('* * * * *')` `tick()` memilih hanya monitor **jatuh tempo** (`isDue`, slack 10 s; waktu tick dipakai sebagai `lastCheckedAt` supaya interval 1 menit tidak melorot), bukan
+  satu timer per app; pool `CHECK_CONCURRENCY` 5; `inFlight` mencegah tumpang tindih; tick yang belum selesai tidak ditumpuk. Hanya aplikasi `running`; aplikasi stopped/error **tidak dianggap down**
+  (state di-reset ke `unknown`, incident terbuka ditutup tanpa pesan pulih). **Deploy**: dilewati selama ada deployment aktif (`queued/building/pushing/starting`) dan `POST_DEPLOY_GRACE_MS` 60 s sesudah
+  deployment selesai; rangkaian gagal yang menyeberangi deploy di-reset (outage `down` dibiarkan). Retensi `@Cron('17 * * * *')`: hasil > 7 hari dan > 10 080 baris per monitor (1/menit/minggu) dihapus,
+  incident > 50 per monitor dipangkas.
+- **State & alert** (`monitor-state.ts` `nextState`, pure): `down` setelah `failure_threshold` kegagalan berturut-turut, sehat reset seketika; `unknown→up` diam. Event `httpDown` (toggle `on_http_down`,
+  **default `true`** — monitor-nya sendiri opt-in per aplikasi): satu pesan `http.down` saat threshold tercapai, pengingat maks 1×/6 jam selama masih down (`last_alert_at` persisten), satu pesan
+  `http.recovered` (level `success`, `Down for`) saat sehat — event & toggle yang sama (paling sederhana, sejajar `serverDown`). Pesan hanya memuat nama app, project, target (URL tanpa kredensial),
+  kode/galat singkat, dan tautan ke aplikasi.
+- **Statistik** (`view()`): uptime 24 jam/7 hari = cek sehat / total dari `http_checks`; latensi rata-rata dan p95 dari cek **sehat** 24 jam; `series` 24 jam dalam ≤ 120 bucket (rata-rata latensi + jumlah
+  gagal per bucket) untuk sparkline; 10 incident terakhir dengan durasi.
+- **API** (`/applications/:id/monitor`): `GET` (config, target, status, statistik, series, incidents; semua anggota), `PUT` (developer+, viewer 403 lewat cek tulis project), `POST …/check` (throttle
+  10/menit, "periksa sekarang": butuh config tersimpan dan app `running`, hasil tercatat & bisa alert). Ekspor/impor project membawa **konfigurasi** (`httpMonitor`, tanpa state/riwayat, opsional di berkas
+  lama; impor memvalidasi tiap nilai seperti request dan jatuh ke default dengan warning). Hapus aplikasi → FK cascade menghapus monitor, hasil, dan incident.
+- Belum: halaman status publik (butuh keputusan privasi; usulan: opt-in per project, token tak tertebak, hanya nama + status), target berbasis swarm service tanpa domain/port host, badge status monitor di
+  kartu aplikasi halaman project, uji dari banyak lokasi.
 
 ## Managed database
 
@@ -870,7 +993,16 @@ NestJS 11 backend for aoox (self-hosted PaaS).
 
 - `src/modules/template/` — katalog **statis dalam TypeScript** (`templates/*.ts`, `Template` di `template.types.ts`: id, versi, `variables` `{key,label,default,generate,required,hint}`,
   `services` `{service,port,label}` yang boleh diberi domain, `compose`). Tidak diambil dari URL saat runtime (offline & tidak bisa diganti YAML pihak lain); tidak perlu `assets` nest-cli.
-  Isi: wordpress, ghost, n8n, uptime-kuma, minio, gitea. `GET /templates` (semua member).
+  Isi (14): wordpress, ghost, n8n, uptime-kuma, minio, gitea, **vaultwarden** (1.37.3), **umami** (`ghcr.io/umami-software/umami:postgresql-v2.20.2` + postgres), **grafana** (13.0.2, SQLite),
+  **metabase** (v0.63.18.5 + postgres), **directus** (12.4.1 + postgres; variabel bernama `KEY`/`SECRET` memang nama env Directus), **mattermost** (`mattermost-team-edition:11.11.1` + postgres) dan
+  **nextcloud** (`32.0.15-apache` + postgres + redis `--requirepass` + service `cron` dengan `entrypoint: /cron.sh`; `PROTOCOL` default https untuk `OVERWRITEPROTOCOL`, http hanya uji lokal).
+  **odoo** (`odoo:19.0-20260926` Community + postgres; tag bertanggal karena `19.0` bergeser tiap malam; konfigurasi lewat compose `configs` inline -> `/etc/odoo/odoo.conf`
+  karena master password (`admin_passwd`) hanya bisa lewat file config, bukan CLI/env; `proxy_mode`, `workers = 0`, `list_db = True` supaya database pertama bisa dibuat lewat web;
+  variabel `MASTER_PASSWORD` di-generate; healthcheck `/web/health`; pengamanan `/web/database/manager` setelahnya = edit compose: `list_db = False` + `dbfilter`; wizard `POST /web/database/create`
+  Odoo 19 mewajibkan field `phone`). Diuji: master password yang dihasilkan diterima, yang salah ditolak, login admin, data bertahan setelah recreate.
+  Konvensi template baru: tag image versi tertentu (spec menjaga tiap image punya tag eksplisit), DB memakai `healthcheck` `pg_isready` + `depends_on: condition: service_healthy`, volume bernama,
+  logo simple-icons. Semua diuji nyata lewat `POST /compose-apps/from-template` di belakang proxy lokal (endpoint health/status menjawab 200; login Directus; data Grafana/Umami selamat dari recreate
+  container; Nextcloud memakai pgsql+Redis). Catatan: `/server/health` Directus 403 tanpa token — pakai `/server/ping`. `GET /templates` (semua member).
 - `template.service.ts`: `renderEnv(template, values)` (nilai user → default → `generateValue` untuk `generate`; `required` kosong → `TemplateVariableError` → 400),
   `generateValue` **alfanumerik saja** (masuk `.aoox.env` = sumber interpolasi compose `$`, dan lewat `EnvResolverService` `${{`), `referencedVariables`.
   Spec `template.service.spec.ts` menjaga katalog: id unik, tiap service ada di compose, `${VAR}` di compose == `variables`, key PASSWORD/SECRET/KEY selalu `generate`.
@@ -997,13 +1129,17 @@ NestJS 11 backend for aoox (self-hosted PaaS).
   (`OnApplicationBootstrap`, `setTimeout(...).unref()`), **tidak pernah** per request; gagal jaringan/registry = `debug` saja, cache lama dipertahankan, `latest_checked_at` hanya untuk sukses
   (instalasi tanpa internet tetap normal tanpa badge). `check()` (`GET /instance/update`, tombol "Cek update") memanggil `refresh()` juga dan mengembalikan blok `version`, jadi halaman dan sidebar
   selalu konsisten. **`updateAvailable` diturunkan saat dibaca** (versi cache lebih baru dari `appVersion()` proses ini), bukan disimpan: badge hilang seketika begitu container baru menyala.
-  **Instalasi dengan tag di-pin**: `docker-compose.dist.yml` tidak meneruskan `API_IMAGE`/`WEB_IMAGE` ke container api, jadi tag tidak bisa dibaca dari env; `tracked()` memakai `API_IMAGE` bila ada,
+  **Instalasi dengan tag di-pin**: `docker-compose.dist.yml` sekarang meneruskan `API_IMAGE`/`WEB_IMAGE` (default persis sama dengan baris `image:`) ke container api, tapi **instalasi lama** baru
+  menerimanya lewat `aoox reinstall` (`aoox update`/"Terapkan update" tidak menulis ulang compose) — sebelum itu env-nya kosong; `tracked()` memakai `API_IMAGE` bila ada,
   kalau tidak `Config.Image` container sendiri (`inspectContainer(os.hostname())`, sekali per proses) → `latest` (badge boleh), `pinned` (tag versi/channel/digest — `pull` tidak akan menggesernya,
   jadi **tanpa badge**, halaman Update hanya menginformasikan versi terbaru) atau `unknown` (daemon tak terjangkau/bukan container — **tanpa badge**, sengaja daripada menyesatkan).
   `GET /auth/me` menambah `updateAvailable: {version, applying}` **hanya untuk `owner`** (`MeService`, dibaca dari cache tanpa panggilan registry; error apa pun → field dihilangkan, `/auth/me` tidak pernah
   rusak karenanya; peran lain bahkan tidak memicu pembacaan cache). `applying` dibatasi 10 menit sejak `applyStartedAt` supaya apply yang gagal tidak mengunci teks "Sedang memperbarui…" selamanya.
   Env `INSTANCE_UPDATE_REGISTRY_URL` mengganti basis URL registry (mirror/uji). Diuji nyata dengan registry palsu + Postgres terpisah: versi lebih tinggi → owner dapat field, admin/member tidak;
   sama/lebih lama → hilang; `alpha.10` > `alpha.9`; registry 500 → tanpa error log, cache dipertahankan. **Belum diuji nyata**: tag `pinned` terhadap container Docker sungguhan (hanya tes unit).
+- **Variabel opsional yang diteruskan compose ke api**: `API_IMAGE`, `WEB_IMAGE` (default = `image:`; jangan biarkan keduanya berbeda — ada tes di CLI yang menjaga), `WEBHOOK_VERIFY_GITHUB_IP`
+  dan `PREVIEW_DOMAIN` (`${VAR:-}` = kosong = mati/tidak diset; pembacanya memakai `=== 'true'` dan `?.trim() ||`, jadi string kosong aman — beda dari jebakan `??`). Keempatnya tidak ditulis ke
+  `.env.dist` baru oleh `aoox install`/`reinstall` (tak ada default bermakna) — hanya contoh terkomentar di `.env.dist.example`.
 - **Keterbatasan penting**: `apply()` hanya `docker compose pull && up -d` — **tidak pernah** menulis ulang `docker-compose.dist.yml` di `INSTALL_DIR` host. Jadi perbaikan/fitur baru
   yang butuh baris baru di file compose itu sendiri (var `environment:` baru, service baru, dll — mis. `PUBLIC_API_URL` yang sekarang juga diteruskan ke service `api`, lihat bagian
   Git credential & Webhook) **tidak sampai** ke instalasi yang sudah ada lewat `aoox update` / tombol "Terapkan update" — image baru dijalankan dengan compose file **lama** di host,

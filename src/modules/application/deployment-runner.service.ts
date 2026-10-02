@@ -30,6 +30,7 @@ import { Deployment, DeploymentStatus } from './deployment.entity';
 import { DeploymentEventsService } from './deployment-events.service';
 import { triggerSummary } from './trigger-summary';
 import { EnvResolverService, parseEnvLines } from './env-resolver.service';
+import { gitContextRef, rootDirectoryError } from './root-directory';
 import { NixpacksBuilderService } from './nixpacks-builder.service';
 import { RailpackBuilderService } from './railpack-builder.service';
 import {
@@ -210,6 +211,7 @@ export class DeploymentRunnerService {
     await log.step(
       'building',
       `Building ${imageRef} from ${app.gitUrl}#${branch}` +
+        (app.rootDirectory ? ` (root directory: ${app.rootDirectory})` : '') +
         (app.gitCredentialId ? ' (authenticated)' : '') +
         (app.buildType === 'nixpacks'
           ? ' with nixpacks'
@@ -231,6 +233,7 @@ export class DeploymentRunnerService {
           tag: imageRef,
           buildCommand: app.staticBuildCommand,
           outputDir: app.staticOutputDir,
+          rootDirectory: app.rootDirectory,
           spa: app.staticSpa,
           nodeVersion: DEFAULT_NODE_VERSION,
         },
@@ -252,6 +255,7 @@ export class DeploymentRunnerService {
           tag: imageRef,
           buildArgs,
           cacheKey: `${app.projectId}/${app.appName}`,
+          rootDirectory: app.rootDirectory,
         },
         (m) => log.progress(m),
       );
@@ -259,20 +263,40 @@ export class DeploymentRunnerService {
       // Helper container clones (credentials never leave it) and plans;
       // the daemon builds the generated Dockerfile from a tar context.
       await this.nixpacks.build(
-        { remote, branch, tag: imageRef, buildArgs },
+        {
+          remote,
+          branch,
+          tag: imageRef,
+          buildArgs,
+          rootDirectory: app.rootDirectory,
+        },
         (m) => log.progress(m),
         docker,
       );
     } else {
-      await docker.engine.buildFromGit(
-        {
-          remote: `${remote}#${branch}`,
-          tag: imageRef,
-          dockerfile: app.dockerfilePath || undefined,
-          buildArgs,
-        },
-        (m) => log.progress(m),
-      );
+      try {
+        await docker.engine.buildFromGit(
+          {
+            // `#<branch>:<dir>` = git context with a subdirectory (Engine API).
+            remote: `${remote}#${gitContextRef(branch, app.rootDirectory)}`,
+            tag: imageRef,
+            dockerfile: app.dockerfilePath || undefined,
+            buildArgs,
+          },
+          (m) => log.progress(m),
+        );
+      } catch (err) {
+        // The daemon reports a missing subdirectory as a raw `stat <tmp>/<dir>`
+        // error that names its own temp folder; say what is actually wrong.
+        const msg = err instanceof Error ? err.message : String(err);
+        if (
+          app.rootDirectory &&
+          msg.endsWith(`/${app.rootDirectory}: no such file or directory`)
+        ) {
+          throw rootDirectoryError(app.rootDirectory);
+        }
+        throw err;
+      }
     }
     await log.flush();
 
@@ -439,7 +463,10 @@ export class DeploymentRunnerService {
         })
       ).project;
     }
-    const { env, secrets } = await this.envResolver.resolve(app);
+    // Previews (override) run arbitrary PR code: no secret source for them.
+    const { env, secrets } = await this.envResolver.resolve(app, {
+      secretSource: !override,
+    });
     for (const s of secrets) log?.redact(s);
     // Railpack's generated servers listen on $PORT (Railway's convention,
     // default 80), so hand them the container port the user configured

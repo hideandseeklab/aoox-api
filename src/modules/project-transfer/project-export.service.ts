@@ -4,12 +4,14 @@ import { Mount } from '../application/mount.entity';
 import { BackupDestinationService } from '../backup-destination/backup-destination.service';
 import { ComposeService } from '../compose/compose.service';
 import { GitCredentialService } from '../git-credential/git-credential.service';
+import { HttpMonitorService } from '../http-monitor/http-monitor.service';
 import { Job } from '../job/job.entity';
 import { JobService } from '../job/job.service';
 import { ManagedDatabaseService } from '../managed-database/managed-database.service';
 import { Project } from '../project/project.entity';
 import { RegistryService } from '../registry/registry.service';
 import { ServerService } from '../server/server.service';
+import { SecretSourceService } from '../secret-source/secret-source.service';
 import {
   EXPORT_FORMAT,
   EXPORT_VERSION,
@@ -30,6 +32,8 @@ export class ProjectExportService {
     private readonly credentials: GitCredentialService,
     private readonly destinations: BackupDestinationService,
     private readonly servers: ServerService,
+    private readonly httpMonitors: HttpMonitorService,
+    private readonly secretSources: SecretSourceService,
   ) {}
 
   async export(
@@ -40,13 +44,19 @@ export class ProjectExportService {
     const nameOf = async <T extends { id: string; name: string }>(
       rows: Promise<T[]>,
     ) => new Map((await rows).map((r) => [r.id, r.name] as const));
-    const [registryNames, credentialNames, destinationNames, serverNames] =
-      await Promise.all([
-        nameOf(this.registries.repo.find()),
-        nameOf(this.credentials.repo.find()),
-        nameOf(this.destinations.repo.find()),
-        nameOf(this.servers.repo.find()),
-      ]);
+    const [
+      registryNames,
+      credentialNames,
+      destinationNames,
+      serverNames,
+      secretConnectionNames,
+    ] = await Promise.all([
+      nameOf(this.registries.repo.find()),
+      nameOf(this.credentials.repo.find()),
+      nameOf(this.destinations.repo.find()),
+      nameOf(this.servers.repo.find()),
+      nameOf(this.secretSources.repo.find()),
+    ]);
     const ref = (map: Map<string, string>, id: string | null) =>
       id ? (map.get(id) ?? null) : null;
 
@@ -63,6 +73,8 @@ export class ProjectExportService {
         gitBranch: a.gitBranch,
         imageRef: a.imageRef,
         dockerfilePath: a.dockerfilePath,
+        rootDirectory: a.rootDirectory,
+        watchRootOnly: a.watchRootOnly,
         buildType: a.buildType,
         staticBuildCommand: a.staticBuildCommand,
         staticOutputDir: a.staticOutputDir,
@@ -73,6 +85,7 @@ export class ProjectExportService {
         buildArgs: a.buildArgs,
         healthcheckPath: a.healthcheckPath,
         ignoreErrorLogs: a.ignoreErrorLogs,
+        httpMonitor: await this.httpMonitors.exportConfig(a.id),
         deploymentKeep: a.deploymentKeep,
         backupCron: a.backupCron,
         backupKeep: a.backupKeep,
@@ -80,6 +93,18 @@ export class ProjectExportService {
         memoryMb: a.memoryMb,
         previewsEnabled: a.previewsEnabled,
         previewDomain: a.previewDomain,
+        secretSource:
+          a.secretConnectionId &&
+          secretConnectionNames.has(a.secretConnectionId) &&
+          a.secretProjectId
+            ? {
+                connection: secretConnectionNames.get(a.secretConnectionId)!,
+                projectId: a.secretProjectId,
+                environment: a.secretEnvironment ?? '',
+                path: a.secretPath || '/',
+                sync: a.secretSync,
+              }
+            : null,
         references: {
           gitCredential: ref(credentialNames, a.gitCredentialId),
           imageRegistry: ref(registryNames, a.imageRegistryId),

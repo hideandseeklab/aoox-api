@@ -4,11 +4,24 @@ import {
   OnApplicationBootstrap,
   OnApplicationShutdown,
 } from '@nestjs/common';
+import { DockerEngineClient } from '../docker/docker-engine.client';
 import { DockerService } from '../docker/docker.service';
+import { RemoteDockerService } from '../server/remote-docker.service';
+import { ServerService } from '../server/server.service';
+import { withTimeout } from '../server/with-timeout';
 import { computeMetrics, ContainerMetrics } from './container-metrics';
 
 /** How often every managed container is sampled. */
 export const SAMPLE_INTERVAL_MS = 15_000;
+/**
+ * Remote servers are sampled less often: every reading is two `stats` calls
+ * per container through an SSH tunnel.
+ */
+export const REMOTE_SAMPLE_INTERVAL_MS = 30_000;
+/** One server round must finish within this, or it is abandoned. */
+export const REMOTE_CYCLE_TIMEOUT_MS = 25_000;
+/** Containers of one server sampled at the same time. */
+const REMOTE_CONCURRENCY = 3;
 /** Gap between the two stats calls a CPU % needs. */
 const CPU_WINDOW_MS = 1_000;
 /** Points kept per container (1 hour at the sample interval). */
@@ -51,19 +64,44 @@ export class MonitoringService
 {
   private readonly logger = new Logger(MonitoringService.name);
   private readonly history = new Map<string, ContainerMetrics[]>();
+  /**
+   * Containers of remote servers, kept apart from `history`: the local sweep
+   * deletes every id it does not list, and the host totals must not add
+   * other machines' containers to this host's numbers. Docker ids are random
+   * 256-bit values, so they cannot collide across daemons.
+   */
+  private readonly remoteHistory = new Map<string, ContainerMetrics[]>();
+  private readonly remoteInfo = new Map<
+    string,
+    { serverId: string; labels: Record<string, string> }
+  >();
+  private readonly remoteByServer = new Map<string, Set<string>>();
+  private readonly remoteRunning = new Set<string>();
   private timer: NodeJS.Timeout | null = null;
+  private remoteTimer: NodeJS.Timeout | null = null;
   private sampling = false;
 
-  constructor(private readonly docker: DockerService) {}
+  constructor(
+    private readonly docker: DockerService,
+    private readonly remote: RemoteDockerService,
+    private readonly servers: ServerService,
+  ) {}
 
   onApplicationBootstrap(): void {
     this.timer = setInterval(() => void this.sampleAll(), SAMPLE_INTERVAL_MS);
     this.timer.unref();
     void this.sampleAll();
+    this.remoteTimer = setInterval(
+      () => void this.sampleRemote(),
+      REMOTE_SAMPLE_INTERVAL_MS,
+    );
+    this.remoteTimer.unref();
+    void this.sampleRemote();
   }
 
   onApplicationShutdown(): void {
     if (this.timer) clearInterval(this.timer);
+    if (this.remoteTimer) clearInterval(this.remoteTimer);
   }
 
   /**
@@ -74,9 +112,24 @@ export class MonitoringService
     containerId: string;
     points: ContainerMetrics[];
   }> {
-    return [...this.history].map(([containerId, points]) => ({
+    return [...this.history, ...this.remoteHistory].map(
+      ([containerId, points]) => ({ containerId, points }),
+    );
+  }
+
+  /**
+   * Containers currently sampled on remote servers with their labels, so the
+   * rollups that resolve owners from `aoox.*` labels (retention, project
+   * usage) see them without opening an SSH call of their own.
+   */
+  remoteContainers(): Array<{
+    containerId: string;
+    serverId: string;
+    labels: Record<string, string>;
+  }> {
+    return [...this.remoteInfo].map(([containerId, v]) => ({
       containerId,
-      points,
+      ...v,
     }));
   }
 
@@ -85,23 +138,122 @@ export class MonitoringService
     current: ContainerMetrics;
     history: ContainerMetrics[];
   } | null {
-    const points = this.history.get(containerId);
+    const points =
+      this.history.get(containerId) ?? this.remoteHistory.get(containerId);
     if (!points?.length) return null;
     return { current: points[points.length - 1], history: points };
   }
 
   /** Takes two samples 1s apart and records the result. */
-  async sampleContainer(containerId: string): Promise<ContainerMetrics> {
-    const first = await this.docker.engine.containerStats(containerId);
+  async sampleContainer(
+    containerId: string,
+    engine: DockerEngineClient = this.docker.engine,
+    store: Map<string, ContainerMetrics[]> = this.history,
+  ): Promise<ContainerMetrics> {
+    const first = await engine.containerStats(containerId);
     await new Promise((r) => setTimeout(r, CPU_WINDOW_MS));
-    const second = await this.docker.engine.containerStats(containerId);
+    const second = await engine.containerStats(containerId);
     const metrics = computeMetrics(first, second);
-    const points = this.history.get(containerId) ?? [];
+    const points = store.get(containerId) ?? [];
     points.push(metrics);
     if (points.length > HISTORY_POINTS)
       points.splice(0, points.length - HISTORY_POINTS);
-    this.history.set(containerId, points);
+    store.set(containerId, points);
     return metrics;
+  }
+
+  /**
+   * One sampling round per remote server. Rounds are started side by side and
+   * never awaited together: a slow or dead server only keeps its own round
+   * (capped by `REMOTE_CYCLE_TIMEOUT_MS`), and a round still running when the
+   * next tick comes is left alone instead of stacked. Servers that were
+   * deleted lose their readings here.
+   */
+  async sampleRemote(): Promise<void> {
+    let ids: string[];
+    try {
+      ids = (await this.servers.repo.find({ select: { id: true } })).map(
+        (s) => s.id,
+      );
+    } catch (err) {
+      this.logger.debug(`Remote sampling skipped: ${String(err)}`);
+      return;
+    }
+    const wanted = new Set(ids);
+    for (const serverId of [...this.remoteByServer.keys()]) {
+      if (!wanted.has(serverId)) this.forgetServer(serverId);
+    }
+    for (const serverId of ids) {
+      if (this.remoteRunning.has(serverId)) continue;
+      this.remoteRunning.add(serverId);
+      void this.sampleServer(serverId)
+        .catch((err) => {
+          this.logger.debug(`Server ${serverId} not sampled: ${String(err)}`);
+          // Stale numbers from a server we cannot reach are worse than none.
+          this.dropServerReadings(serverId);
+        })
+        .finally(() => this.remoteRunning.delete(serverId));
+    }
+  }
+
+  /** Samples every running managed container of one server (bounded parallelism). */
+  async sampleServer(serverId: string): Promise<void> {
+    await withTimeout(
+      this.sampleServerUnbounded(serverId),
+      REMOTE_CYCLE_TIMEOUT_MS,
+      'Remote sampling',
+    );
+  }
+
+  private async sampleServerUnbounded(serverId: string): Promise<void> {
+    const handle = await this.remote.forServer(serverId);
+    const containers = await handle.engine.listContainers({
+      label: ['aoox.component'],
+      status: ['running'],
+    });
+    const live = new Set(containers.map((c) => c.Id));
+    for (const id of this.remoteByServer.get(serverId) ?? []) {
+      if (!live.has(id)) this.dropContainer(id); // removed or stopped
+    }
+    this.remoteByServer.set(serverId, live);
+    for (const c of containers)
+      this.remoteInfo.set(c.Id, { serverId, labels: c.Labels ?? {} });
+    const queue = [...containers];
+    const worker = async () => {
+      for (let c = queue.shift(); c; c = queue.shift()) {
+        const id = c.Id;
+        await this.sampleContainer(id, handle.engine, this.remoteHistory).catch(
+          (err) =>
+            this.logger.debug(
+              `stats ${c.Names[0]} on ${serverId}: ${String(err)}`,
+            ),
+        );
+      }
+    };
+    await Promise.all(
+      Array.from(
+        { length: Math.min(REMOTE_CONCURRENCY, containers.length) },
+        worker,
+      ),
+    );
+  }
+
+  /** A server is gone (deleted): its readings and labels go with it. */
+  forgetServer(serverId: string): void {
+    this.dropServerReadings(serverId);
+    this.remoteByServer.delete(serverId);
+  }
+
+  private dropServerReadings(serverId: string): void {
+    for (const id of this.remoteByServer.get(serverId) ?? []) {
+      this.dropContainer(id);
+    }
+    this.remoteByServer.set(serverId, new Set());
+  }
+
+  private dropContainer(id: string): void {
+    this.remoteHistory.delete(id);
+    this.remoteInfo.delete(id);
   }
 
   async hostOverview(): Promise<HostOverview> {

@@ -1,6 +1,7 @@
 import {
   renderNginxConf,
   renderStaticDockerfile,
+  staticScript,
 } from './static-site-builder.service';
 
 describe('static site builder', () => {
@@ -46,5 +47,18 @@ describe('static site builder', () => {
     // a repo-provided 404.html is served for misses; SPA mode never 404s
     expect(renderNginxConf(false)).toContain('error_page 404 /404.html;');
     expect(renderNginxConf(true)).not.toContain('error_page');
+  });
+});
+
+describe('staticScript', () => {
+  const input = { remote: 'https://x/y.git', branch: 'main' };
+
+  it('generates .aoox files and tars inside the resolved app dir', () => {
+    const s = staticScript(input);
+    expect(s).toContain('APP=/src;');
+    expect(s).toContain('mkdir -p "$APP/.aoox"');
+    expect(s).toContain('> "$APP/.aoox/Dockerfile"');
+    expect(s).toContain('tar -C "$APP" -cf /context.tar .');
+    expect(s).toContain('rm -rf /src/.git');
   });
 });

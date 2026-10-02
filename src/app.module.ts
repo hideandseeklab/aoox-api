@@ -20,6 +20,8 @@ import { InvitationModule } from './modules/invitation/invitation.module';
 import { DatabaseMountModule } from './modules/database-mount/database-mount.module';
 import { DatabaseModule } from './modules/database/database.module';
 import { GitCredentialModule } from './modules/git-credential/git-credential.module';
+import { SecretSourceModule } from './modules/secret-source/secret-source.module';
+import { HttpMonitorModule } from './modules/http-monitor/http-monitor.module';
 import { MonitoringModule } from './modules/monitoring/monitoring.module';
 import { NotificationModule } from './modules/notification/notification.module';
 import { JobModule } from './modules/job/job.module';
@@ -54,6 +56,7 @@ import { VolumeBackupModule } from './modules/volume-backup/volume-backup.module
     SwarmModule,
     NotificationModule,
     MonitoringModule,
+    HttpMonitorModule,
     ComposeModule,
     TemplateModule,
     JobModule,
@@ -70,6 +73,7 @@ import { VolumeBackupModule } from './modules/volume-backup/volume-backup.module
     ProxyModule,
     PanelDomainModule,
     GitCredentialModule,
+    SecretSourceModule,
     ManagedDatabaseModule,
     BackupDestinationModule,
     DatabaseBackupModule,

@@ -104,6 +104,36 @@ describe('PreviewService', () => {
     expect(rows.get(row!.id)?.status).toBe('running');
   });
 
+  describe('hostFor with PREVIEW_DOMAIN as the dist compose passes it', () => {
+    // docker-compose.dist.yml forwards PREVIEW_DOMAIN as `${PREVIEW_DOMAIN:-}`,
+    // so an install that never set it gives the container an EMPTY string, not
+    // undefined: that must read as "no preview domain", not as a bare host.
+    const withEnv = (value: string | undefined) =>
+      new PreviewService(
+        repo,
+        runner as unknown as DeploymentRunnerService,
+        remoteDocker as unknown as RemoteDockerService,
+        { acmeEmail: 'a@b' } as unknown as ProxyService,
+        { get: () => value } as unknown as ConfigService,
+      );
+
+    it.each(['', '   ', undefined])('%j means no preview domain', (v) => {
+      expect(withEnv(v).hostFor(app, 7)).toBeNull();
+    });
+
+    it('uses the env domain when set, and the per-app domain first', () => {
+      expect(withEnv(' preview.example.com ').hostFor(app, 7)).toBe(
+        'web-abc-pr7.preview.example.com',
+      );
+      expect(
+        withEnv('env.example.com').hostFor(
+          { ...app, previewDomain: 'app.example.com' },
+          7,
+        ),
+      ).toBe('web-abc-pr7.app.example.com');
+    });
+  });
+
   it('refuses new PRs past the cap but still refreshes existing ones', async () => {
     for (let i = 1; i <= PREVIEW_MAX; i++) {
       rows.set(`e${i}`, {

@@ -109,6 +109,18 @@ services:
       # SSH). Leave empty to keep configuring the panel's own domain manually
       # via docker-compose.domain.yml (see its header).
       INSTALL_DIR: ${INSTALL_DIR:-}
+      # The image references this stack was started from, same defaults as the
+      # `image:` lines below. Settings -> "Update aoox" reads API_IMAGE to tell
+      # whether the install follows :latest (a pinned tag never gets an "update
+      # available" badge), so keep them identical to the `image:` values.
+      API_IMAGE: ${API_IMAGE:-hideandseeklab/aoox-api:latest}
+      WEB_IMAGE: ${WEB_IMAGE:-hideandseeklab/aoox-web:latest}
+      # Optional switches, empty = off/unset. WEBHOOK_VERIFY_GITHUB_IP=true also
+      # requires GitHub deliveries to come from GitHub's published IP ranges;
+      # PREVIEW_DOMAIN is the base domain for pull-request previews
+      # (<app>-pr<N>.<domain>, needs a wildcard DNS record).
+      WEBHOOK_VERIFY_GITHUB_IP: ${WEBHOOK_VERIFY_GITHUB_IP:-}
+      PREVIEW_DOMAIN: ${PREVIEW_DOMAIN:-}
     # The api container runs as the unprivileged `node` user; add the gid that
     # owns the docker socket on the host (stat -c %g /var/run/docker.sock).
     group_add:

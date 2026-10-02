@@ -84,6 +84,16 @@ export class Notification {
   @Column({ name: 'on_app_error', default: false })
   onAppError: boolean;
 
+  /** A remote server stopped answering (or answers again). On by default: only
+   * matters for people who added servers. */
+  @Column({ name: 'on_server_down', default: true })
+  onServerDown: boolean;
+
+  /** An application's HTTP monitor saw failures (or recovered). On by default:
+   * the monitor itself is opt-in per application. */
+  @Column({ name: 'on_http_down', default: true })
+  onHttpDown: boolean;
+
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;
 }

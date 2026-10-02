@@ -244,6 +244,17 @@ export class MetricRetentionService {
       else if (db) out.set(c.Id, { kind: 'database', id: db });
       else if (compose) out.set(c.Id, { kind: 'compose', id: compose });
     }
+    // Containers on remote servers: labels were captured by the remote sampler,
+    // so no SSH call happens here.
+    for (const c of this.monitoring.remoteContainers()) {
+      const app = c.labels['aoox.application'];
+      const db = c.labels['aoox.database'];
+      const compose = c.labels['aoox.compose'];
+      if (app) out.set(c.containerId, { kind: 'application', id: app });
+      else if (db) out.set(c.containerId, { kind: 'database', id: db });
+      else if (compose)
+        out.set(c.containerId, { kind: 'compose', id: compose });
+    }
     return out;
   }
 }

@@ -127,6 +127,43 @@ export class Application {
   @Column({ name: 'dockerfile_path', default: 'Dockerfile' })
   dockerfilePath: string;
 
+  /**
+   * Monorepo subfolder that is built (Docker context / nixpacks, railpack and
+   * static-site source dir); null = repository root. `dockerfilePath` and
+   * `staticOutputDir` are relative to it. See root-directory.ts.
+   */
+  @Column({ name: 'root_directory', type: 'varchar', nullable: true })
+  rootDirectory: string | null;
+
+  /**
+   * Webhook pushes only deploy when a changed file lies under `rootDirectory`
+   * (fail-open when the payload carries no file lists).
+   */
+  @Column({ name: 'watch_root_only', default: false })
+  watchRootOnly: boolean;
+
+  /**
+   * External secret manager the container env is filled from (see
+   * secret-source/ and EnvResolverService). FK to `secret_connections` is
+   * `ON DELETE SET NULL` (SQL migration; no TypeORM relation, so the secret
+   * module stays free of application imports). Never inherited by previews.
+   */
+  @Column({ name: 'secret_connection_id', type: 'uuid', nullable: true })
+  secretConnectionId: string | null;
+
+  @Column({ name: 'secret_project_id', type: 'varchar', nullable: true })
+  secretProjectId: string | null;
+
+  @Column({ name: 'secret_environment', type: 'varchar', nullable: true })
+  secretEnvironment: string | null;
+
+  @Column({ name: 'secret_path', type: 'varchar', default: '/' })
+  secretPath: string;
+
+  /** Inject every secret of the folder as env (otherwise only `${{secret.KEY}}` references). */
+  @Column({ name: 'secret_sync', default: false })
+  secretSync: boolean;
+
   @Column({ name: 'build_type', type: 'varchar', default: 'dockerfile' })
   buildType: BuildType;
 

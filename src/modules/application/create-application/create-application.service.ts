@@ -8,6 +8,7 @@ import { GitCredentialService } from '../../git-credential/git-credential.servic
 import { ProjectService } from '../../project/project.service';
 import { Application } from '../application.entity';
 import { ApplicationService } from '../application.service';
+import { normalizeRootDirectory } from '../root-directory';
 import { CreateApplicationDto } from './create-application.dto';
 
 @Injectable()
@@ -62,6 +63,8 @@ export class CreateApplicationService {
       autoUpdateIntervalMinutes: dto.autoUpdateIntervalMinutes ?? 60,
       gitBranch: dto.gitBranch?.trim() || 'main',
       dockerfilePath: dto.dockerfilePath?.trim() || 'Dockerfile',
+      rootDirectory: normalizeRootDirectory(dto.rootDirectory),
+      watchRootOnly: dto.watchRootOnly ?? false,
       gitCredentialId: dto.gitCredentialId ?? null,
       webhookToken: randomBytes(24).toString('base64url'),
       containerPort: dto.containerPort ?? 3000,

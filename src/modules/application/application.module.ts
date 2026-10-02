@@ -4,6 +4,9 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuthModule } from '../auth/auth.module';
 import { DockerModule } from '../docker/docker.module';
 import { GitCredentialModule } from '../git-credential/git-credential.module';
+import { SecretSourceModule } from '../secret-source/secret-source.module';
+import { SecretSourceAppController } from './secret-source/secret-source-app.controller';
+import { SecretSourceAppService } from './secret-source/secret-source-app.service';
 import { HostPortModule } from '../host-port/host-port.module';
 import { ManagedDatabaseModule } from '../managed-database/managed-database.module';
 import { MonitoringModule } from '../monitoring/monitoring.module';
@@ -100,6 +103,7 @@ import { UpdateApplicationService } from './update-application/update-applicatio
     AuthModule,
     DockerModule,
     GitCredentialModule,
+    SecretSourceModule,
     ProjectModule,
     RegistryModule,
     ProxyModule,
@@ -115,6 +119,7 @@ import { UpdateApplicationService } from './update-application/update-applicatio
     CheckImageUpdateController,
     ListApplicationsController,
     GetApplicationController,
+    SecretSourceAppController,
     UpdateApplicationController,
     DeleteApplicationController,
     DeployApplicationController,
@@ -148,6 +153,7 @@ import { UpdateApplicationService } from './update-application/update-applicatio
     CreateApplicationService,
     ListApplicationsService,
     GetApplicationService,
+    SecretSourceAppService,
     UpdateApplicationService,
     DeleteApplicationService,
     DeployApplicationService,

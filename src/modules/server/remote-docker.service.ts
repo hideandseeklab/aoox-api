@@ -19,6 +19,8 @@ export class RemoteDockerService implements OnApplicationShutdown {
     { handle: DockerHandle; agent: SshDockerAgent }
   >();
 
+  private readonly forgetListeners = new Set<(serverId: string) => void>();
+
   constructor(
     private readonly local: DockerService,
     private readonly servers: ServerService,
@@ -43,12 +45,24 @@ export class RemoteDockerService implements OnApplicationShutdown {
     return handle;
   }
 
-  /** Drops a cached session (server edited/deleted, or credentials changed). */
+  /**
+   * Drops a cached session (server edited/deleted, or credentials changed) and
+   * tells the listeners (`onForget`) so long-lived users of the old session —
+   * the event streams — reconnect instead of waiting on a destroyed agent.
+   */
   forget(serverId: string): void {
     const cached = this.handles.get(serverId);
-    if (!cached) return;
-    cached.agent.destroy();
-    this.handles.delete(serverId);
+    if (cached) {
+      cached.agent.destroy();
+      this.handles.delete(serverId);
+    }
+    for (const cb of this.forgetListeners) cb(serverId);
+  }
+
+  /** Called whenever a server's session is dropped; returns an unsubscribe. */
+  onForget(cb: (serverId: string) => void): () => void {
+    this.forgetListeners.add(cb);
+    return () => this.forgetListeners.delete(cb);
   }
 
   /** Every cached session (server rows were replaced, e.g. by an instance restore). */
@@ -57,6 +71,7 @@ export class RemoteDockerService implements OnApplicationShutdown {
   }
 
   onApplicationShutdown(): void {
+    this.forgetListeners.clear(); // shutting down: nobody should reconnect
     this.forgetAll();
   }
 }

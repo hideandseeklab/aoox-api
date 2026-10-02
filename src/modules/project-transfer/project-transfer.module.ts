@@ -4,6 +4,8 @@ import { BackupDestinationModule } from '../backup-destination/backup-destinatio
 import { ComposeModule } from '../compose/compose.module';
 import { DatabaseBackupModule } from '../database-backup/database-backup.module';
 import { GitCredentialModule } from '../git-credential/git-credential.module';
+import { SecretSourceModule } from '../secret-source/secret-source.module';
+import { HttpMonitorModule } from '../http-monitor/http-monitor.module';
 import { JobModule } from '../job/job.module';
 import { ManagedDatabaseModule } from '../managed-database/managed-database.module';
 import { ProjectModule } from '../project/project.module';
@@ -29,8 +31,10 @@ import { ProjectImportService } from './project-import.service';
     VolumeBackupModule,
     RegistryModule,
     GitCredentialModule,
+    SecretSourceModule,
     BackupDestinationModule,
     ServerModule,
+    HttpMonitorModule,
   ],
   controllers: [ExportProjectController, ImportProjectController],
   providers: [

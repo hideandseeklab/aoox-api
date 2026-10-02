@@ -43,16 +43,20 @@ describe('averageBucket', () => {
 describe('MetricRetentionService.rollupMinute — compose ownership', () => {
   const listContainers = jest.fn();
   const sampledContainers = jest.fn();
+  const remoteContainers = jest.fn().mockReturnValue([]);
   const upsert = jest.fn().mockResolvedValue(undefined);
   const create = jest.fn((row: unknown) => row);
   const svc = new MetricRetentionService(
     { upsert, create } as never,
-    { sampledContainers } as unknown as MonitoringService,
+    { sampledContainers, remoteContainers } as unknown as MonitoringService,
     { engine: { listContainers } } as unknown as DockerService,
     { get: () => undefined } as unknown as ConfigService,
   );
 
-  beforeEach(() => jest.clearAllMocks());
+  beforeEach(() => {
+    jest.clearAllMocks();
+    remoteContainers.mockReturnValue([]);
+  });
 
   it('rolls a compose-labeled container up under its stack id, not application/database', async () => {
     listContainers.mockResolvedValue([
@@ -84,5 +88,28 @@ describe('MetricRetentionService.rollupMinute — compose ownership', () => {
     await svc.rollupMinute();
 
     expect(upsert).not.toHaveBeenCalled();
+  });
+  it('rolls up a container of a remote server by the labels the remote sampler captured', async () => {
+    listContainers.mockResolvedValue([]); // nothing local
+    remoteContainers.mockReturnValue([
+      {
+        containerId: 'r1',
+        serverId: 's1',
+        labels: {
+          'aoox.component': 'application',
+          'aoox.application': 'app-9',
+        },
+      },
+    ]);
+    sampledContainers.mockReturnValue([
+      { containerId: 'r1', points: [point(20, 200)] },
+    ]);
+
+    await svc.rollupMinute();
+
+    expect(upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ ownerKind: 'application', ownerId: 'app-9' }),
+      expect.anything(),
+    );
   });
 });

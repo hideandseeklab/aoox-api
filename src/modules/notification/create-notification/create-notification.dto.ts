@@ -137,4 +137,12 @@ export class CreateNotificationDto {
   @IsOptional()
   @IsBoolean()
   onAppError?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  onServerDown?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  onHttpDown?: boolean;
 }

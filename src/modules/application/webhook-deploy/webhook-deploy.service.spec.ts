@@ -12,6 +12,7 @@ import { DeployApplicationService } from '../deploy-application/deploy-applicati
 import { PreviewService } from '../preview.service';
 import {
   parsePushCommit,
+  pushTouchesRoot,
   WebhookDeployService,
 } from './webhook-deploy.service';
 
@@ -153,6 +154,54 @@ describe('WebhookDeployService', () => {
       expect(r.result).toBe('ignored');
     }
     expect(deploys.queue).not.toHaveBeenCalled();
+  });
+
+  it('watchRootOnly skips pushes that leave the root directory alone, and fails open otherwise', async () => {
+    qb.getOne.mockResolvedValue({
+      ...app,
+      rootDirectory: 'apps/web',
+      watchRootOnly: true,
+    });
+    const push = (commits: unknown) =>
+      ({ ref: 'refs/heads/main', after: 'abc', commits }) as never;
+    const outside = [
+      { added: [], modified: ['services/api/x.ts'], removed: [] },
+    ];
+    const inside = [
+      { added: [], modified: ['apps/web/page.tsx'], removed: [] },
+    ];
+    await expect(
+      service.execute(app.webhookToken, push(outside), 'push'),
+    ).resolves.toEqual({
+      result: 'ignored',
+      reason: 'no changes under apps/web',
+    });
+    expect(deploys.queue).not.toHaveBeenCalled();
+    await expect(
+      service.execute(app.webhookToken, push(inside), 'push'),
+    ).resolves.toMatchObject({ result: 'queued' });
+    // No file lists at all -> deploy as usual.
+    await expect(
+      service.execute(app.webhookToken, push(undefined), 'push'),
+    ).resolves.toMatchObject({ result: 'queued' });
+  });
+
+  it('watchRootOnly off keeps the old behaviour even with a root directory', async () => {
+    qb.getOne.mockResolvedValue({
+      ...app,
+      rootDirectory: 'apps/web',
+      watchRootOnly: false,
+    });
+    await expect(
+      service.execute(
+        app.webhookToken,
+        {
+          ref: 'refs/heads/main',
+          commits: [{ added: [], modified: ['other/x'], removed: [] }],
+        },
+        'push',
+      ),
+    ).resolves.toMatchObject({ result: 'queued' });
   });
 
   it('reports busy instead of failing when a deployment is running', async () => {
@@ -387,5 +436,87 @@ describe('parsePushCommit', () => {
       message: null,
       pusherName: null,
     });
+  });
+});
+
+describe('pushTouchesRoot', () => {
+  const c = (
+    modified: string[],
+    added: string[] = [],
+    removed: string[] = [],
+  ) => ({
+    added,
+    modified,
+    removed,
+  });
+
+  it('is always true without a root directory', () => {
+    expect(pushTouchesRoot({ commits: [c(['x'])] }, null)).toBe(true);
+    expect(pushTouchesRoot({ commits: [c(['x'])] }, '')).toBe(true);
+  });
+
+  it('matches files under the folder, added, modified or removed', () => {
+    expect(pushTouchesRoot({ commits: [c(['apps/web/a'])] }, 'apps/web')).toBe(
+      true,
+    );
+    expect(
+      pushTouchesRoot({ commits: [c([], ['apps/web/a'])] }, 'apps/web'),
+    ).toBe(true);
+    expect(
+      pushTouchesRoot({ commits: [c([], [], ['apps/web/a'])] }, 'apps/web'),
+    ).toBe(true);
+  });
+
+  it('does not confuse a sibling folder that shares a prefix', () => {
+    expect(
+      pushTouchesRoot({ commits: [c(['apps/web-admin/a'])] }, 'apps/web'),
+    ).toBe(false);
+    expect(pushTouchesRoot({ commits: [c(['apps/webx'])] }, 'apps/web')).toBe(
+      false,
+    );
+  });
+
+  it('looks at every commit of the push', () => {
+    expect(
+      pushTouchesRoot(
+        { commits: [c(['docs/a']), c(['apps/web/a'])] },
+        'apps/web',
+      ),
+    ).toBe(true);
+  });
+
+  it('is false only when every commit positively stays outside', () => {
+    expect(
+      pushTouchesRoot(
+        { commits: [c(['docs/a']), c(['README.md'])] },
+        'apps/web',
+      ),
+    ).toBe(false);
+  });
+
+  it('fails open when it cannot tell', () => {
+    expect(pushTouchesRoot({}, 'apps/web')).toBe(true);
+    expect(pushTouchesRoot({ commits: [] }, 'apps/web')).toBe(true);
+    // A commit with no file lists (GitHub merge commits).
+    expect(pushTouchesRoot({ commits: [c([])] }, 'apps/web')).toBe(true);
+    expect(pushTouchesRoot({ commits: [{ message: 'm' }] }, 'apps/web')).toBe(
+      true,
+    );
+    // Hit the 20-commit cap of the payload.
+    const many = Array.from({ length: 20 }, () => c(['docs/a']));
+    expect(pushTouchesRoot({ commits: many }, 'apps/web')).toBe(true);
+    // GitLab says there were more commits than it listed.
+    expect(
+      pushTouchesRoot(
+        { commits: [c(['docs/a'])], total_commits_count: 3 },
+        'apps/web',
+      ),
+    ).toBe(true);
+    expect(
+      pushTouchesRoot({ commits: [c(['docs/a'])], forced: true }, 'apps/web'),
+    ).toBe(true);
+    expect(
+      pushTouchesRoot({ commits: [c(['docs/a'])], created: true }, 'apps/web'),
+    ).toBe(true);
   });
 });

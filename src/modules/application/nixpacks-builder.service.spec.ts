@@ -8,6 +8,7 @@ import {
   HELPER_DOCKERFILE,
   NIXPACKS_HELPER_IMAGE,
   NixpacksBuilderService,
+  nixpacksScript,
   shellQuote,
   tarSingleFile,
 } from './nixpacks-builder.service';
@@ -82,8 +83,10 @@ describe('NixpacksBuilderService', () => {
       "git clone --quiet --depth 1 --branch 'main' 'https://u:tok@github.com/x/y.git' /src",
     );
     expect(script).toContain(
-      'nixpacks build /src --out /src --name aoox --no-cache',
+      'nixpacks build "$APP" --out "$APP" --name aoox --no-cache',
     );
+    expect(script).toContain('APP=/src;');
+    expect(script).toContain('tar -C "$APP" -cf');
     expect(script).toContain("--env 'NODE_VERSION=22'");
     expect(engine.buildFromTar).toHaveBeenCalledWith(
       Buffer.from('TAR'),
@@ -96,6 +99,66 @@ describe('NixpacksBuilderService', () => {
     );
     expect(engine.removeContainer).toHaveBeenCalledWith('helper', true);
     expect(lines.some((l) => l.stream?.includes('planned'))).toBe(true);
+  });
+
+  it('builds from the root directory and passes it through env, not the script', async () => {
+    await svc.build(
+      {
+        remote: 'https://github.com/x/y.git',
+        branch: 'main',
+        tag: 't:1',
+        buildArgs: {},
+        rootDirectory: 'apps/web',
+      },
+      onLine,
+    );
+    const [body] = engine.createContainer.mock.calls[0] as [
+      { Entrypoint: string[]; Env: string[] },
+    ];
+    expect(body.Env).toContain('AOOX_ROOT=apps/web');
+    expect(body.Entrypoint[2]).not.toContain('apps/web');
+    expect(
+      nixpacksScript({
+        remote: 'r',
+        branch: 'b',
+        tag: 't',
+        buildArgs: {},
+        rootDirectory: 'apps/web',
+      }),
+    ).toContain('"/src/$AOOX_ROOT"');
+  });
+
+  it('reports a missing root directory clearly', async () => {
+    engine.waitContainer.mockResolvedValueOnce(3);
+    await expect(
+      svc.build(
+        {
+          remote: 'r',
+          branch: 'main',
+          tag: 't',
+          buildArgs: {},
+          rootDirectory: 'apps/nope',
+        },
+        onLine,
+      ),
+    ).rejects.toThrow('Root directory "apps/nope" was not found');
+    expect(engine.removeContainer).toHaveBeenCalledWith('helper', true);
+  });
+
+  it('refuses a hostile root directory before creating any container', async () => {
+    await expect(
+      svc.build(
+        {
+          remote: 'r',
+          branch: 'main',
+          tag: 't',
+          buildArgs: {},
+          rootDirectory: '../etc',
+        },
+        onLine,
+      ),
+    ).rejects.toThrow('Invalid root directory');
+    expect(engine.createContainer).not.toHaveBeenCalled();
   });
 
   it('builds the helper image on first use only', async () => {

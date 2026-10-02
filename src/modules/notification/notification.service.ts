@@ -23,6 +23,8 @@ export interface NotificationDto {
   onCertificateFailure: boolean;
   onDnsIssue: boolean;
   onAppError: boolean;
+  onServerDown: boolean;
+  onHttpDown: boolean;
   createdAt: Date;
 }
 
@@ -36,9 +38,11 @@ export type NotificationEvent =
   | 'diskLow'
   | 'certificateFailure'
   | 'dnsIssue'
-  | 'appError';
+  | 'appError'
+  | 'serverDown'
+  | 'httpDown';
 
-const EVENT_TOGGLE: Record<NotificationEvent, keyof Notification> = {
+export const EVENT_TOGGLE: Record<NotificationEvent, keyof Notification> = {
   deploymentStarted: 'onDeploymentStarted',
   deploymentSuccess: 'onDeploymentSuccess',
   deploymentFailure: 'onDeploymentFailure',
@@ -49,6 +53,8 @@ const EVENT_TOGGLE: Record<NotificationEvent, keyof Notification> = {
   certificateFailure: 'onCertificateFailure',
   dnsIssue: 'onDnsIssue',
   appError: 'onAppError',
+  serverDown: 'onServerDown',
+  httpDown: 'onHttpDown',
 };
 
 @Injectable()
@@ -80,6 +86,8 @@ export class NotificationService {
       onCertificateFailure: n.onCertificateFailure,
       onDnsIssue: n.onDnsIssue,
       onAppError: n.onAppError,
+      onServerDown: n.onServerDown,
+      onHttpDown: n.onHttpDown,
       createdAt: n.createdAt,
     };
   }

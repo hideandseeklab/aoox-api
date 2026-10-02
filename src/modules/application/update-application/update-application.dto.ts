@@ -10,6 +10,7 @@ import {
   Max,
   MaxLength,
   Min,
+  Validate,
   ValidateIf,
 } from 'class-validator';
 import {
@@ -19,6 +20,10 @@ import {
   type SourceType,
   type UpdateOrder,
 } from '../application.entity';
+import {
+  IsRootDirectoryConstraint,
+  ROOT_DIRECTORY_MAX_LENGTH,
+} from '../root-directory';
 
 export class UpdateApplicationDto {
   @IsOptional()
@@ -48,6 +53,18 @@ export class UpdateApplicationDto {
   @IsString()
   @Matches(/^[\w./-]{1,200}$/)
   dockerfilePath?: string;
+
+  @ValidateIf((_, v) => v !== '')
+  @IsOptional()
+  @IsString()
+  @MaxLength(ROOT_DIRECTORY_MAX_LENGTH)
+  @Validate(IsRootDirectoryConstraint)
+  rootDirectory?: string | null;
+
+  /** Webhook deploys only when a changed file is under `rootDirectory`. */
+  @IsOptional()
+  @IsBoolean()
+  watchRootOnly?: boolean;
 
   /** null clears the credential. */
   @ValidateIf((_, v) => v !== null)

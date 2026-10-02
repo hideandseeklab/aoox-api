@@ -103,6 +103,12 @@ export class ProjectResourceUsageService {
     const containers = [...managed, ...bareCompose];
 
     const map = new Map<string, string>();
+    // Containers on remote servers, as captured by the remote sampler (their
+    // labels carry the project too); no SSH call per request.
+    for (const c of this.monitoring.remoteContainers()) {
+      const project = c.labels['aoox.project'];
+      if (project) map.set(c.containerId, project);
+    }
     const composeIds = new Set<string>();
     const composeSlugs = new Set<string>();
     for (const c of containers) {

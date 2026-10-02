@@ -1,4 +1,5 @@
 import { ManagedDatabaseService } from '../managed-database/managed-database.service';
+import { SecretSourceService } from '../secret-source/secret-source.service';
 import { Application } from './application.entity';
 import {
   EnvReferenceError,
@@ -30,10 +31,14 @@ describe('parseEnvLines', () => {
 describe('EnvResolverService', () => {
   const findOne = jest.fn();
   const connection = jest.fn();
-  const svc = new EnvResolverService({
-    repo: { findOne },
-    connection,
-  } as unknown as ManagedDatabaseService);
+  const fetchSecrets = jest.fn();
+  const svc = new EnvResolverService(
+    {
+      repo: { findOne },
+      connection,
+    } as unknown as ManagedDatabaseService,
+    { fetch: fetchSecrets } as unknown as SecretSourceService,
+  );
 
   beforeEach(() => {
     jest.clearAllMocks();

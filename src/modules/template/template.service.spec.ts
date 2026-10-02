@@ -27,6 +27,14 @@ describe('template catalog', () => {
     }
   });
 
+  it('pins every image to an explicit tag', () => {
+    for (const t of TEMPLATES) {
+      for (const m of t.compose.matchAll(/^\s+image:\s*(\S+)$/gm)) {
+        expect(m[1]).toMatch(/:[\w][\w.-]*$/);
+      }
+    }
+  });
+
   it('never bakes a literal secret: every password/secret variable is generated', () => {
     for (const t of TEMPLATES) {
       for (const v of t.variables) {

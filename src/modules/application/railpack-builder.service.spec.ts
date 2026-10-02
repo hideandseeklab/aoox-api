@@ -15,12 +15,19 @@ describe('railpackScript', () => {
     expect(s).toContain("'https://user:tok@github.com/org/repo.git' /src");
     expect(s).toContain('rm -rf /src/.git');
     expect(s).toContain(
-      "railpack build /src --name 'localhost:5000/p/app:abc'",
+      `railpack build "$APP" --name 'localhost:5000/p/app:abc'`,
     );
     expect(s).toContain("--cache-key 'proj/app'");
     expect(s).toContain('--progress plain');
     // Nixpacks needs --no-cache; railpack must NOT, that is the whole point.
     expect(s).not.toContain('--no-cache');
+  });
+
+  it('builds from the root directory folder, never embedding it in the script', () => {
+    const s = railpackScript({ ...base, rootDirectory: 'services/api' });
+    expect(s).toContain('APP=/src;');
+    expect(s).toContain('"/src/$AOOX_ROOT"');
+    expect(s).not.toContain('services/api');
   });
 
   it('passes build args as --env and quotes hostile values', () => {

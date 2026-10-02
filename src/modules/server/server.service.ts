@@ -21,6 +21,16 @@ export interface ServerDto {
   proxyHttpsPort: number;
   acmeEmail: string | null;
   acmeStaging: boolean;
+  /** Result of the periodic reachability check, read from the row (no live call). */
+  health: {
+    status: 'unknown' | 'up' | 'down';
+    checkedAt: Date | null;
+    /** Since when the status is what it is (down since …). */
+    since: Date | null;
+    error: string | null;
+    /** Running managed containers seen by the last check. */
+    monitoredContainers: number | null;
+  };
   createdAt: Date;
 }
 
@@ -56,6 +66,13 @@ export class ServerService {
       proxyHttpsPort: s.proxyHttpsPort,
       acmeEmail: s.acmeEmail,
       acmeStaging: s.acmeStaging,
+      health: {
+        status: s.healthStatus,
+        checkedAt: s.healthCheckedAt,
+        since: s.healthChangedAt,
+        error: s.healthError,
+        monitoredContainers: s.monitoredContainers,
+      },
       createdAt: s.createdAt,
     };
   }

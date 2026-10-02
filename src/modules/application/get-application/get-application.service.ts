@@ -5,6 +5,11 @@ import { ApplicationService, containerNameFor } from '../application.service';
 import { ProjectAccessService } from '../../project/project-access.service';
 import type { ProjectRole } from '../../project/project-member.entity';
 import { ServiceStatus, SwarmDeployService } from '../swarm-deploy.service';
+import { SecretSourceService } from '../../secret-source/secret-source.service';
+import {
+  SecretSourceView,
+  secretSourceView,
+} from '../secret-source/secret-source-view';
 
 export interface ApplicationDetail extends Application {
   /** Live container state from Docker, or null when no container exists. */
@@ -13,6 +18,8 @@ export interface ApplicationDetail extends Application {
   service: ServiceStatus | null;
   /** The actor's role in the owning project (UI hides what a viewer cannot do). */
   projectRole: ProjectRole;
+  /** External secret source (never any credential or value), or null. */
+  secretSource: SecretSourceView | null;
 }
 
 @Injectable()
@@ -22,11 +29,22 @@ export class GetApplicationService {
     private readonly remote: RemoteDockerService,
     private readonly swarmDeploy: SwarmDeployService,
     private readonly access: ProjectAccessService,
+    private readonly secrets: SecretSourceService,
   ) {}
 
   async execute(ownerId: string, id: string): Promise<ApplicationDetail> {
     const app = await this.applications.findOwnedOrFail(id, ownerId);
     const projectRole = (await this.access.roleFor(ownerId, app.project))!;
+    const secretSource = secretSourceView(
+      app,
+      app.secretConnectionId
+        ? ((
+            await this.secrets.repo.findOne({
+              where: { id: app.secretConnectionId },
+            })
+          )?.name ?? null)
+        : null,
+    );
     if (app.deployMode === 'service') {
       const service = await this.swarmDeploy.status(app).catch(() => null);
       // The "container" summary is what the web renders; derive it from the tasks.
@@ -44,7 +62,7 @@ export class GetApplicationService {
             status: `${service.running}/${service.desired} replicas`,
           }
         : null;
-      return { ...app, container, service, projectRole };
+      return { ...app, container, service, projectRole, secretSource };
     }
     const docker = await this.remote.forServer(app.serverId);
     const c = await docker
@@ -55,6 +73,7 @@ export class GetApplicationService {
       container: c ? { id: c.Id, state: c.State, status: c.Status } : null,
       service: null,
       projectRole,
+      secretSource,
     };
   }
 }

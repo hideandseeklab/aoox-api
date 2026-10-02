@@ -29,6 +29,7 @@ function build(
     apps?: Array<Record<string, unknown>>;
     servers?: Array<Record<string, unknown>>;
     domains?: Array<Record<string, unknown>>;
+    secretConnections?: Array<Record<string, unknown>>;
   } = {},
 ) {
   const projects = fakeRepo();
@@ -41,6 +42,7 @@ function build(
   const jobs = fakeRepo();
   const scheduler = { reschedule: jest.fn() };
   const provision = jest.fn<void, [unknown, string]>();
+  const importMonitor = jest.fn().mockResolvedValue(undefined);
   const service = new ProjectImportService(
     { repo: projects } as never,
     { repo: apps, domains, mounts: appMounts } as never,
@@ -70,6 +72,8 @@ function build(
     { repo: fakeRepo() } as never,
     { repo: fakeRepo() } as never,
     { repo: fakeRepo(opts.servers) } as never,
+    { importConfig: importMonitor } as never,
+    { repo: fakeRepo(opts.secretConnections) } as never,
   );
   return {
     service,
@@ -82,6 +86,7 @@ function build(
     jobs,
     provision,
     scheduler,
+    importMonitor,
   };
 }
 
@@ -120,6 +125,80 @@ describe('ProjectImportService', () => {
     );
     expect(report.projectId).toBe('id-1');
     expect(report.warnings).toEqual([]);
+  });
+
+  it('matches the secret connection by name, without any credential, and warns when it is missing', async () => {
+    const source = {
+      connection: 'infisical-prod',
+      projectId: 'proj_1',
+      environment: 'prod',
+      path: '/api',
+      sync: true,
+    };
+    const found = build({
+      secretConnections: [{ id: 'conn-1', name: 'infisical-prod' }],
+    });
+    const ok = await found.service.import(
+      {
+        ...base,
+        applications: [{ name: 'a', appName: 'a-1', secretSource: source }],
+      },
+      options,
+    );
+    expect(found.apps.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        secretConnectionId: 'conn-1',
+        secretProjectId: 'proj_1',
+        secretEnvironment: 'prod',
+        secretPath: '/api',
+        secretSync: true,
+      }),
+    );
+    expect(ok.warnings).toEqual([]);
+
+    const missing = build();
+    const report = await missing.service.import(
+      {
+        ...base,
+        applications: [{ name: 'a', appName: 'a-1', secretSource: source }],
+      },
+      options,
+    );
+    expect(missing.apps.save).toHaveBeenCalledWith(
+      expect.objectContaining({ secretConnectionId: null, secretSync: false }),
+    );
+    expect(report.warnings.join('\n')).toMatch(
+      /secret connection "infisical-prod" not found/,
+    );
+  });
+
+  it('ignores a hostile secret location from the file', async () => {
+    const { service, apps } = build({
+      secretConnections: [{ id: 'conn-1', name: 'c' }],
+    });
+    const report = await service.import(
+      {
+        ...base,
+        applications: [
+          {
+            name: 'a',
+            appName: 'a-1',
+            secretSource: {
+              connection: 'c',
+              projectId: 'p',
+              environment: 'prod',
+              path: '/../etc',
+              sync: true,
+            },
+          },
+        ],
+      },
+      options,
+    );
+    expect(apps.save).toHaveBeenCalledWith(
+      expect.objectContaining({ secretConnectionId: null }),
+    );
+    expect(report.warnings.join('\n')).toMatch(/invalid secret source/);
   });
 
   it('resolves references by name and warns about the missing ones', async () => {
@@ -254,5 +333,34 @@ describe('ProjectImportService', () => {
     expect(report.warnings).toEqual([
       'database "cache": no password in file, a new one was generated',
     ]);
+  });
+  it('hands the monitor settings of an application to the monitor service, and skips files without them', async () => {
+    const { service, importMonitor } = build();
+    const monitor = {
+      enabled: true,
+      path: '/health',
+      intervalMinutes: 5,
+      timeoutSeconds: 10,
+      expectedCodes: '200-399',
+      failureThreshold: 2,
+      useInternal: false,
+    };
+    await service.import(
+      {
+        ...base,
+        applications: [
+          { name: 'with', appName: 'with-1', httpMonitor: monitor },
+          { name: 'without', appName: 'without-1' },
+        ],
+      },
+      options,
+    );
+    expect(importMonitor).toHaveBeenCalledTimes(1);
+    expect(importMonitor).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'with' }),
+      monitor,
+      expect.stringContaining('with'),
+      expect.any(Array),
+    );
   });
 });

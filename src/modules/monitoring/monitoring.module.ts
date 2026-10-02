@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ScheduleModule } from '@nestjs/schedule';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { DockerModule } from '../docker/docker.module';
+import { ServerModule } from '../server/server.module';
 import { HostLiveController } from './host-live/host-live.controller';
 import { HostMetricsService } from './host-metrics.service';
 import { HostOverviewController } from './host-overview/host-overview.controller';
@@ -15,6 +16,7 @@ import { MonitoringService } from './monitoring.service';
     TypeOrmModule.forFeature([MetricSample]),
     ScheduleModule.forRoot(),
     DockerModule,
+    ServerModule,
   ],
   controllers: [HostOverviewController, HostLiveController],
   providers: [MonitoringService, HostMetricsService, MetricRetentionService],

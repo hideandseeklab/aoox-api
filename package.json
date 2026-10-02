@@ -1,7 +1,26 @@
 {
   "name": "aoox-api",
   "version": "0.1.0-alpha.4",
-  "description": "Self-hosted PaaS backend (NestJS)",
+  "description": "Self-hosted PaaS backend for aoox: deploy from Git or images on Docker, managed databases, custom domains with automatic HTTPS, and monitoring (NestJS)",
+  "keywords": [
+    "self-hosted",
+    "paas",
+    "docker",
+    "deploy",
+    "git-deploy",
+    "nixpacks",
+    "railpack",
+    "traefik",
+    "nestjs"
+  ],
+  "homepage": "https://aoox.dev",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hideandseeklab/aoox-api.git"
+  },
+  "bugs": {
+    "url": "https://github.com/hideandseeklab/aoox-api/issues"
+  },
   "author": "hideandseeklab <hideandseek.developer@gmail.com>",
   "private": true,
   "license": "Apache-2.0",

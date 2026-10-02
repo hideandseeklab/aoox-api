@@ -33,6 +33,8 @@ interface JobContext {
   label: string;
   ownerLabels: Record<string, string>;
   findContainer: () => Promise<{ Id: string; State: string } | null>;
+  /** Secret values resolved for the one-off container; masked in the stored output. */
+  redact?: string[];
   runSpec: () => Promise<
     Pick<ContainerCreateBody, 'Image' | 'Env'> & {
       HostConfig: NonNullable<ContainerCreateBody['HostConfig']>;
@@ -120,6 +122,9 @@ export class JobRunnerService {
           : await this.runOnce(ctx, job);
       exitCode = result.code;
       output = result.output;
+      for (const secret of ctx.redact ?? []) {
+        if (secret) output = output.split(secret).join('***');
+      }
       status =
         result.timedOut ||
         isTimeoutExit(exitCode, Date.now() - startedAt, job.timeoutSeconds)
@@ -160,10 +165,12 @@ export class JobRunnerService {
         relations: { project: true },
       });
       const docker = await this.remote.forServer(app.serverId);
+      const redact: string[] = [];
       return {
         docker,
         label: `job-${app.appName}`,
         ownerLabels: { 'aoox.application': app.id },
+        redact,
         findContainer: async () => {
           if (app.deployMode !== 'service') {
             return docker.findContainerByName(containerNameFor(app));
@@ -182,7 +189,8 @@ export class JobRunnerService {
           if (!app.currentImage) {
             throw new Error('Application was never deployed');
           }
-          const { env } = await this.envResolver.resolve(app);
+          const { env, secrets } = await this.envResolver.resolve(app);
+          redact.push(...secrets);
           const mounts = await this.applications.mounts.find({
             where: { applicationId: app.id },
           });

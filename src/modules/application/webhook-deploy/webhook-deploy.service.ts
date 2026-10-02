@@ -22,13 +22,16 @@ interface PushPayload {
   ref?: string;
   object_kind?: string; // GitLab
   deleted?: boolean; // GitHub
+  created?: boolean; // GitHub
+  forced?: boolean; // GitHub
   // GitHub push
   after?: string;
   head_commit?: { message?: string };
   pusher?: { name?: string };
   // GitLab push
   checkout_sha?: string;
-  commits?: { message?: string }[];
+  total_commits_count?: number;
+  commits?: PushedCommit[];
   user_name?: string;
   // GitHub pull_request
   action?: string;
@@ -52,7 +55,62 @@ interface PushPayload {
   };
 }
 
+/** A commit of a push payload; file lists are what `watchRootOnly` reads (GitHub and GitLab both send them). */
+interface PushedCommit {
+  message?: string;
+  added?: string[];
+  modified?: string[];
+  removed?: string[];
+}
+
 const COMMIT_MESSAGE_MAX = 200;
+
+/** Both providers cap `commits[]` at 20 entries. */
+const PAYLOAD_COMMIT_CAP = 20;
+
+/**
+ * `watchRootOnly`: does this push touch anything under `root`? Answers `true`
+ * (deploy) whenever it cannot tell — no root, no/empty commit list, a list
+ * that hit the providers' 20-commit cap or is shorter than the provider's
+ * own total, a forced push or new branch (the list may not cover the change),
+ * or any commit without file lists (GitHub leaves them empty for merge
+ * commits). Only a payload that positively shows every changed file outside
+ * `root` returns `false`.
+ */
+export function pushTouchesRoot(
+  payload: PushPayload,
+  root: string | null | undefined,
+): boolean {
+  if (!root) return true;
+  const commits = payload.commits;
+  if (!Array.isArray(commits) || commits.length === 0) return true;
+  if (commits.length >= PAYLOAD_COMMIT_CAP) return true;
+  if (
+    typeof payload.total_commits_count === 'number' &&
+    payload.total_commits_count > commits.length
+  ) {
+    return true;
+  }
+  if (payload.forced || payload.created) return true;
+  const prefix = `${root}/`;
+  for (const commit of commits) {
+    const files = [
+      ...(commit.added ?? []),
+      ...(commit.modified ?? []),
+      ...(commit.removed ?? []),
+    ];
+    if (
+      !Array.isArray(commit.added) ||
+      !Array.isArray(commit.modified) ||
+      !Array.isArray(commit.removed) ||
+      files.length === 0
+    ) {
+      return true;
+    }
+    if (files.some((f) => f === root || f.startsWith(prefix))) return true;
+  }
+  return false;
+}
 
 export interface PushCommitInfo {
   sha: string | null;
@@ -260,6 +318,17 @@ export class WebhookDeployService {
       return {
         result: 'ignored',
         reason: `ref ${payload.ref} != ${expectedRef}`,
+      };
+    }
+
+    if (
+      app.sourceType !== 'image' &&
+      app.watchRootOnly &&
+      !pushTouchesRoot(payload, app.rootDirectory)
+    ) {
+      return {
+        result: 'ignored',
+        reason: `no changes under ${app.rootDirectory}`,
       };
     }
 

@@ -2,6 +2,12 @@ import { Injectable, Logger } from '@nestjs/common';
 import { BuildProgress } from '../docker/docker-engine.client';
 import { composeLabels, DockerService } from '../docker/docker.service';
 import { tarSingleFile } from './nixpacks-builder.service';
+import {
+  appDirPrologue,
+  ROOT_DIRECTORY_EXIT,
+  rootDirectoryEnv,
+  rootDirectoryError,
+} from './root-directory';
 
 /** Pinned like NIXPACKS_VERSION; bumping it rebuilds the helper image. */
 export const RAILPACK_VERSION = process.env.RAILPACK_VERSION ?? '0.39.0';
@@ -38,6 +44,8 @@ export interface RailpackBuildInput {
   buildArgs: Record<string, string>;
   /** Prefix for BuildKit's cache keys so apps do not share layers by accident. */
   cacheKey: string;
+  /** Monorepo subfolder to build (see root-directory.ts); null = repo root. */
+  rootDirectory?: string | null;
 }
 
 /** Shell command the helper runs; pure so the test can read it. */
@@ -48,8 +56,9 @@ export function railpackScript(input: RailpackBuildInput): string {
   return [
     `git clone --quiet --depth 1 --branch ${shellQuote(input.branch)} ${shellQuote(input.remote)} ${SRC}`,
     `rm -rf ${SRC}/.git`,
+    appDirPrologue(SRC),
     [
-      `railpack build ${SRC}`,
+      `railpack build "$APP"`,
       `--name ${shellQuote(input.tag)}`,
       `--cache-key ${shellQuote(input.cacheKey)}`,
       '--progress plain',
@@ -82,13 +91,14 @@ export class RailpackBuilderService {
     await this.ensureBuildkit(onLine);
 
     onLine({
-      stream: `Cloning ${input.branch} and building with railpack ${RAILPACK_VERSION} (BuildKit cache: ${input.cacheKey})\n`,
+      stream: `Cloning ${input.branch} and building${input.rootDirectory ? ` ${input.rootDirectory}` : ''} with railpack ${RAILPACK_VERSION} (BuildKit cache: ${input.cacheKey})\n`,
     });
     const id = await this.docker.engine.createContainer({
       Image: RAILPACK_HELPER_IMAGE,
       Entrypoint: ['sh', '-c', railpackScript(input)],
       Env: [
         'GIT_TERMINAL_PROMPT=0',
+        rootDirectoryEnv(input.rootDirectory),
         `BUILDKIT_HOST=docker-container://${BUILDKIT_CONTAINER}`,
       ],
       Labels: { 'aoox.component': 'build', ...composeLabels('railpack') },
@@ -111,6 +121,9 @@ export class RailpackBuilderService {
       );
       const code = await finished;
       stop();
+      if (code === ROOT_DIRECTORY_EXIT && input.rootDirectory) {
+        throw rootDirectoryError(input.rootDirectory);
+      }
       if (code !== 0) {
         throw new Error(
           `railpack could not build this repository (exit ${code}); see the log above`,

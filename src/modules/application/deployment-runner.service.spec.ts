@@ -16,11 +16,25 @@ import { ServerService } from '../server/server.service';
 import { EnvResolverService, parseEnvLines } from './env-resolver.service';
 import { NixpacksBuilderService } from './nixpacks-builder.service';
 import { StaticSiteBuilderService } from './static-site-builder.service';
+import { SecretSourceError } from '../secret-source/infisical.client';
 import { DeploymentRunnerService } from './deployment-runner.service';
 
 const nixpacksBuild = jest
   .fn<Promise<void>, unknown[]>()
   .mockResolvedValue(undefined);
+
+/** Env resolution double: records the options so previews can be checked. */
+const envResolve = jest
+  .fn<
+    Promise<{ env: string[]; secrets: string[] }>,
+    [Application, { secretSource?: boolean }?]
+  >()
+  .mockImplementation((a) =>
+    Promise.resolve({
+      env: parseEnvLines(a.env).map(([k, v]) => `${k}=${v}`),
+      secrets: [],
+    }),
+  );
 
 describe('DeploymentRunnerService', () => {
   const engine = {
@@ -169,10 +183,7 @@ describe('DeploymentRunnerService', () => {
         {
           provide: EnvResolverService,
           useValue: {
-            resolve: (a: Application) => ({
-              env: parseEnvLines(a.env).map(([k, v]) => `${k}=${v}`),
-              secrets: [],
-            }),
+            resolve: envResolve,
           },
         },
       ],
@@ -326,6 +337,64 @@ describe('DeploymentRunnerService', () => {
       expect(engine.renameContainer).not.toHaveBeenCalled();
       docker.findContainerByName.mockResolvedValue(null);
       engine.inspectContainer.mockReset();
+    });
+  });
+
+  describe('external secret source', () => {
+    const defaultResolve = envResolve.getMockImplementation()!;
+    afterEach(() => envResolve.mockImplementation(defaultResolve));
+
+    it('masks resolved secret values in the deployment log', async () => {
+      envResolve.mockImplementation((a) =>
+        Promise.resolve({
+          env: parseEnvLines(a.env).map(([k, v]) => `${k}=${v}`),
+          secrets: ['hunter2-top-secret'],
+        }),
+      );
+      // The value is registered before the container is created, so an error
+      // that echoes it (a daemon complaining about the env) is masked.
+      engine.createContainer.mockRejectedValueOnce(
+        new Error('invalid environment: API_KEY=hunter2-top-secret'),
+      );
+      const d = await runAndWait(deployment(), app());
+      expect(d.status).toBe('failed');
+      expect(d.logs).not.toContain('hunter2-top-secret');
+      expect(d.errorMessage).not.toContain('hunter2-top-secret');
+      expect(d.errorMessage).toContain('API_KEY=');
+    });
+
+    it('a failing source fails the deployment with its short message and leaves the old container alone', async () => {
+      envResolve.mockRejectedValueOnce(
+        new SecretSourceError(
+          'Secret source "prod": login failed (HTTP 401: Invalid credentials)',
+        ),
+      );
+      const d = await runAndWait(deployment(), app());
+      expect(d.status).toBe('failed');
+      expect(d.errorMessage).toContain('login failed (HTTP 401');
+      expect(engine.removeContainer).not.toHaveBeenCalled();
+      expect(engine.createContainer).not.toHaveBeenCalled();
+    });
+
+    it('deployments use the source; pull-request previews never do', async () => {
+      await runAndWait(deployment(), app());
+      expect(envResolve).toHaveBeenLastCalledWith(expect.anything(), {
+        secretSource: true,
+      });
+      await runner.replaceContainer(
+        app(),
+        'localhost:5000/x/y:pr1',
+        undefined,
+        {
+          name: 'aoox-app-web-abc123-pr1',
+          routerName: 'web-abc123-pr1',
+          domains: [],
+          hostPort: null,
+        },
+      );
+      expect(envResolve).toHaveBeenLastCalledWith(expect.anything(), {
+        secretSource: false,
+      });
     });
   });
 

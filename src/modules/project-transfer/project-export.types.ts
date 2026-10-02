@@ -37,6 +37,9 @@ export interface ExportedApplication {
   gitBranch: string;
   imageRef: string | null;
   dockerfilePath: string;
+  /** Monorepo subfolder (absent in files from before it existed). */
+  rootDirectory?: string | null;
+  watchRootOnly?: boolean;
   buildType: 'dockerfile' | 'nixpacks' | 'railpack' | 'static';
   staticBuildCommand: string | null;
   staticOutputDir: string;
@@ -47,6 +50,16 @@ export interface ExportedApplication {
   buildArgs: string;
   healthcheckPath: string | null;
   ignoreErrorLogs?: boolean;
+  /** HTTP monitor settings only (no state or history); absent in older files. */
+  httpMonitor?: {
+    enabled: boolean;
+    path: string;
+    intervalMinutes: number;
+    timeoutSeconds: number;
+    expectedCodes: string;
+    failureThreshold: number;
+    useInternal: boolean;
+  } | null;
   deploymentKeep: number;
   backupCron: string | null;
   backupKeep: number;
@@ -54,6 +67,14 @@ export interface ExportedApplication {
   memoryMb: number | null;
   previewsEnabled: boolean;
   previewDomain: string | null;
+  /** External secret source: the connection by NAME and where to read; never credentials or values. Optional in older files. */
+  secretSource?: {
+    connection: string;
+    projectId: string;
+    environment: string;
+    path: string;
+    sync: boolean;
+  } | null;
   references: {
     gitCredential: string | null;
     imageRegistry: string | null;

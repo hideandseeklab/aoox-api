@@ -1,4 +1,8 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
+import {
+  isValidRootDirectory,
+  normalizeRootDirectory,
+} from '../application/root-directory';
 import { randomBytes } from 'crypto';
 import { Repository } from 'typeorm';
 import { normalizePath } from '../application/add-mount/add-mount.service';
@@ -8,6 +12,7 @@ import { BackupDestinationService } from '../backup-destination/backup-destinati
 import { ComposeService } from '../compose/compose.service';
 import { BackupSchedulerService } from '../database-backup/backup-scheduler.service';
 import { GitCredentialService } from '../git-credential/git-credential.service';
+import { HttpMonitorService } from '../http-monitor/http-monitor.service';
 import { JobSchedulerService } from '../job/job-scheduler.service';
 import { Job } from '../job/job.entity';
 import { JobService } from '../job/job.service';
@@ -16,6 +21,13 @@ import { ManagedDatabaseService } from '../managed-database/managed-database.ser
 import { ProjectService } from '../project/project.service';
 import { RegistryService } from '../registry/registry.service';
 import { ServerService } from '../server/server.service';
+import {
+  isValidSecretPath,
+  SECRET_ENVIRONMENT_PATTERN,
+  SECRET_PROJECT_PATTERN,
+} from '../secret-source/secret-selection';
+import { SecretSourceService } from '../secret-source/secret-source.service';
+import type { ExportedApplication } from './project-export.types';
 import { VolumeBackupSchedulerService } from '../volume-backup/volume-backup-scheduler.service';
 import {
   EXPORT_FORMAT,
@@ -57,6 +69,8 @@ export class ProjectImportService {
     private readonly credentials: GitCredentialService,
     private readonly destinations: BackupDestinationService,
     private readonly servers: ServerService,
+    private readonly httpMonitors: HttpMonitorService,
+    private readonly secretSources: SecretSourceService,
   ) {}
 
   async import(file: unknown, options: ImportOptions): Promise<ImportReport> {
@@ -75,13 +89,19 @@ export class ProjectImportService {
     const idOf = async <T extends { id: string; name: string }>(
       rows: Promise<T[]>,
     ) => new Map((await rows).map((r) => [r.name, r.id] as const));
-    const [registryIds, credentialIds, destinationIds, serverIds] =
-      await Promise.all([
-        idOf(this.registries.repo.find()),
-        idOf(this.credentials.repo.find()),
-        idOf(this.destinations.repo.find()),
-        idOf(this.servers.repo.find()),
-      ]);
+    const [
+      registryIds,
+      credentialIds,
+      destinationIds,
+      serverIds,
+      secretConnectionIds,
+    ] = await Promise.all([
+      idOf(this.registries.repo.find()),
+      idOf(this.credentials.repo.find()),
+      idOf(this.destinations.repo.find()),
+      idOf(this.servers.repo.find()),
+      idOf(this.secretSources.repo.find()),
+    ]);
     const resolve = (
       kind: string,
       map: Map<string, string>,
@@ -106,6 +126,14 @@ export class ProjectImportService {
 
     for (const a of file.applications ?? []) {
       const where = `application "${a.name}"`;
+      // Untrusted file: an invalid folder is dropped (repository root) with a warning.
+      let rootDirectory = normalizeRootDirectory(a.rootDirectory);
+      if (rootDirectory && !isValidRootDirectory(rootDirectory)) {
+        warnings.push(
+          `${where}: invalid root directory "${rootDirectory}" ignored`,
+        );
+        rootDirectory = null;
+      }
       const appName = await this.freeSlug(
         this.applications.repo,
         'appName',
@@ -130,6 +158,8 @@ export class ProjectImportService {
             where,
           ),
           dockerfilePath: a.dockerfilePath || 'Dockerfile',
+          rootDirectory,
+          watchRootOnly: rootDirectory ? (a.watchRootOnly ?? false) : false,
           buildType: a.buildType ?? 'dockerfile',
           staticBuildCommand: a.staticBuildCommand ?? null,
           staticOutputDir: a.staticOutputDir || 'dist',
@@ -147,6 +177,12 @@ export class ProjectImportService {
           memoryMb: a.memoryMb ?? null,
           previewsEnabled: a.previewsEnabled ?? false,
           previewDomain: a.previewDomain ?? null,
+          ...importedSecretSource(
+            a.secretSource,
+            secretConnectionIds,
+            where,
+            warnings,
+          ),
           gitCredentialId: resolve(
             'git credential',
             credentialIds,
@@ -165,6 +201,13 @@ export class ProjectImportService {
         }),
       );
       created.applications++;
+      if (a.httpMonitor)
+        await this.httpMonitors.importConfig(
+          app,
+          a.httpMonitor,
+          where,
+          warnings,
+        );
       for (const d of a.domains ?? []) {
         if (
           await this.applications.domains.findOne({ where: { host: d.host } })
@@ -505,4 +548,54 @@ function validateShape(input: unknown): asserts input is ProjectExport {
       }
     }
   }
+}
+
+/**
+ * The secret source of an imported application: connection matched by name
+ * (credentials never travel with an export) and the location checked like a
+ * request. Anything unusable leaves the source empty with a warning.
+ */
+function importedSecretSource(
+  source: ExportedApplication['secretSource'],
+  connectionIds: Map<string, string>,
+  where: string,
+  warnings: string[],
+): {
+  secretConnectionId: string | null;
+  secretProjectId: string | null;
+  secretEnvironment: string | null;
+  secretPath: string;
+  secretSync: boolean;
+} {
+  const none = {
+    secretConnectionId: null,
+    secretProjectId: null,
+    secretEnvironment: null,
+    secretPath: '/',
+    secretSync: false,
+  };
+  if (!source) return none;
+  const id = connectionIds.get(source.connection);
+  if (!id) {
+    warnings.push(
+      `${where}: secret connection "${source.connection}" not found, secret source left empty`,
+    );
+    return none;
+  }
+  const path = source.path || '/';
+  if (
+    !SECRET_PROJECT_PATTERN.test(source.projectId ?? '') ||
+    !SECRET_ENVIRONMENT_PATTERN.test(source.environment ?? '') ||
+    !isValidSecretPath(path)
+  ) {
+    warnings.push(`${where}: invalid secret source location ignored`);
+    return none;
+  }
+  return {
+    secretConnectionId: id,
+    secretProjectId: source.projectId,
+    secretEnvironment: source.environment,
+    secretPath: path,
+    secretSync: source.sync === true,
+  };
 }

@@ -28,6 +28,8 @@ function channel(name: string, toggles: Partial<Notification>): Notification {
     onCertificateFailure: false,
     onDnsIssue: false,
     onAppError: false,
+    onServerDown: false,
+    onHttpDown: false,
     createdAt: new Date(),
     ...toggles,
   };

@@ -15,6 +15,7 @@ import { ApplicationService, containerNameFor } from '../application.service';
 import { DeploymentRunnerService } from '../deployment-runner.service';
 import { EnvReferenceError, EnvResolverService } from '../env-resolver.service';
 import { isOwnContainer } from '../own-container';
+import { normalizeRootDirectory } from '../root-directory';
 import { UpdateApplicationDto } from './update-application.dto';
 
 /**
@@ -71,6 +72,9 @@ export class UpdateApplicationService {
     if (dto.dockerfilePath !== undefined) {
       app.dockerfilePath = dto.dockerfilePath.trim() || 'Dockerfile';
     }
+    if (dto.rootDirectory !== undefined)
+      app.rootDirectory = normalizeRootDirectory(dto.rootDirectory);
+    if (dto.watchRootOnly !== undefined) app.watchRootOnly = dto.watchRootOnly;
     if (dto.gitCredentialId !== undefined) {
       if (dto.gitCredentialId)
         await this.credentials.findOrFail(dto.gitCredentialId);
@@ -94,7 +98,7 @@ export class UpdateApplicationService {
       app.env = dto.env;
       // Catch a bad ${{...}} reference now rather than at the next deploy.
       try {
-        await this.envResolver.resolve(app);
+        await this.envResolver.resolve(app, { lenient: true });
       } catch (err) {
         if (err instanceof EnvReferenceError) {
           throw new BadRequestException(err.message);

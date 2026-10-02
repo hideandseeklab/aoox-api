@@ -1,9 +1,15 @@
 # aoox
 
-Self-hosted PaaS. Two repos:
+Self-hosted PaaS — deploy from Git or images on your own server, with databases, domains and monitoring in one dashboard.
+
+Website: [aoox.dev](https://aoox.dev) · Docs: [aoox.dev/docs](https://aoox.dev/docs) · Changelog: [aoox.dev/changelog](https://aoox.dev/changelog)
+
+Four repos:
 
 - **aoox-api** (this repo) — NestJS 11 + TypeORM + PostgreSQL
 - [aoox-web](https://github.com/hideandseeklab/aoox-web) — Next.js 16 dashboard
+- [aoox-cli](https://github.com/hideandseeklab/aoox-cli) — the `aoox` command line ([npm](https://www.npmjs.com/package/@hideandseeklab/aoox))
+- [aoox-landing](https://github.com/hideandseeklab/aoox-landing) — the website and documentation at [aoox.dev](https://aoox.dev)
 
 ## Run with Docker (distribution)
 

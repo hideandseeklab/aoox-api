@@ -10,6 +10,12 @@ import {
   NixpacksBuilderService,
   shellQuote,
 } from './nixpacks-builder.service';
+import {
+  appDirPrologue,
+  ROOT_DIRECTORY_EXIT,
+  rootDirectoryEnv,
+  rootDirectoryError,
+} from './root-directory';
 
 /** Where the helper clones; the generated files go under `.aoox/`. */
 const SRC = '/src';
@@ -87,6 +93,25 @@ export interface StaticBuildInput extends StaticSiteOptions {
   remote: string;
   branch: string;
   tag: string;
+  /** Monorepo subfolder holding the site; `outputDir` is relative to it. null = repo root. */
+  rootDirectory?: string | null;
+}
+
+/** Shell command the helper runs; pure so the test can read it. */
+export function staticScript(input: {
+  remote: string;
+  branch: string;
+}): string {
+  return [
+    `git clone --quiet --depth 1 --branch ${shellQuote(input.branch)} ${shellQuote(input.remote)} ${SRC}`,
+    `rm -rf ${SRC}/.git`,
+    appDirPrologue(SRC),
+    `mkdir -p "$APP/.aoox"`,
+    // The files come in through env so the script stays quote-free.
+    `printf '%s' "$AOOX_DOCKERFILE" > "$APP/.aoox/Dockerfile"`,
+    `printf '%s' "$AOOX_NGINX" > "$APP/.aoox/nginx.conf"`,
+    `tar -C "$APP" -cf ${CONTEXT_TAR} .`,
+  ].join(' && ');
 }
 
 /**
@@ -109,22 +134,15 @@ export class StaticSiteBuilderService {
   ): Promise<void> {
     await this.nixpacks.ensureHelperImage(onLine, docker);
     onLine({
-      stream: `Cloning ${input.branch} for a static site (${input.buildCommand ? `build: ${input.buildCommand}, ` : ''}output: ${input.outputDir})\n`,
+      stream: `Cloning ${input.branch} for a static site${input.rootDirectory ? ` in ${input.rootDirectory}` : ''} (${input.buildCommand ? `build: ${input.buildCommand}, ` : ''}output: ${input.outputDir})\n`,
     });
-    const script = [
-      `git clone --quiet --depth 1 --branch ${shellQuote(input.branch)} ${shellQuote(input.remote)} ${SRC}`,
-      `rm -rf ${SRC}/.git`,
-      `mkdir -p ${SRC}/.aoox`,
-      // The files come in through env so the script stays quote-free.
-      `printf '%s' "$AOOX_DOCKERFILE" > ${SRC}/.aoox/Dockerfile`,
-      `printf '%s' "$AOOX_NGINX" > ${SRC}/.aoox/nginx.conf`,
-      `tar -C ${SRC} -cf ${CONTEXT_TAR} .`,
-    ].join(' && ');
+    const script = staticScript(input);
     const id = await docker.engine.createContainer({
       Image: NIXPACKS_HELPER_IMAGE,
       Entrypoint: ['sh', '-c', script],
       Env: [
         'GIT_TERMINAL_PROMPT=0',
+        rootDirectoryEnv(input.rootDirectory),
         `AOOX_DOCKERFILE=${renderStaticDockerfile(input)}`,
         `AOOX_NGINX=${renderNginxConf(input.spa)}`,
       ],
@@ -138,6 +156,9 @@ export class StaticSiteBuilderService {
       const output = await docker.engine.containerLogs(id, 200).catch(() => '');
       if (output)
         onLine({ stream: output.endsWith('\n') ? output : `${output}\n` });
+      if (code === ROOT_DIRECTORY_EXIT && input.rootDirectory) {
+        throw rootDirectoryError(input.rootDirectory);
+      }
       if (code !== 0) {
         throw new Error(`Could not clone the repository (exit ${code})`);
       }

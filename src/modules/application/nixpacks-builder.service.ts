@@ -5,6 +5,12 @@ import {
   DockerHandle,
   DockerService,
 } from '../docker/docker.service';
+import {
+  appDirPrologue,
+  ROOT_DIRECTORY_EXIT,
+  rootDirectoryEnv,
+  rootDirectoryError,
+} from './root-directory';
 
 /** Nixpacks release pinned into the helper image (https://github.com/railwayapp/nixpacks/releases). */
 export const NIXPACKS_VERSION = '1.41.0';
@@ -37,6 +43,23 @@ export interface NixpacksBuildInput {
   tag: string;
   /** Passed as `--env KEY=VALUE`: visible to nixpacks providers and the build. */
   buildArgs: Record<string, string>;
+  /** Monorepo subfolder to plan and build (see root-directory.ts); null = repo root. */
+  rootDirectory?: string | null;
+}
+
+/** Shell command the helper runs; pure so the test can read it. */
+export function nixpacksScript(input: NixpacksBuildInput): string {
+  const envFlags = Object.entries(input.buildArgs)
+    .map(([k, v]) => `--env ${shellQuote(`${k}=${v}`)}`)
+    .join(' ');
+  // Credentials in the clone URL stay inside the helper; git is told not to prompt.
+  return [
+    `git clone --quiet --depth 1 --branch ${shellQuote(input.branch)} ${shellQuote(input.remote)} ${SRC}`,
+    `rm -rf ${SRC}/.git`,
+    appDirPrologue(SRC),
+    `nixpacks build "$APP" --out "$APP" --name aoox --no-cache ${envFlags}`,
+    `tar -C "$APP" -cf ${CONTEXT_TAR} .`,
+  ].join(' && ');
 }
 
 /**
@@ -63,23 +86,14 @@ export class NixpacksBuilderService {
     await this.ensureHelperImage(onLine, docker);
 
     onLine({
-      stream: `Cloning ${input.branch} and generating the build plan with nixpacks ${NIXPACKS_VERSION}\n`,
+      stream: `Cloning ${input.branch} and generating the build plan with nixpacks ${NIXPACKS_VERSION}${input.rootDirectory ? ` (root directory: ${input.rootDirectory})` : ''}\n`,
     });
-    const envFlags = Object.entries(input.buildArgs)
-      .map(([k, v]) => `--env ${shellQuote(`${k}=${v}`)}`)
-      .join(' ');
-    // Credentials in the clone URL stay inside the helper; git is told not to prompt.
-    const script = [
-      `git clone --quiet --depth 1 --branch ${shellQuote(input.branch)} ${shellQuote(input.remote)} ${SRC}`,
-      `rm -rf ${SRC}/.git`,
-      `nixpacks build ${SRC} --out ${SRC} --name aoox --no-cache ${envFlags}`,
-      `tar -C ${SRC} -cf ${CONTEXT_TAR} .`,
-    ].join(' && ');
+    const script = nixpacksScript(input);
 
     const id = await docker.engine.createContainer({
       Image: NIXPACKS_HELPER_IMAGE,
       Entrypoint: ['sh', '-c', script],
-      Env: ['GIT_TERMINAL_PROMPT=0'],
+      Env: ['GIT_TERMINAL_PROMPT=0', rootDirectoryEnv(input.rootDirectory)],
       Labels: {
         'aoox.component': 'build',
         ...composeLabels('nixpacks'),
@@ -93,6 +107,9 @@ export class NixpacksBuilderService {
       const output = await docker.engine.containerLogs(id, 400).catch(() => '');
       if (output)
         onLine({ stream: output.endsWith('\n') ? output : `${output}\n` });
+      if (code === ROOT_DIRECTORY_EXIT && input.rootDirectory) {
+        throw rootDirectoryError(input.rootDirectory);
+      }
       if (code !== 0) {
         throw new Error(
           `nixpacks could not plan this repository (exit ${code}); see the log above`,

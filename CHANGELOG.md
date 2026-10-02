@@ -8,6 +8,71 @@ Versions below 1.0.0 may include breaking changes in a minor release.
 
 ## [Unreleased]
 
+## [0.1.0-alpha.5] - 2026-10-02
+
+### Added
+
+- **External secret source for application env (Infisical).** An owner or admin registers a connection once (`POST /secret-connections`: name, optional self-hosted URL, Universal Auth client id and secret, the secret stored encrypted and never returned; list for every member, delete, and a login test). A developer then points an application at it with `PUT /applications/:id/secret-source` (connection, project id, environment, path, sync) and can preview the **key names** (never values). When the container is created (deploy, config change, rollback, one-off jobs) aoox logs in, lists the folder and injects the secrets: priority is project env < Infisical (with `sync`) < application env, and `${{secret.KEY}}` works in project and application env (an unknown key is a 400 when saving env, or a failed deployment). aoox is only a client of an Infisical you already have (Cloud or self-hosted); there is no Infisical template. Nothing is stored or cached: the token and values live in memory for one call, and every value is registered for log redaction (deployment log, job output, app-error notifications, which withhold their log samples if the source is unreachable). A failing source fails the deployment with a short message and leaves the running container alone; **pull-request previews never inherit the source** (an application that references `${{secret.KEY}}` makes its preview fail with a clear message). `get-application` returns `secretSource` (or null), and project export/import carries the connection **name** and location without credentials (a missing connection on import leaves the source empty with a warning). New module `secret-source`, migration `SecretSource`. **Not tested against a real Infisical** (checked against a local stand-in that follows the documented endpoints, plus unit tests); the v3 fallback for older self-hosted versions and the order of imported folders are unverified.
+
+- **Metrics, container-down and reachability for remote servers.** Applications on a remote server (`Application.serverId`) are now monitored like local ones. A sampler per server reads the managed containers through the cached SSH tunnel every 30 s (two `stats` per container, at most 3 at a time, each server's round independent and capped at 25 s, never stacked) into a cache of its own, so the application metrics endpoint, the 24 h/7 d/30 d rollups (`aoox.application/.database/.compose` labels) and the project resource usage card include them, while the host totals stay local. One `GET /events` (`die`) stream per server with its own backoff follows the `servers` table and restarts when a server's session is dropped; `ContainerDownNotifier` handles those events with the same rules as local ones (re-check on that server's daemon, message names the server). A minute health check (`servers.health_*`, migration `ServerHealthAndMonitorToggles`) records up/down/since/error/monitored containers on the server row (`ServerDto.health`, read without calling the server) and sends `serverDown` after two failed checks in a row, at most hourly while down, plus one "reachable again" message. Disk watcher, certificate watcher and disk retention stay local. The `on_server_down` toggle is on by default: it only matters to people who added servers.
+- **Optional per-application HTTP monitor** (`/applications/:id/monitor`, module `http-monitor`, migration `HttpMonitors`). Config per application (path, interval 1–60 min, timeout, healthy status codes, failures in a row, internal-address switch), a once-a-minute scheduler that runs only the due monitors of running applications (five at a time, no overlap, quiet during a deploy and for 60 s after), results kept 7 days (status, latency, code — never the response body), down incidents, uptime 24 h/7 d and average/p95 latency, and `httpDown` notifications (one when the failure count is reached, a reminder at most every 6 h, one when healthy again with the downtime). **The host is never user input**: it is derived from the application (first domain, else host port, else the container name on the `aoox` network), only a validated path is accepted (single leading `/`, no `//`, `..`, control characters or spaces), redirects stay on the same host and port (max 3), the body is read to a 64 KB cap and dropped. State lives on the monitor row, so an API restart neither forgets an outage nor announces a healthy application as down. `PUT`/`check` are writes (viewers read only); project export/import carries the settings. The `on_http_down` toggle is on by default because the monitor itself is opt-in.
+- Notification toggles are now guarded by a test that walks the entity's `on_*` columns and checks each one exists in the create DTO, the event map and what `create` really stores (the class of bug behind `onDnsIssue`).
+
+- **Root directory for monorepos** (`Application.rootDirectory`, migration `ApplicationRootDirectory`): an application can build a **subfolder** of its repository instead of the
+  root, for every git build type (Dockerfile, Nixpacks, Railpack, static site) and for pull request previews. Dockerfile builds use the Engine API git context with a
+  subdirectory (`#branch:folder`); the Nixpacks, Railpack and static helpers clone and then build from `/src/<folder>`, so `dockerfilePath` and `staticOutputDir` are relative to
+  the folder. Empty = repository root, exactly as before. The value is validated in the create and update DTOs and again right before use (letters, digits, `.` `_` `-` separated by `/`;
+  no `..`, no leading or trailing `/`, no `.git`), and reaches the helper scripts through an env var, never spliced into the shell; a symlink that resolves outside the clone is
+  refused. A folder missing on the branch fails the deployment with `Root directory "x" was not found in the repository` and leaves the running container alone. The first build log
+  line names the folder. Project export/import carries the field (optional in older files). Limit: files outside the folder are not part of the build context.
+  Tested with a real local git daemon: Dockerfile and static roots, wrong and empty roots, hostile paths (400), webhook and preview. **Not tested end to end:** Nixpacks and Railpack
+  (the antivirus on the test machine intercepts their downloads inside containers), only the assembled scripts and env are unit-tested.
+- **`watchRootOnly` webhook option** (default off): with a root directory set, a GitHub or GitLab push only deploys when a changed file lies under it (`commits[].added/modified/removed`).
+  It answers `ignored` only when every commit provably stays outside; anything it cannot judge (no file lists, a merge commit without lists, 20 or more commits, a forced push, a new
+  branch) deploys as usual. Pull request previews are not filtered.
+
+- **Seven more one-click templates** (catalog is now 13): **Vaultwarden** 1.37, **Umami** 2.20 (PostgreSQL), **Grafana** 13.0, **Metabase** 0.63 (PostgreSQL), **Directus** 12.4 (PostgreSQL),
+  **Mattermost** Team Edition 11.11 (PostgreSQL) and **Nextcloud** 32 (PostgreSQL, Redis and a separate cron container). Image tags are pinned to versions that exist in the registries
+  (Docker Hub, GHCR), databases get a health check and the app waits for it (`depends_on: service_healthy`), data lives in named volumes, and every password, secret and key variable is
+  generated. The catalog spec now also checks that every image carries an explicit tag. Each template was deployed through `POST /compose-apps/from-template` on a local stack behind
+  the proxy and answered on its health or status endpoint (Directus login also checked); Grafana and Umami kept their data across a container recreate, and Nextcloud was confirmed to use
+  PostgreSQL and Redis. Stacks, volumes and images were removed afterwards. Not tested: upgrades between template versions, real HTTPS/ACME, backups of the in-stack databases.
+
+- **Odoo Community one-click template** (catalog is now 14): Odoo 19.0 (LGPLv3, Community only, no Enterprise modules) plus PostgreSQL 16. Decisions: the image is pinned to the dated tag
+  `odoo:19.0-20260926` (the `19.0` tag moves every night; 19.0 is the middle of the three majors published on Docker Hub (18.0, 19.0, 20.0), a conservative pick over the newest 20.0), configuration comes from an inline compose `configs` entry
+  mounted at `/etc/odoo/odoo.conf` (Odoo has no command-line or environment option for the master password, only the config file) with `proxy_mode = True`, `workers = 0` (one process,
+  small installs) and `list_db = True` so the first database can be created from the web page; the database connection uses the image's `HOST`/`USER`/`PASSWORD` variables. The master password
+  is a generated variable (`MASTER_PASSWORD`), never a default. The hint tells where to read it (stack page, Pengaturan, environment, "Tampilkan nilai"). Both services have health checks
+  (`/web/health` for Odoo, `pg_isready` for PostgreSQL). Deployed through `POST /compose-apps/from-template` behind the local proxy: healthy in about 16 s; the generated master password was
+  accepted by `/web/database/create` (a wrong one was refused and created nothing), the first database took about 23 s, admin login worked, `proxy_mode` was confirmed (forwarded client
+  address honoured), and after removing the containers and redeploying the database and login were still there. Measured once right after creating the database and logging in: about
+  103 MiB for Odoo and 85 MiB for PostgreSQL (idle, not a sizing guide). Not built: multi-worker mode with a separate websocket route, automatic closing of the database manager, custom addons volume.
+
+### Changed
+
+- `GET /applications?projectId=` now also returns each application's `domains` (`[{host, https}]`, oldest first), so the project page can link to the running app. One extra
+  `domains` query for the whole list (`id IN (...)`, none when the project has no applications), not one per app; no secrets involved. Covered by
+  `list-applications.service.spec.ts`.
+
+- Project metadata for discoverability (no behavior change): `package.json` gets `description`, `keywords`, `homepage` (https://aoox.dev), `repository` and `bugs`; the
+  README links to the website, docs and changelog and to the other three repos; the runner image carries OCI labels
+  (`title`, `description`, `url`, `documentation`, `source`, `licenses`, `vendor` — deliberately no `version`/`revision`,
+  which would go stale in a static file). The labels are only in the Dockerfile (the publish workflow does not use
+  `docker/metadata-action`, so there is one place). Not tested end to end: a full `docker build` fails on this
+  machine (antivirus TLS interception during `npm ci`); the label block was validated on its own (`docker inspect`).
+
+### Fixed
+
+- `docker-compose.dist.yml` now forwards four variables to the `api` container that the code already read but the
+  compose file never passed on, so they could not be set on a dist install without editing the compose file:
+  `API_IMAGE`/`WEB_IMAGE` (defaults identical to the `image:` lines, so behavior is unchanged) — the panel uses
+  `API_IMAGE` to tell whether the install follows `:latest` (pinned tags get no "update available" badge) — and the
+  optional `WEBHOOK_VERIFY_GITHUB_IP` and `PREVIEW_DOMAIN` (empty by default = off/unset; both readers already treat an
+  empty string that way, now covered by a test). **Existing installs only receive them through `aoox reinstall`**:
+  `aoox update` and the dashboard's "Terapkan update" swap images but never rewrite the compose file, so an install
+  created earlier keeps its old compose (and the badge falls back to reading the container's own image reference)
+  until it is reinstalled. `.env.dist.example` documents the four variables.
+
 ## [0.1.0-alpha.4] - 2026-09-29
 
 ### Added
@@ -387,7 +452,8 @@ Versions below 1.0.0 may include breaking changes in a minor release.
 - Monitoring with metrics history, disk cleanup tooling, and project/instance export-import for
   backup and migration between hosts.
 
-[Unreleased]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-alpha.4...HEAD
+[Unreleased]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-alpha.5...HEAD
+[0.1.0-alpha.5]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-alpha.4...v0.1.0-alpha.5
 [0.1.0-alpha.4]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-alpha.3...v0.1.0-alpha.4
 [0.1.0-alpha.3]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-alpha.2...v0.1.0-alpha.3
 [0.1.0-alpha.2]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-alpha.1...v0.1.0-alpha.2

@@ -5,6 +5,7 @@ import { RemoteDockerService } from '../server/remote-docker.service';
 import { NotificationService } from '../notification/notification.service';
 import { Application } from './application.entity';
 import { ApplicationService, containerNameFor } from './application.service';
+import { SecretSourceError } from '../secret-source/infisical.client';
 import { EnvResolverService, parseEnvLines } from './env-resolver.service';
 import { detectLogErrors, LogErrorEvent } from './log-error-detector';
 import { SwarmDeployService } from './swarm-deploy.service';
@@ -128,7 +129,7 @@ export class AppErrorWatcherService {
     if (!hasNewFingerprint && now - last < COOLDOWN_MS) return;
     this.lastNotified.set(app.id, now);
 
-    const redactValues = await this.redactionValues(app);
+    const { values: redactValues, complete } = await this.redactionValues(app);
     const uniqueByFingerprint = [
       ...new Map(events.map((e) => [e.fingerprint, e])).values(),
     ];
@@ -139,12 +140,20 @@ export class AppErrorWatcherService {
       ['Project', app.project.name],
       ['Errors this check', String(events.length)],
     ];
-    for (const [i, e] of uniqueByFingerprint.slice(0, MAX_EXAMPLES).entries()) {
-      const snippet = this.redact(e.lines.join('\n'), redactValues).slice(
-        0,
-        SNIPPET_MAX_CHARS,
-      );
-      fields.push([`Example ${i + 1}`, snippet]);
+    if (complete) {
+      for (const [i, e] of uniqueByFingerprint
+        .slice(0, MAX_EXAMPLES)
+        .entries()) {
+        const snippet = this.redact(e.lines.join('\n'), redactValues).slice(
+          0,
+          SNIPPET_MAX_CHARS,
+        );
+        fields.push([`Example ${i + 1}`, snippet]);
+      }
+    } else {
+      // The secret source could not be read, so the secrets to mask are
+      // unknown: send no log text rather than risk leaking one.
+      fields.push(['Examples', 'withheld (secret source unreachable)']);
     }
 
     this.logger.warn(`${events.length} error(s) detected in ${app.name}'s log`);
@@ -172,19 +181,24 @@ export class AppErrorWatcherService {
    * plus any raw env value whose key looks like a secret — a snippet from a
    * live container's log isn't run through that redaction path otherwise.
    */
-  private async redactionValues(app: Application): Promise<string[]> {
+  private async redactionValues(
+    app: Application,
+  ): Promise<{ values: string[]; complete: boolean }> {
     const values = new Set<string>();
     for (const [key, value] of parseEnvLines(app.env)) {
       if (/PASSWORD|SECRET|TOKEN|KEY/i.test(key) && value) values.add(value);
     }
+    let complete = true;
     try {
       const resolved = await this.envResolver.resolve(app);
       for (const secret of resolved.secrets) if (secret) values.add(secret);
-    } catch {
+    } catch (err) {
       // A broken ${{...}} reference is already surfaced elsewhere
-      // (update-application, deploy); this watcher just skips it.
+      // (update-application, deploy); this watcher just skips it. An
+      // unreadable secret source is different: its values stay unknown.
+      if (err instanceof SecretSourceError) complete = false;
     }
-    return [...values];
+    return { values: [...values], complete };
   }
 
   private redact(text: string, values: string[]): string {
