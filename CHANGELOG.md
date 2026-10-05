@@ -8,6 +8,8 @@ Versions below 1.0.0 may include breaking changes in a minor release.
 
 ## [Unreleased]
 
+## [0.1.0-alpha.6] - 2026-10-05
+
 ### Added
 
 - **Custom SSL certificates for application domains.** Upload your own certificate and private key (company CA, a purchased wildcard, Cloudflare Origin CA, networks without Let's Encrypt access) and serve a domain with it instead of an automatic one. `POST/GET/PUT/DELETE /certificates` (owner/admin manage; every member can list names and expiry for the dropdown; the private key is stored encrypted and never returned). Input is validated with Node's crypto: PEM bundle (server certificate first, then the chain), unencrypted key that matches, not expired; `*.example.com` covers exactly one label. Assign it with `certificateId` on `POST /applications/:id/domains` or `PATCH /applications/:id/domains/:domainId` (`null` goes back to automatic); domain responses now include `certificateId` and `certificateName`. Domains with an uploaded certificate are always redirected from http to https and never ask Let's Encrypt. Certificates are written to a proxy volume (keys mode 0600, also on remote servers) and Traefik reloads them on change, so renewing one (`PUT`) needs no restart; a proxy created by an older aoox is recreated once, keeping its ports and ACME state. A certificate that expires within 14 days (or already has) triggers a certificate-failure notification; it never falls back to ACME. New tables/columns `custom_certificates`, `domains.certificate_id` (migration `CustomCertificates`). **Not yet run against a real Traefik or Postgres** (unit tests only).
@@ -465,7 +467,8 @@ Versions below 1.0.0 may include breaking changes in a minor release.
 - Monitoring with metrics history, disk cleanup tooling, and project/instance export-import for
   backup and migration between hosts.
 
-[Unreleased]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-alpha.5...HEAD
+[Unreleased]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-alpha.6...HEAD
+[0.1.0-alpha.6]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-alpha.5...v0.1.0-alpha.6
 [0.1.0-alpha.5]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-alpha.4...v0.1.0-alpha.5
 [0.1.0-alpha.4]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-alpha.3...v0.1.0-alpha.4
 [0.1.0-alpha.3]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-alpha.2...v0.1.0-alpha.3
