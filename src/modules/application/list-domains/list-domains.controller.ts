@@ -3,7 +3,7 @@ import { CurrentUser } from '../../auth/current-user.decorator';
 import { JwtAuthGuard } from '../../auth/jwt-auth.guard';
 import type { JwtPayload } from '../../auth/jwt.strategy';
 import { ApplicationService } from '../application.service';
-import { Domain } from '../domain.entity';
+import { DomainDto, toDomainDto } from '../domain-dto';
 import { ApplicationParamsDto } from '../get-application/get-application.dto';
 
 @Controller('applications')
@@ -15,11 +15,13 @@ export class ListDomainsController {
   async list(
     @CurrentUser() user: JwtPayload,
     @Param() params: ApplicationParamsDto,
-  ): Promise<Domain[]> {
+  ): Promise<DomainDto[]> {
     const app = await this.applications.findOwnedOrFail(params.id, user.sub);
-    return this.applications.domains.find({
+    const rows = await this.applications.domains.find({
       where: { applicationId: app.id },
+      relations: { certificate: true },
       order: { createdAt: 'ASC' },
     });
+    return rows.map((d) => toDomainDto(d, d.certificate?.name ?? null));
   }
 }

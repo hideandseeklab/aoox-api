@@ -44,13 +44,17 @@ export class UpdateApplicationService {
     const app = await this.applications.findOwnedOrFail(id, ownerId);
     const hostPortBefore = app.hostPort;
     const serverIdBefore = app.serverId;
+    let digestReset = false;
     if (dto.name !== undefined) app.name = dto.name.trim();
     if (dto.sourceType !== undefined) app.sourceType = dto.sourceType;
     if (dto.gitUrl !== undefined) app.gitUrl = dto.gitUrl.trim() || null;
     if (dto.imageRef !== undefined) {
       const next = dto.imageRef.trim() || null;
       // A new reference needs a fresh baseline (recorded by the next deploy/check).
-      if (next !== app.imageRef) app.imageDigest = null;
+      if (next !== app.imageRef) {
+        app.imageDigest = null;
+        digestReset = true;
+      }
       app.imageRef = next;
     }
     if (dto.imageRegistryId !== undefined)
@@ -182,6 +186,7 @@ export class UpdateApplicationService {
         isOwnContainer: isOwnContainer(app),
       });
     }
+    await this.refreshRunnerColumns(app, digestReset);
     const saved = await this.applications.repo.save(app);
     // Mode or replica changes are applied by re-deploying the current image
     // (service <-> container swap, or a scale of the running service).
@@ -214,6 +219,34 @@ export class UpdateApplicationService {
       else await this.applyLimits(saved);
     }
     return saved;
+  }
+
+  /**
+   * The other half of the race: a deployment can finish between loading the
+   * app and saving it (port checks and env validation await Docker and
+   * registries). `save` would then write the stale `status`/`currentImage`/
+   * digest back over what the runner just recorded, so those columns — which
+   * the settings never edit — are re-read right before the save.
+   */
+  private async refreshRunnerColumns(
+    app: Application,
+    digestReset: boolean,
+  ): Promise<void> {
+    const fresh = await this.applications.repo.findOne({
+      where: { id: app.id },
+      select: {
+        id: true,
+        status: true,
+        currentImage: true,
+        imageDigest: true,
+        imageCheckedAt: true,
+      },
+    });
+    if (!fresh) return;
+    app.status = fresh.status;
+    app.currentImage = fresh.currentImage;
+    app.imageCheckedAt = fresh.imageCheckedAt;
+    if (!digestReset) app.imageDigest = fresh.imageDigest;
   }
 
   private async hasActiveDeployment(applicationId: string): Promise<boolean> {

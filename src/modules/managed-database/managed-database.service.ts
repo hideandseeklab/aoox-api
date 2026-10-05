@@ -11,6 +11,7 @@ import { SwarmService } from '../swarm/swarm.service';
 import { ProjectAccessService } from '../project/project-access.service';
 import { decryptSecret, encryptSecret } from '../docker/secret.util';
 import { APP_NETWORK } from '../proxy/proxy.service';
+import { companionContainerName } from '../database-companion/companion-names';
 import { ENGINES, imageNameFor, POSTGRES_VARIANTS } from './engines';
 import { ManagedDatabase } from './managed-database.entity';
 
@@ -286,6 +287,17 @@ export class ManagedDatabaseService {
   }
 
   async remove(db: ManagedDatabase, purge: boolean): Promise<void> {
+    // The admin app (database_companions) goes first; it must never block the delete.
+    try {
+      const admin = await this.docker.findContainerByName(
+        companionContainerName(db.slug),
+      );
+      if (admin) await this.docker.engine.removeContainer(admin.Id, true);
+    } catch (err) {
+      this.logger.warn(
+        `Could not remove the admin app of ${db.slug}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
     const c = await this.docker.findContainerByName(containerNameForDb(db));
     if (c) await this.docker.engine.removeContainer(c.Id, true);
     if (purge) {

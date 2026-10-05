@@ -143,6 +143,29 @@ export class PreviewService {
     await this.repo.remove(preview);
   }
 
+  /**
+   * Destroys every preview of an application (used when it is deleted).
+   * Best effort: one failing preview is logged and skipped so the caller
+   * can always finish its own work. Rows are removed first-hand so an
+   * in-flight build sees its row gone and cleans up after itself.
+   */
+  async destroyAll(app: Application): Promise<void> {
+    const previews = await this.repo.find({
+      where: { applicationId: app.id },
+    });
+    for (const preview of previews) {
+      try {
+        await this.destroy(app, preview);
+      } catch (err) {
+        this.logger.warn(
+          `Could not remove preview PR #${preview.prNumber} of ${app.appName}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    }
+  }
+
   private async destroyContainer(
     app: Application,
     preview: PreviewDeployment,

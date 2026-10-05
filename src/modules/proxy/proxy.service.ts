@@ -1,6 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
+  PROXY_CERTS_DIR,
+  PROXY_CERTS_VOLUME,
+} from '../certificate/certs-config';
+import {
   composeLabels,
   DockerHandle,
   DockerService,
@@ -20,6 +24,13 @@ export const APP_NETWORK = 'aoox';
 export const SWARM_NETWORK = 'aoox-swarm';
 export const CERT_RESOLVER = 'le';
 
+/** A host routed to a container. `customCert`: serve an uploaded certificate, not ACME. */
+export interface RoutedDomain {
+  host: string;
+  https: boolean;
+  customCert?: boolean;
+}
+
 export interface ProxyStatus {
   installed: boolean;
   running: boolean;
@@ -28,6 +39,13 @@ export interface ProxyStatus {
   httpPort: number;
   httpsPort: number;
   acmeEmail: string | null;
+  /**
+   * Whether this proxy container can serve uploaded certificates (file
+   * provider + cert volume). False for proxies created by an older aoox; they
+   * are recreated once, automatically, when the first custom certificate is
+   * assigned. Meaningless (false) while not installed.
+   */
+  customCerts: boolean;
 }
 
 /** Ports and ACME for one proxy: env for the aoox host, a row for remote servers. */
@@ -86,6 +104,7 @@ export class ProxyService {
     settings: ProxySettings,
   ): Promise<ProxyStatus> {
     const c = await docker.findContainerByName(PROXY_CONTAINER);
+    const inspect = c ? await docker.engine.inspectContainer(c.Id) : null;
     return {
       installed: !!c,
       running: c?.State === 'running',
@@ -94,7 +113,74 @@ export class ProxyService {
       httpPort: settings.httpPort,
       httpsPort: settings.httpsPort,
       acmeEmail: settings.acmeEmail,
+      customCerts: inspect ? ProxyService.supportsCustomCerts(inspect) : false,
     };
+  }
+
+  /** Pure: does this proxy container have the file provider and the cert volume? */
+  static supportsCustomCerts(inspect: {
+    Config: { Cmd?: string[] | null };
+    HostConfig?: { Binds?: string[] | null };
+  }): boolean {
+    const cmd = inspect.Config.Cmd ?? [];
+    const binds = inspect.HostConfig?.Binds ?? [];
+    return (
+      cmd.includes(`--providers.file.directory=${PROXY_CERTS_DIR}`) &&
+      binds.includes(`${PROXY_CERTS_VOLUME}:${PROXY_CERTS_DIR}`)
+    );
+  }
+
+  /**
+   * Pure: the settings a running proxy container was created with, read back
+   * from its command line and port bindings. Used to recreate it faithfully
+   * (the panel-domain flow can have provisioned it with an ACME email that
+   * differs from env, so env is not a safe source for a recreate).
+   */
+  static settingsOf(
+    inspect: {
+      Config: { Cmd?: string[] | null };
+      HostConfig?: {
+        PortBindings?: Record<string, { HostPort: string }[] | null>;
+      };
+    },
+    fallback: ProxySettings,
+  ): ProxySettings {
+    const cmd = inspect.Config.Cmd ?? [];
+    const prefix = `--certificatesresolvers.${CERT_RESOLVER}.acme.`;
+    const email = cmd.find((c) => c.startsWith(`${prefix}email=`));
+    const caserver = cmd.find((c) => c.startsWith(`${prefix}caserver=`));
+    const port = (p: string, dflt: number) => {
+      const n = Number(inspect.HostConfig?.PortBindings?.[p]?.[0]?.HostPort);
+      return Number.isInteger(n) && n > 0 ? n : dflt;
+    };
+    return {
+      httpPort: port('80/tcp', fallback.httpPort),
+      httpsPort: port('443/tcp', fallback.httpsPort),
+      acmeEmail: email ? email.slice(`${prefix}email=`.length) : null,
+      acmeStaging: !!caserver && caserver.includes('staging'),
+    };
+  }
+
+  /**
+   * A running proxy created before custom certificates existed has neither
+   * the file provider nor the cert volume: recreate it once, with the settings
+   * it already runs with (ports, ACME email/staging) and the same ACME
+   * volume, so issued certificates and other routes are untouched (a few
+   * seconds of downtime). Returns true when it was recreated.
+   */
+  async upgradeToCustomCerts(
+    docker: DockerHandle,
+    fallback: ProxySettings,
+  ): Promise<boolean> {
+    const c = await docker.findContainerByName(PROXY_CONTAINER);
+    if (!c || c.State !== 'running') return false;
+    const inspect = await docker.engine.inspectContainer(c.Id);
+    if (!inspect || ProxyService.supportsCustomCerts(inspect)) return false;
+    await this.provisionOn(docker, ProxyService.settingsOf(inspect, fallback));
+    this.logger.log(
+      `Proxy on ${docker.engine.target} recreated to support custom certificates`,
+    );
+    return true;
   }
 
   /** Creates the network + acme volume and starts Traefik on `docker` (local host or a remote server). */
@@ -105,6 +191,9 @@ export class ProxyService {
     await docker.ensureImage(PROXY_IMAGE);
     await docker.ensureNetwork(APP_NETWORK);
     await docker.engine.createVolume(PROXY_ACME_VOLUME);
+    // Uploaded certificates (written by CertificateSyncService); persists
+    // across proxy recreation like the ACME state.
+    await docker.engine.createVolume(PROXY_CERTS_VOLUME);
 
     // On a swarm manager Traefik also reads service labels (apps in
     // deployMode 'service'); v3 has it as a separate provider.
@@ -124,6 +213,10 @@ export class ProxyService {
             '--providers.swarm.refreshSeconds=3',
           ]
         : []),
+      // Custom certificates: Traefik reloads this directory on change, so
+      // assigning/replacing one never recreates the proxy.
+      `--providers.file.directory=${PROXY_CERTS_DIR}`,
+      '--providers.file.watch=true',
       `--entrypoints.web.address=:80`,
       `--entrypoints.websecure.address=:443`,
       '--log.level=INFO',
@@ -164,6 +257,7 @@ export class ProxyService {
           Binds: [
             `${docker.hostDockerSocket}:/var/run/docker.sock:ro`,
             `${PROXY_ACME_VOLUME}:/letsencrypt`,
+            `${PROXY_CERTS_VOLUME}:${PROXY_CERTS_DIR}`,
           ],
         },
       },
@@ -190,7 +284,7 @@ export class ProxyService {
   labelsFor(
     routerName: string,
     port: number,
-    domains: { host: string; https: boolean }[],
+    domains: RoutedDomain[],
     settings: ProxySettings = this.localSettings,
   ): Record<string, string> {
     return ProxyService.buildLabels(routerName, port, domains, {
@@ -205,23 +299,35 @@ export class ProxyService {
    * ACME, https hosts) and — only when a cert resolver exists, so we never
    * redirect onto Traefik's self-signed default — `<name>-redirect` (web,
    * https hosts → 301 to https). Without ACME, https hosts stay reachable
-   * on plain http like before.
+   * on plain http like before. https hosts with an uploaded certificate
+   * (`customCert`) get `<name>-secure-custom` (websecure, `tls=true`, no
+   * resolver) and are always redirected from http, ACME or not.
    */
   static buildLabels(
     routerName: string,
     port: number,
-    domains: { host: string; https: boolean }[],
+    domains: RoutedDomain[],
     opts: { httpsPort: number; acme: boolean },
   ): Record<string, string> {
     if (domains.length === 0) return {};
     const rule = (hosts: string[]) =>
       hosts.map((h) => `Host(\`${h}\`)`).join(' || ');
-    const secure = domains.filter((d) => d.https).map((d) => d.host);
-    const redirect = opts.acme && secure.length > 0;
+    // https hosts with an uploaded certificate never go through ACME; the
+    // rest keep the previous behaviour exactly.
+    const custom = domains
+      .filter((d) => d.https && d.customCert)
+      .map((d) => d.host);
+    const secure = domains
+      .filter((d) => d.https && !d.customCert)
+      .map((d) => d.host);
+    // Custom-certificate hosts always redirect (they are https for certain,
+    // the certificate is ours); ACME hosts only once a resolver exists.
+    const redirectHosts = [...(opts.acme ? secure : []), ...custom];
+    const redirect = redirectHosts.length > 0;
     // Hosts that must still answer on plain http.
-    const plain = redirect
-      ? domains.filter((d) => !d.https).map((d) => d.host)
-      : domains.map((d) => d.host);
+    const plain = domains
+      .map((d) => d.host)
+      .filter((h) => !redirectHosts.includes(h));
 
     const labels: Record<string, string> = {
       'traefik.enable': 'true',
@@ -236,7 +342,7 @@ export class ProxyService {
     if (redirect) {
       const name = `${routerName}-redirect`;
       const mw = `${routerName}-https`;
-      labels[`traefik.http.routers.${name}.rule`] = rule(secure);
+      labels[`traefik.http.routers.${name}.rule`] = rule(redirectHosts);
       labels[`traefik.http.routers.${name}.entrypoints`] = 'web';
       labels[`traefik.http.routers.${name}.service`] = routerName;
       labels[`traefik.http.routers.${name}.middlewares`] = `${mw}@docker`;
@@ -255,6 +361,15 @@ export class ProxyService {
       labels[`traefik.http.routers.${name}.service`] = routerName;
       labels[`traefik.http.routers.${name}.tls`] = 'true';
       labels[`traefik.http.routers.${name}.tls.certresolver`] = CERT_RESOLVER;
+    }
+    if (custom.length > 0) {
+      // `tls=true` and no resolver: Traefik picks the uploaded certificate
+      // from the file provider by SNI; nothing is ever requested from ACME.
+      const name = `${routerName}-secure-custom`;
+      labels[`traefik.http.routers.${name}.rule`] = rule(custom);
+      labels[`traefik.http.routers.${name}.entrypoints`] = 'websecure';
+      labels[`traefik.http.routers.${name}.service`] = routerName;
+      labels[`traefik.http.routers.${name}.tls`] = 'true';
     }
     return labels;
   }

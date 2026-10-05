@@ -1,5 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { randomBytes } from 'crypto';
+import { DockerService } from '../../docker/docker.service';
+import { HostPortService } from '../../host-port/host-port.service';
 import { ProjectService } from '../../project/project.service';
 import { defaultTagFor, ENGINES } from '../engines';
 import { ManagedDatabase } from '../managed-database.entity';
@@ -11,6 +13,8 @@ export class CreateDatabaseService {
   constructor(
     private readonly databases: ManagedDatabaseService,
     private readonly projects: ProjectService,
+    private readonly hostPorts: HostPortService,
+    private readonly docker: DockerService,
   ) {}
 
   async execute(
@@ -18,6 +22,12 @@ export class CreateDatabaseService {
     dto: CreateDatabaseDto,
   ): Promise<ManagedDatabase> {
     const project = await this.projects.findOwnedOrFail(dto.projectId, ownerId);
+    // Databases always run on the aoox host. A port another app, database,
+    // stack, companion or any running container already publishes would only
+    // fail later in the background provision (status `error`): reject it now.
+    if (dto.hostPort != null) {
+      await this.hostPorts.assertFree([dto.hostPort], this.docker);
+    }
     const spec = ENGINES[dto.engine];
     const slug = ManagedDatabaseService.slugify(dto.name);
     // Alphanumeric password: safe in env vars, CLI args and URLs alike.

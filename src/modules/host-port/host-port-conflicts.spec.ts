@@ -113,4 +113,12 @@ describe('hostPortConflicts', () => {
     });
     expect(result).toEqual([]);
   });
+
+  it('reports a conflict with a database admin app', () => {
+    const result = hostPortConflicts([9000], {
+      ...empty,
+      companions: [{ name: 'main', hostPort: 9000 }],
+    });
+    expect(result).toEqual(['9000 (admin database main)']);
+  });
 });

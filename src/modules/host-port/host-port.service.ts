@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Application } from '../application/application.entity';
 import { ComposeApp } from '../compose/compose-app.entity';
+import { DatabaseCompanion } from '../database-companion/database-companion.entity';
 import { DockerHandle } from '../docker/docker.service';
 import { ManagedDatabase } from '../managed-database/managed-database.entity';
 import {
@@ -27,6 +28,8 @@ export class HostPortService {
     private readonly databases: Repository<ManagedDatabase>,
     @InjectRepository(ComposeApp)
     private readonly composeApps: Repository<ComposeApp>,
+    @InjectRepository(DatabaseCompanion)
+    private readonly companions: Repository<DatabaseCompanion>,
   ) {}
 
   /**
@@ -44,7 +47,7 @@ export class HostPortService {
     const seen = new Set(ports);
     if (seen.size === 0) return;
     const uniquePorts = [...seen];
-    const [apps, dbs, stacks, containers] = await Promise.all([
+    const [apps, dbs, stacks, containers, admins] = await Promise.all([
       this.applications.find({
         where: uniquePorts.map((hostPort) => ({ hostPort })),
         select: { id: true, appName: true, hostPort: true },
@@ -57,6 +60,10 @@ export class HostPortService {
         select: { id: true, name: true, servicePorts: true },
       }),
       docker.engine.listContainers({ status: ['running'] }).catch(() => []),
+      this.companions.find({
+        where: uniquePorts.map((hostPort) => ({ hostPort })),
+        relations: { database: true },
+      }),
     ]);
     const conflicts = hostPortConflicts(
       uniquePorts,
@@ -71,6 +78,10 @@ export class HostPortService {
         dbs: dbs.map((d) => ({ name: d.name, hostPort: d.hostPort as number })),
         stacks,
         containers,
+        companions: admins.map((c) => ({
+          name: c.database.name,
+          hostPort: c.hostPort as number,
+        })),
       },
       options,
     );

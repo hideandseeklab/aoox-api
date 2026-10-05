@@ -13,6 +13,7 @@ import { GitCredentialService } from '../git-credential/git-credential.service';
 import {
   APP_NETWORK,
   ProxyService,
+  RoutedDomain,
   SWARM_NETWORK,
 } from '../proxy/proxy.service';
 import { Registry } from '../registry/registry.entity';
@@ -89,6 +90,7 @@ export class DeploymentRunnerService {
   private async run(deployment: Deployment, app: Application): Promise<void> {
     const log = new DeploymentLog(deployment, this.applications, this.events);
     await log.note(triggerSummary(deployment));
+    let baseline: DigestBaseline | undefined;
     try {
       if (deployment.kind === 'rollback' || deployment.kind === 'config') {
         await this.rollback(deployment, app, log);
@@ -103,6 +105,11 @@ export class DeploymentRunnerService {
           .remoteDigest(app)
           .catch(() => null);
         app.imageCheckedAt = new Date();
+        baseline = {
+          imageRef,
+          imageDigest: app.imageDigest,
+          imageCheckedAt: app.imageCheckedAt,
+        };
       } else {
         const { docker, registry } = await this.buildTargets(app);
         imageRef = await this.buildImage(app, app.gitBranch, {
@@ -117,17 +124,19 @@ export class DeploymentRunnerService {
       await log.step('starting', `Starting container ${containerNameFor(app)}`);
       await this.replaceContainer(app, imageRef, log);
 
-      app.status = 'running';
-      app.currentImage = imageRef;
-      await this.applications.repo.save(app);
+      await this.persistOutcome(app, 'running', imageRef, baseline);
       await log.finish('success', `Deployed ${imageRef}`);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       // A failed build/push leaves the previous container untouched, so only
       // mark the app as errored when the container itself was replaced.
       if (deployment.status === 'starting') {
-        app.status = await this.statusAfterFailure(app);
-        await this.applications.repo.save(app).catch(() => undefined);
+        await this.persistOutcome(
+          app,
+          await this.statusAfterFailure(app),
+          undefined,
+          baseline,
+        ).catch(() => undefined);
       }
       await log.finish('failed', `ERROR: ${message}`, message);
     }
@@ -359,9 +368,7 @@ export class DeploymentRunnerService {
       const docker = await this.remote.forServer(app.serverId);
       await docker.ensureImage(imageRef);
       await this.replaceContainer(app, imageRef, log);
-      app.status = 'running';
-      app.currentImage = imageRef;
-      await this.applications.repo.save(app);
+      await this.persistOutcome(app, 'running', imageRef);
       await log.finish(
         'success',
         deployment.kind === 'config'
@@ -370,9 +377,46 @@ export class DeploymentRunnerService {
       );
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      app.status = await this.statusAfterFailure(app);
-      await this.applications.repo.save(app).catch(() => undefined);
+      await this.persistOutcome(app, await this.statusAfterFailure(app)).catch(
+        () => undefined,
+      );
       await log.finish('failed', `ERROR: ${message}`, message);
+    }
+  }
+
+  /**
+   * The runner holds the `Application` it was queued with, which goes stale
+   * while it runs (builds take minutes). `repo.save(app)` would diff that copy
+   * against the row and silently revert whatever a concurrent PATCH changed,
+   * so only the columns the runner owns are written: `status`, `currentImage`
+   * and, for image sources, the auto-update baseline. The baseline is written
+   * only while `imageRef` is still the one that was pulled; a PATCH that
+   * changed it has already reset the digest for the new reference.
+   * The in-memory copy is kept in step for the callers that read it.
+   */
+  private async persistOutcome(
+    app: Application,
+    status: ApplicationStatus,
+    currentImage?: string,
+    baseline?: DigestBaseline,
+  ): Promise<void> {
+    app.status = status;
+    const patch: { status: ApplicationStatus; currentImage?: string } = {
+      status,
+    };
+    if (currentImage !== undefined) {
+      app.currentImage = currentImage;
+      patch.currentImage = currentImage;
+    }
+    await this.applications.repo.update(app.id, patch);
+    if (baseline) {
+      await this.applications.repo.update(
+        { id: app.id, imageRef: baseline.imageRef },
+        {
+          imageDigest: baseline.imageDigest,
+          imageCheckedAt: baseline.imageCheckedAt,
+        },
+      );
     }
   }
 
@@ -484,11 +528,18 @@ export class DeploymentRunnerService {
     await docker.ensureNetwork(APP_NETWORK);
     // Domains are routed by the proxy of whichever daemon runs the app:
     // the host's (env settings) or the server's own Traefik (server row).
-    const domains = override
+    const domains: RoutedDomain[] = override
       ? override.domains
-      : await this.applications.domains.find({
-          where: { applicationId: app.id },
-        });
+      : (
+          await this.applications.domains.find({
+            where: { applicationId: app.id },
+          })
+        ).map((d) => ({
+          host: d.host,
+          https: d.https,
+          // Uploaded certificate: its router must not ask ACME for one.
+          customCert: !!d.certificateId,
+        }));
     const proxySettings = app.serverId
       ? proxySettingsOf(await this.servers.findOrFail(app.serverId))
       : this.proxy.localSettings;
@@ -701,6 +752,13 @@ export class DeploymentRunnerService {
         hint,
     );
   }
+}
+
+/** Auto-update baseline recorded after pulling an `image` source. */
+interface DigestBaseline {
+  imageRef: string;
+  imageDigest: string | null;
+  imageCheckedAt: Date;
 }
 
 function slugPart(s: string): string {

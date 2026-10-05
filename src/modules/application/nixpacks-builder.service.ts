@@ -164,23 +164,30 @@ export function tarSingleFile(name: string, content: string): Buffer {
   return tarFiles([[name, content]]);
 }
 
-/** Minimal ustar archive of several regular files at the root. */
+/**
+ * Minimal ustar archive of several regular files at the root. The optional
+ * third element is the file mode (default 0644; secrets use 0o600).
+ */
 export function tarFiles(
-  files: Array<[name: string, content: string | Buffer]>,
+  files: Array<[name: string, content: string | Buffer, mode?: number]>,
 ): Buffer {
   return Buffer.concat([
-    ...files.map(([name, content]) => tarEntry(name, content)),
+    ...files.map(([name, content, mode]) => tarEntry(name, content, mode)),
     Buffer.alloc(1024, 0),
   ]);
 }
 
-function tarEntry(name: string, content: string | Buffer): Buffer {
+function tarEntry(
+  name: string,
+  content: string | Buffer,
+  mode = 0o644,
+): Buffer {
   const data = Buffer.isBuffer(content)
     ? content
     : Buffer.from(content, 'utf8');
   const header = Buffer.alloc(512, 0);
   header.write(name, 0, 100, 'utf8');
-  header.write('0000644\0', 100, 8, 'utf8');
+  header.write(`${mode.toString(8).padStart(7, '0')}\0`, 100, 8, 'utf8');
   header.write('0000000\0', 108, 8, 'utf8');
   header.write('0000000\0', 116, 8, 'utf8');
   header.write(

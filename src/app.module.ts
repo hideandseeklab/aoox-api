@@ -26,6 +26,7 @@ import { MonitoringModule } from './modules/monitoring/monitoring.module';
 import { NotificationModule } from './modules/notification/notification.module';
 import { JobModule } from './modules/job/job.module';
 import { MaintenanceModule } from './modules/maintenance/maintenance.module';
+import { DatabaseCompanionModule } from './modules/database-companion/database-companion.module';
 import { ManagedDatabaseModule } from './modules/managed-database/managed-database.module';
 import { PanelDomainModule } from './modules/panel-domain/panel-domain.module';
 import { ProjectModule } from './modules/project/project.module';
@@ -75,6 +76,7 @@ import { VolumeBackupModule } from './modules/volume-backup/volume-backup.module
     GitCredentialModule,
     SecretSourceModule,
     ManagedDatabaseModule,
+    DatabaseCompanionModule,
     BackupDestinationModule,
     DatabaseBackupModule,
   ],

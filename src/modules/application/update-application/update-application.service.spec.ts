@@ -24,9 +24,17 @@ function harness(over: Partial<Application> = {}, activeDeployments = 0) {
     ...over,
   } as unknown as Application;
   const save = jest.fn((a: Application) => Promise.resolve(a));
+  // The runner-owned columns as the database has them right before the save;
+  // tests overwrite this to simulate a deployment finishing mid-request.
+  const dbRow = {
+    status: app.status,
+    currentImage: app.currentImage,
+    imageDigest: app.imageDigest ?? null,
+    imageCheckedAt: app.imageCheckedAt ?? null,
+  };
   const applications = {
     findOwnedOrFail: jest.fn().mockResolvedValue(app),
-    repo: { save },
+    repo: { save, findOne: jest.fn(() => Promise.resolve({ ...dbRow })) },
     deployments: { count: jest.fn().mockResolvedValue(activeDeployments) },
   };
   const runner = {
@@ -45,7 +53,7 @@ function harness(over: Partial<Application> = {}, activeDeployments = 0) {
     { isActive: jest.fn().mockResolvedValue(true) } as never,
     hostPorts as never,
   );
-  return { svc, app, runner, hostPorts, save, applications };
+  return { svc, app, runner, hostPorts, save, applications, dbRow };
 }
 
 const update = (h: ReturnType<typeof harness>, hostPort: number | null) =>
@@ -113,6 +121,24 @@ describe('UpdateApplicationService host port', () => {
     const h = harness({}, 1);
     await h.svc.execute('owner', 'app-1', { name: 'New' }, 'me@x.y');
     expect(h.save).toHaveBeenCalled();
+  });
+
+  it('does not revert what a deployment recorded while the request was in flight', async () => {
+    const h = harness({ status: 'running', currentImage: 'img:old' });
+    h.dbRow.currentImage = 'img:new';
+    h.dbRow.imageDigest = 'sha256:new';
+    await h.svc.execute('owner', 'app-1', { name: 'New' }, 'me@x.y');
+    const written = h.save.mock.calls[0][0];
+    expect(written.name).toBe('New');
+    expect(written.currentImage).toBe('img:new');
+    expect(written.imageDigest).toBe('sha256:new');
+  });
+
+  it('still resets the digest baseline when imageRef changes', async () => {
+    const h = harness({ imageDigest: 'sha256:old' });
+    h.dbRow.imageDigest = 'sha256:old';
+    await h.svc.execute('owner', 'app-1', { imageRef: 'nginx:1' }, 'me@x.y');
+    expect(h.save.mock.calls[0][0].imageDigest).toBeNull();
   });
 
   it('restores the previous port (db + daemon) and reports a clear 409 when applying fails', async () => {

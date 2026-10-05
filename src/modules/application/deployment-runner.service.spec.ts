@@ -23,6 +23,9 @@ const nixpacksBuild = jest
   .fn<Promise<void>, unknown[]>()
   .mockResolvedValue(undefined);
 
+/** Proxy double: records the domains each container's labels are built from. */
+const labelsFor = jest.fn().mockReturnValue({});
+
 /** Env resolution double: records the options so previews can be checked. */
 const envResolve = jest
   .fn<
@@ -68,8 +71,25 @@ describe('DeploymentRunnerService', () => {
     findWithPassword: jest.fn().mockResolvedValue({ password: 'pw' }),
   };
   const saved: Deployment[] = [];
+  /** The application row as the database has it (what a PATCH edits). */
+  let dbRow: Record<string, unknown> = {};
   const applications = {
-    repo: { save: jest.fn((a: Application) => Promise.resolve(a)) },
+    repo: {
+      save: jest.fn((a: Application) => Promise.resolve(a)),
+      update: jest.fn(
+        (
+          criteria: string | Record<string, unknown>,
+          patch: Record<string, unknown>,
+        ) => {
+          const where =
+            typeof criteria === 'string' ? { id: criteria } : criteria;
+          if (Object.entries(where).every(([k, v]) => dbRow[k] === v)) {
+            Object.assign(dbRow, patch);
+          }
+          return Promise.resolve();
+        },
+      ),
+    },
     deployments: {
       save: jest.fn((d: Deployment) => {
         saved.push({ ...d });
@@ -126,6 +146,17 @@ describe('DeploymentRunnerService', () => {
   beforeEach(async () => {
     jest.clearAllMocks();
     saved.length = 0;
+    dbRow = {
+      id: 'app1',
+      name: 'Original',
+      healthcheckPath: null,
+      ignoreErrorLogs: false,
+      previewsEnabled: false,
+      imageRef: null,
+      imageDigest: null,
+      status: 'running',
+      currentImage: null,
+    };
     registries.findSelfHosted.mockResolvedValue({
       id: 'r1',
       url: 'localhost:5000',
@@ -177,7 +208,7 @@ describe('DeploymentRunnerService', () => {
               .mockResolvedValue({ username: 'u', token: 'SECRET-TOKEN' }),
           },
         },
-        { provide: ProxyService, useValue: { labelsFor: () => ({}) } },
+        { provide: ProxyService, useValue: { labelsFor } },
         { provide: NixpacksBuilderService, useValue: { build: nixpacksBuild } },
         { provide: StaticSiteBuilderService, useValue: { build: jest.fn() } },
         {
@@ -226,6 +257,92 @@ describe('DeploymentRunnerService', () => {
     });
     expect(a.status).toBe('running');
     expect(a.currentImage).toBe(d.imageRef);
+  });
+
+  describe('concurrent settings change (PATCH while deploying)', () => {
+    /** Simulates PATCH /applications/:id landing while the container is created. */
+    const patchMidDeploy = () =>
+      engine.createContainer.mockImplementationOnce(() => {
+        Object.assign(dbRow, {
+          name: 'Renamed',
+          healthcheckPath: '/health',
+          ignoreErrorLogs: true,
+          previewsEnabled: true,
+        });
+        return Promise.resolve('cid');
+      });
+
+    it('keeps the PATCH and still records status and currentImage on success', async () => {
+      patchMidDeploy();
+      const d = await runAndWait(deployment(), app());
+      expect(d.status).toBe('success');
+      expect(dbRow).toMatchObject({
+        name: 'Renamed',
+        healthcheckPath: '/health',
+        ignoreErrorLogs: true,
+        previewsEnabled: true,
+        status: 'running',
+        currentImage: d.imageRef,
+      });
+      // A whole-entity save would diff the stale copy and revert the PATCH.
+      expect(applications.repo.save).not.toHaveBeenCalled();
+    });
+
+    it('keeps the PATCH when the deployment fails after the container was replaced', async () => {
+      patchMidDeploy();
+      engine.startContainer.mockRejectedValueOnce(new Error('boom'));
+      const d = await runAndWait(deployment(), app());
+      expect(d.status).toBe('failed');
+      expect(dbRow).toMatchObject({ name: 'Renamed', status: 'error' });
+      expect(applications.repo.save).not.toHaveBeenCalled();
+    });
+
+    it('keeps the PATCH on rollback and config deployments', async () => {
+      patchMidDeploy();
+      const d = {
+        ...deployment(),
+        kind: 'rollback',
+        imageRef: 'localhost:5000/p/x:old',
+      } as Deployment;
+      await runAndWait(d, app());
+      expect(d.status).toBe('success');
+      expect(dbRow).toMatchObject({
+        name: 'Renamed',
+        currentImage: 'localhost:5000/p/x:old',
+      });
+      expect(applications.repo.save).not.toHaveBeenCalled();
+    });
+
+    it('records the image digest baseline for an image source', async () => {
+      const digests = (
+        runner as unknown as { digests: { remoteDigest: jest.Mock } }
+      ).digests;
+      digests.remoteDigest = jest.fn().mockResolvedValue('sha256:abc');
+      dbRow.imageRef = 'nginx:alpine';
+      const a = { ...app(), sourceType: 'image', imageRef: 'nginx:alpine' };
+      await runAndWait(deployment(), a as unknown as Application);
+      expect(dbRow).toMatchObject({
+        imageDigest: 'sha256:abc',
+        currentImage: 'nginx:alpine',
+      });
+    });
+
+    it('does not write a digest baseline over an imageRef changed meanwhile', async () => {
+      const digests = (
+        runner as unknown as { digests: { remoteDigest: jest.Mock } }
+      ).digests;
+      digests.remoteDigest = jest.fn().mockImplementation(() => {
+        // PATCH changed the reference (and reset the digest) during the pull.
+        Object.assign(dbRow, { imageRef: 'nginx:1.27', imageDigest: null });
+        return Promise.resolve('sha256:old');
+      });
+      dbRow.imageRef = 'nginx:alpine';
+      const a = { ...app(), sourceType: 'image', imageRef: 'nginx:alpine' };
+      const d = await runAndWait(deployment(), a as unknown as Application);
+      expect(d.status).toBe('success');
+      expect(dbRow.imageDigest).toBeNull();
+      expect(dbRow.imageRef).toBe('nginx:1.27');
+    });
   });
 
   it('fails without a self-hosted registry and keeps the app status', async () => {
@@ -396,6 +513,25 @@ describe('DeploymentRunnerService', () => {
         secretSource: false,
       });
     });
+  });
+
+  it('tells the proxy which domains serve an uploaded certificate (so they never ask ACME)', async () => {
+    applications.domains.find.mockResolvedValueOnce([
+      { host: 'a.example.com', https: true, certificateId: 'cert-1' },
+      { host: 'b.example.com', https: true, certificateId: null },
+      { host: 'c.example.com', https: false, certificateId: null },
+    ]);
+    await runAndWait(deployment(), app());
+    expect(labelsFor).toHaveBeenLastCalledWith(
+      expect.any(String),
+      expect.any(Number),
+      [
+        { host: 'a.example.com', https: true, customCert: true },
+        { host: 'b.example.com', https: true, customCert: false },
+        { host: 'c.example.com', https: false, customCert: false },
+      ],
+      undefined, // the proxy double has no settings; the real service passes them
+    );
   });
 
   it('rolls back by re-running an earlier image without building or pushing', async () => {

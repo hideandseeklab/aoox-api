@@ -72,13 +72,19 @@ export interface ContainerInspect {
       Log?: { ExitCode: number; Output: string }[];
     };
   };
-  Config: { Image: string; Labels?: Record<string, string>; Env?: string[] };
+  Config: {
+    Image: string;
+    Labels?: Record<string, string>;
+    Env?: string[];
+    Cmd?: string[] | null;
+  };
   /** Requested publishing — unlike `NetworkSettings.Ports`, still present while stopped. */
   HostConfig?: {
     PortBindings?: Record<
       string,
       { HostIp?: string; HostPort: string }[] | null
     >;
+    Binds?: string[] | null;
   };
   NetworkSettings: {
     Ports?: Record<string, { HostIp: string; HostPort: string }[] | null>;

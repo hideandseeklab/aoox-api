@@ -319,8 +319,10 @@ NestJS 11 backend for aoox (self-hosted PaaS).
   `list-deployments` (tanpa logs), `get-deployment` (dengan logs, di-poll web), `stop/start-application`, `application-logs` (log container).
   `list-applications` (`GET /applications?projectId=`) membalas app + `domains: [{host, https}]` (satu query `IN (...)` untuk seluruh daftar, bukan per app) supaya kartu
   halaman detail project bisa menautkan ke app yang berjalan; compose (`serviceDomains`/`servicePorts`) dan database (`hostPort`) sudah ada di row list masing-masing.
-- **Cek tabrakan host port** saat `create`/`update-application` men-set `hostPort`: `HostPortService` (`src/modules/host-port/`, hanya meng-impor entity
-  `Application`/`ManagedDatabase`/`ComposeApp` langsung — bukan module-nya — supaya bisa dipakai `ApplicationModule` **dan** `ComposeModule` tanpa siklus,
+- **Cek tabrakan host port** saat `create`/`update-application` men-set `hostPort` (juga `create-database` dan companion — database selalu di daemon host, jadi dicek terhadap `DockerService`; `update-database` tidak punya
+  `hostPort`; **impor project** punya cek tabel sendiri yang hanya melihat app/database/stack dan menjatuhkan port bentrok dengan warning — tidak melihat companion atau container yang sedang jalan):
+  `HostPortService` (`src/modules/host-port/`, hanya meng-impor entity
+  `Application`/`ManagedDatabase`/`ComposeApp`/`DatabaseCompanion` langsung — bukan module-nya — supaya bisa dipakai `ApplicationModule`, `ComposeModule`, `ManagedDatabaseModule` dan companion tanpa siklus,
   karena `ComposeModule` sudah meng-import `ApplicationModule`). Logika sama dengan `ComposeService.assertHostPortsFree()` (lihat bagian Compose): `applications.host_port`
   lain, `managed_databases.host_port`, `service_ports` compose, dan port yang sedang di-bind container di daemon. App di server remote (`Application.serverId`) mengecek
   container lewat `RemoteDockerService.forServer(serverId)`, bukan daemon lokal — cek tabel tetap global. Saat `update`, container milik app sendiri (`aoox-app-<appName>`,
@@ -343,6 +345,14 @@ NestJS 11 backend for aoox (self-hosted PaaS).
   → `POST /images/{name}/push` dengan `X-Registry-Auth` (base64url **dengan padding**, seperti Go) ke registry lokal
   → hapus container lama → create+start container baru (label `aoox.application`). Image ref: `<registry.url>/<project-slug>/<appName>:<12 char id deployment>`.
   Selalu berakhir `success`/`failed`; gagal build/push tidak menyentuh container yang sedang jalan dan tidak mengubah `status` app.
+  **PATCH saat deploy berjalan**: runner memegang salinan `Application` dari saat di-queue (build bisa bermenit-menit), dan `repo.save(app)` men-diff salinan basi itu terhadap row
+  → mengembalikan diam-diam apa pun yang diubah PATCH di antaranya. Karena itu runner **tidak pernah** `save` seluruh entity: `persistOutcome()` hanya menulis kolom miliknya lewat
+  `repo.update(id, …)` — `status` + `currentImage` (sukses/rollback/config, dan `status` saat gagal setelah container diganti) dan, untuk sumber image, baseline `imageDigest`/`imageCheckedAt`
+  (di-guard `WHERE image_ref = <yang di-pull>` supaya tidak menimpa digest yang di-reset PATCH `imageRef`). Writer background lain (`ImageUpdateWatcherService`, webhook/secret) sudah
+  memakai `update`. Field lain (nama, env, domain, limit, healthcheck, previews, …) yang diubah saat deploy **selamat**, tetapi container deployment itu dibuat dari nilai saat queue —
+  berlaku di deploy berikutnya. 409 tetap hanya untuk `hostPort` dan secret source (salinan basi akan membuat container dengan port/secret lama, dan `applyHostPort` akan balapan).
+  Sisi sebaliknya: `UpdateApplicationService` membaca ulang `status/currentImage/imageDigest/imageCheckedAt` tepat sebelum `save` (`refreshRunnerColumns`) agar deploy yang selesai di
+  tengah request tidak dibatalkan. `stop/start-application` masih `save` entity utuh (jendela sangat sempit, belum diubah).
 - Log realtime: `logs.gateway.ts` (Socket.IO namespace `/logs`, tiket 60 detik dari `create-log-ticket/` = `POST /applications/:id/log-ticket`, scope `logs`, terikat satu aplikasi).
   Event klien `subscribe:deployment(id)` / `subscribe:container(tail)` / `unsubscribe`; server `deployment:log` (`snapshot: true` = teks penuh, selain itu append),
   `deployment:status`, `container:log`, `container:end`. Runner memancarkan chunk lewat `DeploymentEventsService` (EventEmitter in-process + teks live per deployment
@@ -556,6 +566,7 @@ NestJS 11 backend for aoox (self-hosted PaaS).
 - Webhook (`webhook-deploy.service.ts`, `parsePullRequest`): GitHub `X-GitHub-Event: pull_request` (`opened|synchronize|reopened` → upsert, `closed` → destroy; fork = `head.repo.full_name
   ≠ base.repo.full_name`) dan GitLab `merge_request` (`open|update|reopen` / `close|merge`, `source_project_id ≠ target_project_id`). Balasan 200 `result: preview|preview-closed|ignored`.
   Endpoint: `GET /applications/:id/previews`, `DELETE /previews/:id`. Pengiriman dari provider sungguhan belum diuji (disimulasikan dengan curl).
+- **Hapus aplikasi** (`DeleteApplicationService`) memanggil `PreviewService.destroyAll(app)` sebelum container/row app dihapus: tiap preview dihancurkan di daemon app (`forServer(app.serverId)`, juga server remote) lewat `destroy()`; gagal satu preview hanya di-log warning, hapus app tetap lanjut. Cascade FK saja tidak cukup karena hanya menghapus row, bukan container. Build yang masih jalan melihat row hilang (cek `exists` setelah build & setelah start) lalu membuang containernya sendiri.
 
 ## Proxy & Domain
 
@@ -607,6 +618,57 @@ NestJS 11 backend for aoox (self-hosted PaaS).
   dihapus mereset/membuang entrinya (dibersihkan tiap tick lewat daftar domain yang masih ada, supaya tidak bocor memori). Diuji nyata: `one.one.one.one` (resolve publik ke
   1.1.1.1, sengaja bukan IP host ini) → dua tick manual mengirim webhook `dns.issue` persis sekali dengan `status:"mismatch"`; tick pertama tidak mengirim apa pun. Menangkap
   penyebabnya lebih awal daripada `certificate-watcher` (yang baru tahu setelah Traefik gagal ACME), dan berlaku juga untuk domain http-only yang tidak pernah menyentuh ACME.
+
+## Sertifikat SSL kustom
+
+- `src/modules/certificate/` — sertifikat TLS yang diunggah operator (CA perusahaan, wildcard beli, Cloudflare Origin CA, jaringan tanpa akses Let's Encrypt) untuk **domain aplikasi**.
+  Tanpa ini TLS hanya dari ACME. Entity `CustomCertificate` (`custom_certificates`: `name` unik, `certificate_pem` = bundel ter-normalisasi leaf dulu lalu chain (publik), `private_key_encrypted`
+  `select:false` AES lewat `secret.util` + `ENCRYPTION_KEY`, `common_name`, `domains` jsonb, `issuer`, `not_before`/`not_after`, `fingerprint` SHA-256 gaya openssl). Platform-level: satu sertifikat
+  (wildcard) boleh dipakai banyak domain. `Domain.certificate_id` nullable, FK **ON DELETE RESTRICT** (migrasi SQL tulis tangan `CustomCertificates`, additive). `CertificateModule` hanya membaca entity
+  `Domain` dan di-import `ApplicationModule`, tidak pernah sebaliknya.
+- **Validasi** (`certificate-material.ts` `parseCertificateMaterial`, pure, jam sebagai parameter, di-unit-test dengan fixture openssl di `certificate.fixtures.ts`): `node:crypto` saja
+  (`X509Certificate`, `createPrivateKey`, `checkPrivateKey`). PEM saja (DER/PFX → 400 dengan petunjuk), maks 64 KB per field dan 10 sertifikat per bundel, tiap blok harus X.509 valid; kunci harus PEM **tidak
+  terenkripsi** (header `ENCRYPTED PRIVATE KEY`/`Proc-Type: 4,ENCRYPTED` → 400 dengan perintah openssl untuk melepas passphrase); kunci harus cocok dengan sertifikat **pertama** (pesan menyebut urutan bila
+  chain ditaruh duluan); belum kedaluwarsa (yang belum berlaku boleh). Teks di sekitar blok PEM dibuang; kunci disimpan PKCS#8. `domains` = DNS SAN, atau CN **hanya bila tidak ada SAN DNS** (klien modern
+  dan Go mengabaikan CN bila ada SAN, jadi mengikuti desain awal "SAN + CN" akan mengizinkan host yang ditolak browser — penyimpangan yang disengaja); tanpa nama sama sekali → 400.
+  `domain-matches.ts` `domainMatches(host, names)` (pure): wildcard hanya `*.example.com` = tepat satu label (`a.example.com` ya, `a.b.example.com` dan apex tidak), tanpa wildcard di TLD atau selain paling kiri.
+- **API** (`/certificates`; kunci tak pernah dikembalikan oleh endpoint mana pun, DTO tanpa PEM juga): `POST` {name, certificate, privateKey} → 201 `CertificateDto {id, name, commonName, domains, issuer,
+  notBefore, notAfter, fingerprint, usedBy, createdAt}` (400 PEM/kunci/kedaluwarsa, 409 nama ganda termasuk balapan lewat unique index), `GET` (semua anggota, untuk dropdown tab Domain) dan `GET /:id`,
+  `PUT /:id` {certificate, privateKey} (ganti isi saat perpanjangan, nama tetap; **semua domain yang memakainya harus tetap tercakup**, kalau tidak 400 menyebut host-nya; lalu sync ke tiap daemon yang
+  memakainya; sync gagal = 502 "tersimpan tapi belum tertulis ke proxy, simpan ulang"), `DELETE /:id` → 204 atau 409 menyebut jumlah dan host. POST/PUT/DELETE `@Roles('owner','admin')`. Audit log:
+  key `privateKey` sudah di-redact oleh regex `privatekey` dan PEM publik terpotong 200 karakter (diuji).
+  Domain: `GET/POST /applications/:id/domains` dan hasil add-domain kini memakai `DomainDto` (`certificateId`, `certificateName` ditambahkan; `AddDomainResult {domain, proxyAutoProvisioned}` tetap);
+  `POST` menerima `certificateId?` (`""`/null = otomatis; hanya dengan `https: true`; harus mencakup host → 400, divalidasi **sebelum** apa pun disimpan); baru `PATCH /applications/:id/domains/:domainId`
+  {certificateId: uuid|null} (wajib ada key-nya; null = kembali ke ACME) = developer+ (PATCH = tulis, viewer 403 lewat `assertAccess`), memanggil `applyRuntimeConfig` seperti add-domain.
+- **Traefik**: `ProxyService.provisionOn` kini selalu menambah `--providers.file.directory=/etc/traefik/dynamic --providers.file.watch=true` dan volume bernama **`aoox_proxy_certs`** (`certs-config.ts`;
+  bertahan antar recreate proxy seperti volume ACME; terdaftar di `orphan-volumes.ts` sebagai volume tetap supaya tak dilaporkan yatim). Label (`buildLabels`, domain `{host, https, customCert?}`): host https
+  dengan sertifikat kustom dapat router `<name>-secure-custom` (websecure, `tls=true`, **tanpa certresolver** — tidak pernah diminta ke ACME) dan **selalu** dialihkan http→https lewat router
+  `<name>-redirect` walau ACME mati (host itu pasti https); host tanpa sertifikat kustom: perilaku lama persis. Runner memetakan `Domain.certificateId` → `customCert` (`replaceContainer`).
+  Sertifikat kedaluwarsa **tidak** jatuh ke ACME: Traefik tetap menyajikan berkas yang ada.
+- **Sinkron per daemon** (`certificate-sync.service.ts` `sync(handle, settings, serverId)` / `syncServer(serverId)` / `syncForCertificate(id)`): set sertifikat = distinct `certificate_id` dari domain aplikasi
+  di daemon itu (`server_id IS NULL` = host, atau `RemoteDockerService.forServer(serverId)` untuk server remote). Menulis ke volume lewat helper busybox yang tidak dijalankan + `putArchive` (pola `mounts.ts`):
+  `<id>-<8 hex pertama fingerprint>.crt` 0644, `.key` **0600** (`certFileNames(id, fingerprint)`; nama hanya dari uuid baris + hex, **nama unik per isi**: mengganti sertifikat menghasilkan pasangan berkas baru di samping yang lama,
+  jadi Traefik — yang memuat ulang di tiap tulis — tidak pernah memasangkan `.crt` baru dengan `.key` lama; dulu nama tetap `<id>.crt/.key` dan log Traefik sempat berisi "private key does not match public key"),
+  `tarFiles` kini menerima mode opsional (diverifikasi dengan `tar` sungguhan), **`certs.yml` terakhir** (`renderCertsYml`, pure) supaya
+  Traefik tak pernah melihat config yang menunjuk berkas yang belum ada; lalu helper sekali-jalan menghapus `*.crt`/`*.key` yang tak dipakai lagi **setelah jeda 5 detik** (hanya bila ada yang usang; supaya Traefik sempat
+  membaca `certs.yml` baru sebelum berkas lama hilang; daftar simpan dan jeda lewat env, tidak diinterpolasi; gagal = warning).
+  Sync gagal di add-domain → baris domain baru dihapus + 502; di PATCH → penugasan lama dikembalikan + 502 (jangan tinggalkan router `-secure-custom` yang menunjuk berkas yang tidak ada; Traefik akan
+  menyajikan sertifikat bawaan self-signed). Restore instance (snapshot DB) **tidak** me-resync volume sertifikat; simpan ulang sertifikatnya (PUT) bila volume hilang.
+  Satu sync sekaligus per daemon (antrian promise). Dipanggil setelah: add-domain dengan sertifikat, PATCH domain (assign/unassign), PUT sertifikat, hapus domain (best effort), hapus aplikasi (best effort).
+  **Provision proxy tidak memanggil sync**: volume tetap ada antar provision dan sync menulis ke volume walau proxy belum ada, jadi proxy yang di-provision belakangan langsung memuatnya (penyimpangan dari
+  "dipanggil saat provision proxy": `ProxyModule` tidak boleh meng-import `CertificateModule`, siklus). Kunci plaintext hanya ada di volume (0600) dan kolom terenkripsi.
+- **Proxy lama**: `ProxyStatus.customCerts` (`GET /proxy`, `GET /servers/:id/proxy`) = container punya provider file **dan** volume (`ProxyService.supportsCustomCerts`, dari `inspectContainer`).
+  Saat sync menemukan sertifikat dipakai tetapi proxy yang **running** belum mendukung, `upgradeToCustomCerts` me-recreate **sekali** dengan pengaturan yang sedang dijalankannya (`settingsOf`: port dan
+  email/staging ACME dibaca balik dari Cmd/PortBindings container, **bukan** env — panel-domain bisa memprovision dengan email lain), volume ACME dipakai ulang jadi sertifikat Let's Encrypt dan route lain
+  utuh; downtime beberapa detik; dilaporkan lewat log (`SyncResult.proxyRecreated`) dan **tidak** lewat respons add-domain (kontraknya tetap). Proxy yang berhenti atau belum ada tidak disentuh
+  (add-domain/PATCH meng-provision yang tidak running seperti biasa). Mengganti isi sertifikat tidak me-recreate proxy ataupun kontainer aplikasi (Traefik memantau direktori).
+- **Kedaluwarsa** (`certificate-expiry-watcher.service.ts` di `CertificateModule`, `@Cron('7 */6 * * *')`): sertifikat **yang dipakai ≥1 domain** dengan sisa ≤ 14 hari atau sudah lewat → notifikasi
+  `certificateFailure` (toggle `on_certificate_failure` yang ada) berisi nama, domain, tanggal, dan petunjuk unggah perpanjangan; maks 1×/24 jam per sertifikat **dan** keadaan (`expiring` → `expired`
+  langsung memberi peringatan lagi); sertifikat tak terpakai tidak diperingatkan (berisik). Cooldown in-memory (restart API bisa mengulang satu peringatan). Tidak ada fallback otomatis ke ACME.
+- Ekspor/impor project **tidak** membawa sertifikat maupun penugasannya (domain ter-impor memakai ACME).
+- **Diuji**: unit (validasi/bundel/kunci terenkripsi/tidak cocok/kedaluwarsa, `domainMatches`, renderer, label, sync dengan handle palsu lokal dan remote, proxy lama, watcher + cooldown, 409 hapus, akses
+  viewer/PATCH, redaksi audit, DTO `""`/null). **Belum diuji nyata** (Docker mati saat dikerjakan): migrasi di Postgres sungguhan, Traefik yang benar-benar menyajikan sertifikat (SNI, wildcard, issuer),
+  Traefik dengan direktori dinamis kosong saat start, pemuatan ulang saat berkas diganti di volume, recreate proxy lama, server remote lewat SSH. Lakukan smoke test dengan sertifikat self-signed sebelum rilis.
 
 ## Notifikasi
 
@@ -952,6 +1014,65 @@ NestJS 11 backend for aoox (self-hosted PaaS).
   `/api/databases/[id]/export` (cookie → Bearer) dan impor lewat server action multipart (`importSqlAction`). Redis/Valkey dan MongoDB tidak punya SQL untuk
   di-ekspor/impor — keduanya ditolak 400 (`dumpScript()`/`importSql()`; pakai backup/restore sebagai gantinya).
 
+## Companion admin database
+
+- `src/modules/database-companion/` — satu container web-admin per managed database (UI Adminer/phpMyAdmin/pgAdmin/Mongo Express/Redis Commander/DbGate), dipasang sekali klik. Entity
+  `DatabaseCompanion` (`database_companions`: `database_id` **unik** + FK cascade, `tool`, `status` creating|running|stopped|error, `error_message`, `host` unik nullable, `https`, `host_port`,
+  `password_encrypted` nullable `select:false` AES lewat `secret.util`+`ENCRYPTION_KEY`); migrasi `DatabaseCompanions` (tulis tangan). Flow: `get-companion` (`GET /databases/:id/companion` → `null` atau
+  `{id,tool,status,errorMessage,host,https,hostPort,url,username,createdAt}`), `companion-options` (`GET .../companion/options` → `{tools:[{id,label,description,usesDatabaseLogin}]}` terfilter engine),
+  `create-companion` (`POST`, 202, throttle 10/menit, body `{tool, host?, https?, hostPort?}`), `companion-credentials` (`GET .../companion/credentials` → `{username,password}`, throttle 30/menit),
+  `delete-companion` (`DELETE`, 204). Redaksi audit-log sudah menutup key `password`/`secret` (body POST memang tidak membawa rahasia).
+- **Katalog** `companion-tools.ts` (murni, di-unit-test): image + tag **dipin**, port web, engine yang didukung, `usesDatabaseLogin`, dan `build(ctx)` → `{env, cmd, files}`. Tag diverifikasi ada di registry
+  (`docker manifest inspect`): `adminer:5.4.2` (8080; mysql/mariadb/postgres), `phpmyadmin:5.2.3` (80; mysql/mariadb), `dpage/pgadmin4:9.18.0` (80; postgres + varian), `mongo-express:1.0.2-20-alpine3.19`
+  (8081; mongodb), `ghcr.io/joeferner/redis-commander:0.9.1` (8081; redis/valkey — Docker Hub hanya punya `latest` 2021, tag versi hanya di GHCR), `dbgate/dbgate:7.3.1-alpine` (3000; semua engine).
+  Antarmuka env dibaca dari dokumentasi/sumber resmi masing-masing (bukan ditebak): Adminer `ADMINER_DEFAULT_SERVER` (hanya mengisi kolom server; driver Postgres dipilih lewat URL `?pgsql=<host>` — `url` Adminer+Postgres
+  memuat query itu), phpMyAdmin `PMA_HOST`/`PMA_PORT` (`PMA_ARBITRARY` tetap mati: form login tidak bisa diarahkan ke host lain), pgAdmin `PGADMIN_DEFAULT_EMAIL`/`PASSWORD` + `servers.json` di-`putArchive`
+  ke `/pgadmin4` sebelum start (tanpa password DB karena `servers.json` tidak punya field itu → pgAdmin menanyakannya saat connect; **server mode tetap aktif**, jangan set `PGADMIN_CONFIG_SERVER_MODE=False` —
+  itu mematikan login; email `admin@example.com` karena pgAdmin menolak domain special-use seperti `.local`), Mongo Express `ME_CONFIG_MONGODB_URL`/`ME_CONFIG_BASICAUTH*`/secret cookie+session
+  turunan dari password (`VCAP_APP_HOST=0.0.0.0`), Redis Commander `REDIS_HOST/PORT/PASSWORD` + `HTTP_USER/HTTP_PASSWORD`, DbGate `CONNECTIONS`/`LABEL_/ENGINE_/SERVER_/PORT_/USER_/PASSWORD_/DATABASE_<id>`
+  (mongo: `URL_<id>`; mariadb memakai plugin mysql) + `LOGIN`/`PASSWORD` (`SHELL_CONNECTION`/`SHELL_SCRIPTING` default mati, tidak disentuh).
+- **Auth, tidak pernah tanpa login**: adminer/phpmyadmin memakai login database sendiri (user mengambil kredensial dari halaman database; tidak ada password yang digenerate, `username`/`password` null);
+  tool lain mendapat password acak 24 alfanumerik yang disimpan terenkripsi, `username` = `admin` (pgAdmin: `admin@example.com`). `build()` melempar bila tool ber-login-generated dipanggil tanpa password.
+  Konsekuensi yang diterima: DbGate/Mongo Express/Redis Commander sudah memuat password database di env container, jadi siapa pun yang tahu login-nya punya akses database penuh — karena itu
+  **`credentials` menolak `viewer` (403)** (beda dari `database-credentials` yang masih terbuka bagi viewer; dicek lewat `ProjectAccessService.roleFor`), sedangkan memasang/menghapus = POST/DELETE sehingga viewer sudah 403
+  lewat aturan request-context. Akses project lewat `ManagedDatabaseService.findOwnedOrFail` (outsider 404). Adminer tetap bisa dicoba ke host lain di jaringan `aoox` bila penggunanya punya kredensialnya
+  (hanya kolom server yang diisi, tidak dikunci) — didokumentasikan, bukan diblokir.
+- **Akses**: minimal salah satu dari `host` (domain; label Traefik lewat `ProxyService.labelsFor(dbadmin-<slug>, port, …)`; proxy lokal di-provision otomatis bila belum `running` — aturan yang sama dengan
+  `add-domain`, ACME tidak diwajibkan; host dicek unik terhadap `domains` **dan** companion lain → 409) atau `hostPort` (`HostPortService.assertFree` → 400; `database_companions` kini ikut dicek
+  `HostPortService`, jadi flow app/compose/companion/**create-database** menolak port yang dipakai companion; `create-database` dulu tidak mengeceknya dan port bentrok baru gagal saat container dibuat, database
+  berakhir `status: error` "port is already allocated"). Tanpa keduanya → 400. **Boleh memakai `host` DAN `hostPort` sekaligus** (keputusan, konsisten dengan aplikasi biasa): `url` memakai domain, port host tetap dipublikasikan
+  (diuji). DB harus `running` (409), satu companion per database (409). Tool/engine tak cocok → 400.
+- **`url`**: domain → `http(s)://<host>[:proxyPort]/`; host port → `http://<PUBLIC_IP atau REGISTRY_PUBLIC_HOST>:<port>/`, **`null`** bila alamat server tidak dikonfigurasi (kosong/`localhost`) — web lalu membangunnya dari
+  `window.location.hostname` + `hostPort` (dan di kasus itu query Adminer+Postgres hilang; user memilih driver PostgreSQL manual).
+- **Container**: `aoox-dbadmin-<db_slug>` (`companion-names.ts`), jaringan `aoox`, `restart unless-stopped`, `logConfig`, **hanya host**. **Tanpa volume** (pgAdmin/DbGate memakai state sementara; konfigurasi datang
+  dari env/`servers.json` tiap dibuat) → `orphan-volumes` tidak terpengaruh dan tidak diubah. **Tanpa overlay `aoox-swarm`**: database selalu ada di bridge `aoox` juga, jadi companion menjangkaunya by name
+  tanpa `connectIfActive`; Traefik provider docker membaca labelnya dari `aoox`. Provisioning detached seperti `provisionInBackground` database: POST membalas 202 `creating`, lalu `running|error` (pesan error di `errorMessage`).
+- **Keputusan label** (`companionLabels()`): `aoox.component=companion` + `aoox.companion=<databaseId>` + `aoox.project` + `composeLabels('dbadmin-<slug>')`. **Tidak** membawa `aoox.database`/`aoox.application`/`aoox.compose`
+  (diuji): `MetricRetentionService.ownersByContainer` hanya mengenali ketiganya, jadi metrik companion tidak masuk riwayat database (tidak dobel); `MonitoringService` tetap men-sampel live 1 jam karena
+  label `aoox.component` ada; `project-resource-usage` menjumlahkannya ke project lewat `aoox.project` (memang memakai sumber daya project itu); `ContainerDownNotifier` hanya melapor component
+  application/database → companion yang mati **diam** (tidak ada notifikasi palsu; statusnya terlihat di GET). Label tidak pernah memuat password.
+- **Status mengikuti kenyataan**: `GET` mencocokkan baris `running|stopped|error` dengan container (`findContainerByName`): hilang → `error` ("no longer exists"), berhenti → `stopped`, jalan → `running`;
+  daemon tak terjangkau → status lama dipertahankan. Tidak ada watcher. **Stop database tidak menyentuh companion** (tetap jalan, hanya tidak bisa konek sampai database dinyalakan; tidak ada re-provision saat start).
+- **Hapus**: `DELETE .../companion` menghapus container lalu row. `ManagedDatabaseService.remove()` menghapus container companion **by name** (try/catch, hanya warning — tidak boleh memblokir delete DB) sebelum
+  container database; row ikut terhapus lewat FK cascade. `DatabaseCompanionModule` tidak di-import `ManagedDatabaseModule` (siklus), makanya lewat nama. Hapus **project** mengikuti perilaku lama (hanya cascade row;
+  container database/app tidak dihapus di jalur itu) — companion sama.
+- Ekspor/impor project **tidak** membawa companion. Diuji unit (katalog, service, host-port) **dan** smoke test nyata di Docker Desktop (mode host port, API sungguhan; satu DB per engine, dihapus sesudahnya):
+  - adminer+MariaDB dan adminer+PostgreSQL: login dengan kredensial DB asli berhasil; URL `?pgsql=<host>` benar-benar memilih driver PostgreSQL (tanpa query, driver default "MySQL / MariaDB").
+  - phpmyadmin+MySQL 8: login DB berhasil; form tidak punya kolom server dan `pma_servername` yang dikirim manual diabaikan (host tetap `PMA_HOST`).
+  - pgadmin+PostgreSQL: login `admin@example.com` + password generated (diuji di browser) berhasil, server dari `servers.json` muncul di pohon dan **meminta password DB** saat connect; setelah diisi terhubung.
+    Login lewat `curl` tidak praktis (form React + CSRF) — uji lewat browser.
+  - mongo-express+MongoDB: **HTTP Basic sungguhan** (401 tanpa/ salah kredensial, 200 dengan), daftar database tampil; `VCAP_APP_HOST=0.0.0.0` membuatnya listen di semua interface.
+  - redis-commander+Redis: **bukan HTTP Basic** — `HTTP_USER`/`HTTP_PASSWORD` mengaktifkan form sign-in (`POST /signin` JSON → bearer JWT); cangkang HTML `/` tetap 200 tanpa login,
+    tetapi seluruh `/apiv2/*` 401 tanpa token, jadi data tak terbaca; setelah sign-in key tampil. Jangan menguji "401 tanpa kredensial" pada `/`.
+  - dbgate+PostgreSQL: form login (`LOGIN`/`PASSWORD`) menjaga UI, koneksi `db` sudah terpasang dan terhubung (PostgreSQL 16). Catatan: saat koneksi pertama dibuka UI sempat menampilkan
+    "Invalid database connection, driver not found" sesaat (balapan pemuatan plugin sisi klien); setelah reload status "Connected". Ada dialog analitik anonim pada login pertama (bawaan DbGate).
+  - Semua: container di network `aoox` saja, label tepat `aoox.component=companion`/`aoox.companion`/`aoox.project`/`com.docker.compose.*` (tanpa `aoox.database`/`aoox.application`), `restart unless-stopped`;
+    `GET .../companion` merekonsiliasi (stop → `stopped`, start lagi → `running`, `docker rm` → `error` "no longer exists"); viewer 403 untuk credentials/POST/DELETE; satu per DB → 409; DB berhenti → 409;
+    tanpa host/hostPort → 400; tool/engine tak cocok → 400; hostPort = port DB → 400; DELETE companion dan DELETE database menghapus container-nya (baris `database_companions` ikut cascade);
+    `GET /projects/:id/resource-usage` menghitung container companion (`containers` bertambah); `metric_samples` milik database tetap `containers = 1` (tidak ada penghitungan ganda);
+    companion yang di-`docker kill` **tidak** menghasilkan notifikasi (kontrol positif: `docker kill` container database → satu notifikasi `container.down`).
+  - **Tidak diuji nyata**: mode domain (butuh proxy), Valkey/Mongo di DbGate, MongoDB tanpa `VCAP_APP_HOST`, Redis Commander di Valkey.
+
 ## Backup database
 
 - `src/modules/database-backup/` — entity `DatabaseBackup` (`database_backups`, FK cascade ke `managed_databases`; `filename` = `<slug>/<ISO stamp>.<ext>`,
@@ -993,13 +1114,18 @@ NestJS 11 backend for aoox (self-hosted PaaS).
 
 - `src/modules/template/` — katalog **statis dalam TypeScript** (`templates/*.ts`, `Template` di `template.types.ts`: id, versi, `variables` `{key,label,default,generate,required,hint}`,
   `services` `{service,port,label}` yang boleh diberi domain, `compose`). Tidak diambil dari URL saat runtime (offline & tidak bisa diganti YAML pihak lain); tidak perlu `assets` nest-cli.
-  Isi (14): wordpress, ghost, n8n, uptime-kuma, minio, gitea, **vaultwarden** (1.37.3), **umami** (`ghcr.io/umami-software/umami:postgresql-v2.20.2` + postgres), **grafana** (13.0.2, SQLite),
+  Isi (15): wordpress, ghost, n8n, uptime-kuma, minio, gitea, **vaultwarden** (1.37.3), **umami** (`ghcr.io/umami-software/umami:postgresql-v2.20.2` + postgres), **grafana** (13.0.2, SQLite),
   **metabase** (v0.63.18.5 + postgres), **directus** (12.4.1 + postgres; variabel bernama `KEY`/`SECRET` memang nama env Directus), **mattermost** (`mattermost-team-edition:11.11.1` + postgres) dan
   **nextcloud** (`32.0.15-apache` + postgres + redis `--requirepass` + service `cron` dengan `entrypoint: /cron.sh`; `PROTOCOL` default https untuk `OVERWRITEPROTOCOL`, http hanya uji lokal).
   **odoo** (`odoo:19.0-20260926` Community + postgres; tag bertanggal karena `19.0` bergeser tiap malam; konfigurasi lewat compose `configs` inline -> `/etc/odoo/odoo.conf`
   karena master password (`admin_passwd`) hanya bisa lewat file config, bukan CLI/env; `proxy_mode`, `workers = 0`, `list_db = True` supaya database pertama bisa dibuat lewat web;
   variabel `MASTER_PASSWORD` di-generate; healthcheck `/web/health`; pengamanan `/web/database/manager` setelahnya = edit compose: `list_db = False` + `dbfilter`; wizard `POST /web/database/create`
   Odoo 19 mewajibkan field `phone`). Diuji: master password yang dihasilkan diterima, yang salah ditolak, login admin, data bertahan setelah recreate.
+  **excalidraw** (`excalidraw/excalidraw`, port 80, tanpa DB/volume/variabel; hanya **klien statis** nginx — kolaborasi langsung butuh server terpisah `excalidraw-room`, belum ada, tahap 2).
+  Docker Hub **tidak punya tag versi** untuk image ini (hanya `latest` bergulir + `sha-*` 2021 yang basi), jadi di-pin ke digest manifest-list: `latest@sha256:f7ee194a…` (spec tag eksplisit lolos
+  karena regex menerima `:<digest>`; Docker memakai digest). Naikkan digest secara manual untuk update. Healthcheck tidak ditambahkan: Dockerfile upstream sudah punya `HEALTHCHECK` wget (nginx alpine).
+  **Diuji nyata**: `POST /compose-apps/from-template` dengan `servicePorts` host port → deploy sukses, HTTP 200 (`<title>Excalidraw Whiteboard`), container memakai referensi digest ter-pin,
+  `HEALTHCHECK` bawaan image (`wget -q -O /dev/null http://localhost`) mencapai `healthy`, hapus stack membersihkan container/network (tanpa volume).
   Konvensi template baru: tag image versi tertentu (spec menjaga tiap image punya tag eksplisit), DB memakai `healthcheck` `pg_isready` + `depends_on: condition: service_healthy`, volume bernama,
   logo simple-icons. Semua diuji nyata lewat `POST /compose-apps/from-template` di belakang proxy lokal (endpoint health/status menjawab 200; login Directus; data Grafana/Umami selamat dari recreate
   container; Nextcloud memakai pgsql+Redis). Catatan: `/server/health` Directus 403 tanpa token — pakai `/server/ping`. `GET /templates` (semua member).

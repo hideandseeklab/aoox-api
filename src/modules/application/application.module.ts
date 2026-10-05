@@ -4,6 +4,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuthModule } from '../auth/auth.module';
 import { DockerModule } from '../docker/docker.module';
 import { GitCredentialModule } from '../git-credential/git-credential.module';
+import { CertificateModule } from '../certificate/certificate.module';
 import { SecretSourceModule } from '../secret-source/secret-source.module';
 import { SecretSourceAppController } from './secret-source/secret-source-app.controller';
 import { SecretSourceAppService } from './secret-source/secret-source-app.service';
@@ -25,6 +26,8 @@ import { AddDomainService } from './add-domain/add-domain.service';
 import { CheckDomainDnsController } from './check-domain-dns/check-domain-dns.controller';
 import { CheckDomainDnsService } from './check-domain-dns/check-domain-dns.service';
 import { DeleteDomainController } from './delete-domain/delete-domain.controller';
+import { UpdateDomainController } from './update-domain/update-domain.controller';
+import { UpdateDomainService } from './update-domain/update-domain.service';
 import { ListDomainsController } from './list-domains/list-domains.controller';
 import { Domain } from './domain.entity';
 import { Mount } from './mount.entity';
@@ -104,6 +107,7 @@ import { UpdateApplicationService } from './update-application/update-applicatio
     DockerModule,
     GitCredentialModule,
     SecretSourceModule,
+    CertificateModule,
     ProjectModule,
     RegistryModule,
     ProxyModule,
@@ -136,6 +140,7 @@ import { UpdateApplicationService } from './update-application/update-applicatio
     DeleteMountController,
     ListDomainsController,
     DeleteDomainController,
+    UpdateDomainController,
     CheckDomainDnsController,
     CreateLogTicketController,
     CreateConsoleTicketController,
@@ -164,6 +169,7 @@ import { UpdateApplicationService } from './update-application/update-applicatio
     StartApplicationService,
     ApplicationLogsService,
     AddDomainService,
+    UpdateDomainService,
     AddMountService,
     CreateLogTicketService,
     CreateConsoleTicketService,

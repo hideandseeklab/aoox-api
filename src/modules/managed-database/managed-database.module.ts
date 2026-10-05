@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Mount } from '../application/mount.entity';
 import { DockerModule } from '../docker/docker.module';
+import { HostPortModule } from '../host-port/host-port.module';
 import { MonitoringModule } from '../monitoring/monitoring.module';
 import { SwarmModule } from '../swarm/swarm.module';
 import { ProjectModule } from '../project/project.module';
@@ -30,6 +31,7 @@ import { StopDatabaseController } from './stop-database/stop-database.controller
   imports: [
     TypeOrmModule.forFeature([ManagedDatabase, Mount, QueryHistoryEntry]),
     DockerModule,
+    HostPortModule,
     ProjectModule,
     MonitoringModule,
     SwarmModule,

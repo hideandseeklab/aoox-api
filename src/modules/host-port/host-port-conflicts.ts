@@ -22,6 +22,8 @@ export interface HostPortConflictData {
   dbs: HostPortDbRow[];
   stacks: HostPortStackRow[];
   containers: ContainerSummary[];
+  /** Database admin apps (database_companions) publishing a host port; `name` is the database's. */
+  companions?: HostPortDbRow[];
 }
 
 export interface HostPortConflictOptions {
@@ -58,6 +60,10 @@ export function hostPortConflicts(
   }
   for (const d of data.dbs) {
     if (seen.has(d.hostPort)) taken.add(`${d.hostPort} (database ${d.name})`);
+  }
+  for (const c of data.companions ?? []) {
+    if (seen.has(c.hostPort))
+      taken.add(`${c.hostPort} (admin database ${c.name})`);
   }
   for (const s of data.stacks) {
     if (s.id === options.excludeComposeAppId) continue;

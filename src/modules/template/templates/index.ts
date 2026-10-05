@@ -1,5 +1,6 @@
 import { Template } from '../template.types';
 import { directus } from './directus';
+import { excalidraw } from './excalidraw';
 import { ghost } from './ghost';
 import { gitea } from './gitea';
 import { grafana } from './grafana';
@@ -30,4 +31,5 @@ export const TEMPLATES: readonly Template[] = [
   mattermost,
   nextcloud,
   odoo,
+  excalidraw,
 ];

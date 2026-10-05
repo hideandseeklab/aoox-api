@@ -11,6 +11,7 @@ import { composeVolumeFor } from '../compose/compose.service';
 import { BACKUPS_VOLUME } from '../database-backup/backups-volume';
 import { ManagedDatabase } from '../managed-database/managed-database.entity';
 import { volumeNameForDb } from '../managed-database/managed-database.service';
+import { PROXY_CERTS_VOLUME } from '../certificate/certs-config';
 import { PROXY_ACME_VOLUME } from '../proxy/proxy.service';
 import {
   REGISTRY_AUTH_VOLUME,
@@ -24,6 +25,7 @@ import {
 const FIXED_VOLUMES = [
   BUILDKIT_VOLUME,
   PROXY_ACME_VOLUME,
+  PROXY_CERTS_VOLUME,
   REGISTRY_DATA_VOLUME,
   REGISTRY_AUTH_VOLUME,
   BACKUPS_VOLUME,
