@@ -22,5 +22,6 @@ import { RunCleanupController } from './run-cleanup/run-cleanup.controller';
   ],
   controllers: [DiskUsageController, RunCleanupController],
   providers: [MaintenanceService],
+  exports: [MaintenanceService],
 })
 export class MaintenanceModule {}

@@ -8,6 +8,52 @@ Versions below 1.0.0 may include breaking changes in a minor release.
 
 ## [Unreleased]
 
+### Added
+
+- **Docker manager API** (`/docker/*`, `?serverId=` picks the host or a remote server): lists containers (no env vars in the answer), images
+  (with how many containers use each), volumes (sizes from one `system/df`, orphan marker for aoox's own volumes on the host) and networks;
+  owner/admin can read them and tail a container's logs (one shot, at most 500 lines). The owner can start, stop, restart and remove
+  containers aoox does not own, remove unused images and prune dangling ones. aoox's own containers (panel stack, proxy, registry, builders,
+  applications, databases, companions, stacks, anything named `aoox-`/`aoox_`) and this API's own container are refused with 403 before
+  the daemon is touched, whether addressed by name or id; used images and aoox helper/panel images are refused with 409, and so are images the database
+  still needs (an application's current image, a deployment kept for rollback, an open preview) and anything under aoox's own local registry. Every write is audit-logged.
+- `POST /terminal/authorize` (owner only, 5/min, audit-logged) authorizes the terminal's generated SSH key on the Docker host for
+  `TERMINAL_SSH_USER` in one click, replacing the manual `echo '<key>' >> ~/.ssh/authorized_keys`. It reads the account from the host's
+  passwd file and appends only the public key with two throwaway helper containers (nothing user-controlled in a command string),
+  is idempotent, then tests an SSH login and reports `verified`. `GET /terminal/status` gains `canAutoAuthorize`. Remote servers,
+  explicit keys/passwords and the local shell stay manual.
+
+- **Traefik dynamic configuration editor** (`/proxy/config`, owner writes, owner/admin read; `?serverId=` picks the aoox host or a remote
+  server). Operator-written YAML files (`http` with `middlewares`, `routers`, `services`, `serversTransports`; `tls`/`tcp`/`udp` and unknown
+  keys are refused, max 64 KB, names `[a-z0-9-]` unique per proxy) are stored in the database (`proxy_config_files`) and written to the proxy
+  volume as `user-<name>.yml` through the same helper-container mechanism as custom certificates; the sweep only ever matches `user-*.yml`, so
+  `certs.yml` and certificate files are never touched (and certificate sync never touches `user-` files). After writing, the API reads
+  Traefik's log: an error about the file restores the previous content (database and volume) and answers 400 with Traefik's own message;
+  a stopped or missing proxy only gives a warning. A proxy from an older aoox is recreated once to load the directory, and the API asks for
+  consent first (`409 proxy-restart-required`, then `acceptProxyRestart: true`; `GET /proxy/config/status` tells the web beforehand).
+  `POST /proxy/config/sync` writes everything again. `GET /proxy/config/presets` and `POST /proxy/config/presets/:preset` build YAML for basic
+  auth (bcrypt hash only, the password is redacted in the audit log), security headers, rate limit, IP allowlist and www redirect.
+  New dependency: `js-yaml` (CJS).
+- **Per-domain middlewares.** `PATCH /applications/:id/domains/:domainId` takes `middlewares` (`name@file`, in order; both `certificateId` and
+  `middlewares` are now optional, at least one is required) and domains answer with `middlewares`. Traefik labels give each distinct list its
+  own router (`-m<hash>` suffix; domains without middlewares keep exactly the labels they had), on the https routers and the plain-http routers,
+  never the redirect router. Names must exist in an enabled file on the application's proxy (400); disabling, deleting or rewriting away a
+  middleware a domain uses is a 409 naming the domain. `GET /applications/:id/domain-middlewares` lists the choices for any project member.
+
+### Changed
+
+- Moving an application to another server (`PATCH /applications/:id` with a new `serverId`) now cleans the middlewares of its domains: only names defined by an enabled dynamic config file on the destination proxy are kept, the rest are dropped before the labels are rebuilt, with a warning per domain in the log. The answer gains `droppedMiddlewares: [{domain, names}]` only when something was dropped. Project export/import behavior is unchanged (files and domain middlewares are not exported; an import of a file that carries them still succeeds).
+
+- The web terminal's "SSH authentication failed" message now says which account to run the authorize command as
+  and, when the login is `root`, that sshd on cloud servers (Ubuntu and similar) often refuses root login
+  (`PermitRootLogin`) — set the user under Infrastructure > Environment and run the command as that user instead.
+  `GET /terminal/status` gains an additive `authorizeNote` with the same advice. The one-line authorize command and
+  the socket `error` event shape are unchanged.
+
+### Fixed
+
+- Moving an application to another server (`PATCH /applications/:id` with a new `serverId`) now carries its custom SSL certificates along: when a domain of the application uses one, the certificate files are written to the destination proxy (host or remote) first and the files nothing uses any more are swept from the old one, through the existing per-daemon certificate sync. Before, such an https domain served Traefik's self-signed default on the new server until the domain or certificate was saved again. If writing to the destination fails the move still stands and the answer gains `certificateSyncError` (only then) suggesting to save the domain or certificate again; a failed cleanup on the old server is only logged.
+
 ## [0.1.0-alpha.6] - 2026-10-05
 
 ### Added

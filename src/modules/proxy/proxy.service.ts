@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { createHash } from 'node:crypto';
 import { ConfigService } from '@nestjs/config';
 import {
   PROXY_CERTS_DIR,
@@ -9,6 +10,7 @@ import {
   DockerHandle,
   DockerService,
 } from '../docker/docker.service';
+import { MIDDLEWARE_REF } from './middleware-ref';
 
 /**
  * Traefik reverse proxy managed by aoox: routes domains to application
@@ -29,6 +31,12 @@ export interface RoutedDomain {
   host: string;
   https: boolean;
   customCert?: boolean;
+  /**
+   * `name@file` middlewares (from the operator dynamic config files) in front
+   * of this host, applied in this order. Entries that are not `name@file`
+   * are dropped so nothing else can reach a label value.
+   */
+  middlewares?: string[];
 }
 
 export interface ProxyStatus {
@@ -54,6 +62,44 @@ export interface ProxySettings {
   httpsPort: number;
   acmeEmail: string | null;
   acmeStaging: boolean;
+}
+
+/** Valid middleware refs of a domain, in order, without repeats. */
+function middlewaresOf(d: RoutedDomain): string[] {
+  return [...new Set(d.middlewares ?? [])].filter((m) =>
+    MIDDLEWARE_REF.test(m),
+  );
+}
+
+/**
+ * Hosts grouped by their middleware list: Traefik attaches middlewares to a
+ * router, and one router serves several hosts, so each distinct list gets its
+ * own router. The group without middlewares keeps the plain router name (so
+ * labels of domains without middlewares are exactly what they always were);
+ * the others get `-m<hash of the list>`, stable whatever the other domains are.
+ */
+function byMiddlewares(
+  domains: RoutedDomain[],
+): Array<{ suffix: string; middlewares: string[]; hosts: string[] }> {
+  const groups = new Map<
+    string,
+    { suffix: string; middlewares: string[]; hosts: string[] }
+  >();
+  for (const d of domains) {
+    const middlewares = middlewaresOf(d);
+    const key = middlewares.join(',');
+    let g = groups.get(key);
+    if (!g) {
+      const suffix =
+        key === ''
+          ? ''
+          : `-m${createHash('sha1').update(key).digest('hex').slice(0, 8)}`;
+      g = { suffix, middlewares, hosts: [] };
+      groups.set(key, g);
+    }
+    g.hosts.push(d.host);
+  }
+  return [...groups.values()];
 }
 
 @Injectable()
@@ -302,6 +348,10 @@ export class ProxyService {
    * on plain http like before. https hosts with an uploaded certificate
    * (`customCert`) get `<name>-secure-custom` (websecure, `tls=true`, no
    * resolver) and are always redirected from http, ACME or not.
+   * Operator middlewares (`middlewares`, `name@file`) go on the routers that
+   * serve the host: the https routers, and the plain-http router for hosts
+   * that are served over http (never the redirect router, which only sends
+   * the browser to https and keeps its own `-https` middleware).
    */
   static buildLabels(
     routerName: string,
@@ -334,10 +384,17 @@ export class ProxyService {
       [`traefik.http.services.${routerName}.loadbalancer.server.port`]:
         String(port),
     };
-    if (plain.length > 0) {
-      labels[`traefik.http.routers.${routerName}.rule`] = rule(plain);
-      labels[`traefik.http.routers.${routerName}.entrypoints`] = 'web';
-      labels[`traefik.http.routers.${routerName}.service`] = routerName;
+    for (const g of byMiddlewares(
+      domains.filter((d) => plain.includes(d.host)),
+    )) {
+      const name = `${routerName}${g.suffix}`;
+      labels[`traefik.http.routers.${name}.rule`] = rule(g.hosts);
+      labels[`traefik.http.routers.${name}.entrypoints`] = 'web';
+      labels[`traefik.http.routers.${name}.service`] = routerName;
+      if (g.middlewares.length > 0) {
+        labels[`traefik.http.routers.${name}.middlewares`] =
+          g.middlewares.join(',');
+      }
     }
     if (redirect) {
       const name = `${routerName}-redirect`;
@@ -354,22 +411,34 @@ export class ProxyService {
         opts.httpsPort,
       );
     }
-    if (secure.length > 0) {
-      const name = `${routerName}-secure`;
-      labels[`traefik.http.routers.${name}.rule`] = rule(secure);
+    for (const g of byMiddlewares(
+      domains.filter((d) => d.https && !d.customCert),
+    )) {
+      const name = `${routerName}-secure${g.suffix}`;
+      labels[`traefik.http.routers.${name}.rule`] = rule(g.hosts);
       labels[`traefik.http.routers.${name}.entrypoints`] = 'websecure';
       labels[`traefik.http.routers.${name}.service`] = routerName;
       labels[`traefik.http.routers.${name}.tls`] = 'true';
       labels[`traefik.http.routers.${name}.tls.certresolver`] = CERT_RESOLVER;
+      if (g.middlewares.length > 0) {
+        labels[`traefik.http.routers.${name}.middlewares`] =
+          g.middlewares.join(',');
+      }
     }
-    if (custom.length > 0) {
+    for (const g of byMiddlewares(
+      domains.filter((d) => d.https && d.customCert),
+    )) {
       // `tls=true` and no resolver: Traefik picks the uploaded certificate
       // from the file provider by SNI; nothing is ever requested from ACME.
-      const name = `${routerName}-secure-custom`;
-      labels[`traefik.http.routers.${name}.rule`] = rule(custom);
+      const name = `${routerName}-secure-custom${g.suffix}`;
+      labels[`traefik.http.routers.${name}.rule`] = rule(g.hosts);
       labels[`traefik.http.routers.${name}.entrypoints`] = 'websecure';
       labels[`traefik.http.routers.${name}.service`] = routerName;
       labels[`traefik.http.routers.${name}.tls`] = 'true';
+      if (g.middlewares.length > 0) {
+        labels[`traefik.http.routers.${name}.middlewares`] =
+          g.middlewares.join(',');
+      }
     }
     return labels;
   }

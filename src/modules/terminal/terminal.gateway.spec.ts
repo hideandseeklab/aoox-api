@@ -92,6 +92,7 @@ describe('TerminalGateway authentication', () => {
     backend.mode = 'ssh';
     backend.authHint.mockResolvedValue({
       where: 'root@host.docker.internal',
+      username: 'root',
       command: "echo 'ssh-ed25519 KEY' >> ~/.ssh/authorized_keys",
     });
     backend.open.mockRejectedValueOnce(
@@ -109,7 +110,34 @@ describe('TerminalGateway authentication', () => {
     expect(message).toContain(
       "echo 'ssh-ed25519 KEY' >> ~/.ssh/authorized_keys",
     );
+    expect(message).toContain('as root');
+    expect(message).toContain('PermitRootLogin');
+    expect(message).toContain('Infrastructure > Environment');
+    // Still the same event shape: (error, message, hint) — only the text grew.
+    expect(client.emit.mock.calls[0]).toEqual([
+      'error',
+      expect.any(String),
+      'environment',
+    ]);
     expect(client.disconnect).toHaveBeenCalled();
+    backend.mode = 'local';
+  });
+
+  it('does not repeat the root caveat when the login is not root', async () => {
+    backend.mode = 'ssh';
+    backend.authHint.mockResolvedValue({
+      where: 'ubuntu@host.docker.internal',
+      username: 'ubuntu',
+      command: "echo 'ssh-ed25519 KEY' >> ~/.ssh/authorized_keys",
+    });
+    backend.open.mockRejectedValueOnce(
+      Object.assign(new Error('nope'), { level: 'client-authentication' }),
+    );
+    const client = fakeClient({ ticket: ticket() });
+    await gateway.handleConnection(client as never);
+    const [, message] = client.emit.mock.calls[0] as [string, string];
+    expect(message).toContain('as ubuntu');
+    expect(message).not.toContain('PermitRootLogin');
     backend.mode = 'local';
   });
 

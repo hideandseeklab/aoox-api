@@ -2,14 +2,18 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
 } from '@nestjs/common';
 import { In } from 'typeorm';
+import { CertificateSyncService } from '../../certificate/certificate-sync.service';
 import { limitsRemoved, resourceLimits } from '../../docker/resource-limits';
 import { HostPortService } from '../../host-port/host-port.service';
+import { ProxyConfigService } from '../../proxy-config/proxy-config.service';
 import { RemoteDockerService } from '../../server/remote-docker.service';
 import { ServerService } from '../../server/server.service';
 import { GitCredentialService } from '../../git-credential/git-credential.service';
 import { Application } from '../application.entity';
+import { Domain } from '../domain.entity';
 import { SwarmService } from '../../swarm/swarm.service';
 import { ApplicationService, containerNameFor } from '../application.service';
 import { DeploymentRunnerService } from '../deployment-runner.service';
@@ -18,12 +22,20 @@ import { isOwnContainer } from '../own-container';
 import { normalizeRootDirectory } from '../root-directory';
 import { UpdateApplicationDto } from './update-application.dto';
 
+/** Middlewares removed from a domain because the new proxy does not define them. */
+export interface DroppedMiddlewares {
+  domain: string;
+  names: string[];
+}
+
 /**
  * Settings. Most take effect on the next deployment; the host port, domains
  * and resource limits are applied to the running app right away.
  */
 @Injectable()
 export class UpdateApplicationService {
+  private readonly logger = new Logger(UpdateApplicationService.name);
+
   constructor(
     private readonly applications: ApplicationService,
     private readonly credentials: GitCredentialService,
@@ -33,6 +45,8 @@ export class UpdateApplicationService {
     private readonly runner: DeploymentRunnerService,
     private readonly swarm: SwarmService,
     private readonly hostPorts: HostPortService,
+    private readonly proxyConfig: ProxyConfigService,
+    private readonly certSync: CertificateSyncService,
   ) {}
 
   async execute(
@@ -40,7 +54,12 @@ export class UpdateApplicationService {
     id: string,
     dto: UpdateApplicationDto,
     actorEmail: string,
-  ): Promise<Application> {
+  ): Promise<
+    Application & {
+      droppedMiddlewares?: DroppedMiddlewares[];
+      certificateSyncError?: string;
+    }
+  > {
     const app = await this.applications.findOwnedOrFail(id, ownerId);
     const hostPortBefore = app.hostPort;
     const serverIdBefore = app.serverId;
@@ -188,6 +207,26 @@ export class UpdateApplicationService {
     }
     await this.refreshRunnerColumns(app, digestReset);
     const saved = await this.applications.repo.save(app);
+    // Moved to another proxy: middlewares of its domains that the new proxy does
+    // not define would leave routers pointing at nothing. Cleaned before any
+    // path below recreates the container (labels) or the next deploy does.
+    if (saved.serverId !== serverIdBefore) {
+      const rows = await this.applications.domains.find({
+        where: { applicationId: saved.id },
+      });
+      const dropped = await this.pruneDomainMiddlewares(saved, rows);
+      // Additive and only when something was dropped: the answer keeps its shape otherwise.
+      if (dropped.length > 0) {
+        Object.assign(saved, { droppedMiddlewares: dropped });
+      }
+      // Custom certificates follow the app: written on the new daemon, swept on the old.
+      const certError = await this.moveCertificates(
+        saved,
+        rows,
+        serverIdBefore,
+      );
+      if (certError) Object.assign(saved, { certificateSyncError: certError });
+    }
     // Mode or replica changes are applied by re-deploying the current image
     // (service <-> container swap, or a scale of the running service).
     if (
@@ -219,6 +258,74 @@ export class UpdateApplicationService {
       else await this.applyLimits(saved);
     }
     return saved;
+  }
+
+  /**
+   * Keeps, for every domain of the app, only the middlewares that an ENABLED
+   * dynamic config file on the app's (new) proxy defines; the rest is dropped
+   * and logged per domain. Certificates are handled by `moveCertificates`.
+   */
+  private async pruneDomainMiddlewares(
+    app: Application,
+    rows: Domain[],
+  ): Promise<DroppedMiddlewares[]> {
+    const withMiddlewares = rows.filter(
+      (d) => (d.middlewares ?? []).length > 0,
+    );
+    if (withMiddlewares.length === 0) return [];
+    const known = new Set(
+      (await this.proxyConfig.availableMiddlewares(app.serverId)).map(
+        (m) => m.ref,
+      ),
+    );
+    const dropped: DroppedMiddlewares[] = [];
+    for (const d of withMiddlewares) {
+      const kept = d.middlewares.filter((m) => known.has(m));
+      const gone = d.middlewares.filter((m) => !known.has(m));
+      if (gone.length === 0) continue;
+      d.middlewares = kept;
+      await this.applications.domains.save(d);
+      this.logger.warn(
+        `Application ${app.appName} moved proxy: dropped middlewares ${gone.join(', ')} from ${d.host} (not defined on the new proxy)`,
+      );
+      dropped.push({ domain: d.host, names: gone });
+    }
+    return dropped;
+  }
+
+  /**
+   * After a server move, a domain that uses a custom certificate needs the
+   * certificate files in the NEW daemon's proxy volume (otherwise Traefik
+   * serves its self-signed default there) and the old daemon should drop the
+   * ones nothing uses any more. Goes through `CertificateSyncService`, which
+   * serializes writes per daemon (and may recreate an old proxy once, as for
+   * any certificate). Returns an error message only when the DESTINATION sync
+   * failed — the move itself stands; the origin sweep is best effort.
+   */
+  private async moveCertificates(
+    app: Application,
+    rows: Domain[],
+    fromServerId: string | null,
+  ): Promise<string | null> {
+    if (!rows.some((d) => d.certificateId)) return null;
+    let error: string | null = null;
+    try {
+      await this.certSync.syncServer(app.serverId);
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      this.logger.warn(
+        `Application ${app.appName} moved server: certificate sync to the new server failed: ${reason}`,
+      );
+      error = `The application moved, but its certificate files could not be written to the new server (${reason}). Save the domain or the certificate again to retry.`;
+    }
+    try {
+      await this.certSync.syncServer(fromServerId);
+    } catch (err) {
+      this.logger.warn(
+        `Application ${app.appName} moved server: certificate cleanup on the old server failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    return error;
   }
 
   /**

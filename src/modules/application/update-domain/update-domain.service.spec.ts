@@ -54,6 +54,9 @@ function make(
       return Promise.resolve({ certificates: 1, proxyRecreated: false });
     }),
   };
+  const proxyConfig = {
+    assertMiddlewaresExist: jest.fn().mockResolvedValue(undefined),
+  };
   const svc = new UpdateDomainService(
     {
       findOwnedOrFail: jest.fn().mockResolvedValue(app),
@@ -72,8 +75,19 @@ function make(
     } as never,
     certs as never,
     certSync as never,
+    proxyConfig as never,
   );
-  return { svc, domainsRepo, runner, proxy, certs, certSync, events, handle };
+  return {
+    svc,
+    domainsRepo,
+    runner,
+    proxy,
+    certs,
+    certSync,
+    proxyConfig,
+    events,
+    handle,
+  };
 }
 
 const row = (extra: Record<string, unknown> = {}) => ({
@@ -83,6 +97,7 @@ const row = (extra: Record<string, unknown> = {}) => ({
   https: true,
   certificateId: null,
   certificate: null,
+  middlewares: [],
   createdAt: new Date(),
   ...extra,
 });
@@ -204,17 +219,120 @@ describe('UpdateDomainService', () => {
   });
 });
 
+describe('UpdateDomainService middlewares', () => {
+  it('sets middlewares: validates them on the proxy of the app, saves, recreates once', async () => {
+    const t = make(row());
+    const dto = await t.svc.execute('owner', 'app1', 'd1', {
+      middlewares: ['auth@file', 'auth@file', 'hdrs@file'],
+    });
+    expect(t.proxyConfig.assertMiddlewaresExist).toHaveBeenCalledWith(null, [
+      'auth@file',
+      'hdrs@file',
+    ]);
+    expect(t.domainsRepo.save).toHaveBeenCalledWith(
+      expect.objectContaining({ middlewares: ['auth@file', 'hdrs@file'] }),
+    );
+    // no certificate involved: nothing is written to the certificate volume
+    expect(t.certSync.sync).not.toHaveBeenCalled();
+    expect(t.runner.applyRuntimeConfig).toHaveBeenCalledTimes(1);
+    expect(dto.middlewares).toEqual(['auth@file', 'hdrs@file']);
+  });
+
+  it('checks against the remote server of a remote app', async () => {
+    const t = make(row(), { serverId: 'srv1' });
+    await t.svc.execute('owner', 'app1', 'd1', { middlewares: ['a@file'] });
+    expect(t.proxyConfig.assertMiddlewaresExist).toHaveBeenCalledWith('srv1', [
+      'a@file',
+    ]);
+  });
+
+  it('refuses a middleware that is not defined: nothing saved, nothing recreated', async () => {
+    const t = make(row());
+    t.proxyConfig.assertMiddlewaresExist.mockRejectedValue(
+      new BadRequestException('Middleware "x@file" does not exist'),
+    );
+    await expect(
+      t.svc.execute('owner', 'app1', 'd1', { middlewares: ['x@file'] }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(t.domainsRepo.save).not.toHaveBeenCalled();
+    expect(t.runner.applyRuntimeConfig).not.toHaveBeenCalled();
+  });
+
+  it('an empty list clears them, the same list again is a no-op', async () => {
+    const t = make(row({ middlewares: ['a@file'] }));
+    const cleared = await t.svc.execute('owner', 'app1', 'd1', {
+      middlewares: [],
+    });
+    expect(cleared.middlewares).toEqual([]);
+    expect(t.runner.applyRuntimeConfig).toHaveBeenCalledTimes(1);
+    const same = make(row({ middlewares: ['a@file'] }));
+    await same.svc.execute('owner', 'app1', 'd1', { middlewares: ['a@file'] });
+    expect(same.domainsRepo.save).not.toHaveBeenCalled();
+    expect(same.runner.applyRuntimeConfig).not.toHaveBeenCalled();
+  });
+
+  it('changing only the middlewares keeps the assigned certificate and its name', async () => {
+    const t = make(row({ certificateId: CERT.id }));
+    const dto = await t.svc.execute('owner', 'app1', 'd1', {
+      middlewares: ['a@file'],
+    });
+    expect(t.certSync.sync).not.toHaveBeenCalled();
+    expect(dto).toMatchObject({
+      certificateId: CERT.id,
+      certificateName: 'wildcard',
+      middlewares: ['a@file'],
+    });
+  });
+
+  it('changing only the certificate keeps the middlewares and does not re-validate them', async () => {
+    const t = make(row({ middlewares: ['a@file'] }));
+    const dto = await t.svc.execute('owner', 'app1', 'd1', {
+      certificateId: CERT.id,
+    });
+    expect(t.proxyConfig.assertMiddlewaresExist).not.toHaveBeenCalled();
+    expect(dto.middlewares).toEqual(['a@file']);
+  });
+
+  it('a body with neither field is a 400', async () => {
+    const t = make(row());
+    await expect(
+      t.svc.execute('owner', 'app1', 'd1', {}),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('the DTO takes name@file lists only', async () => {
+    const check = (body: object) =>
+      validate(plainToInstance(UpdateDomainDto, body));
+    expect(await check({ middlewares: ['a@file', 'b-1@file'] })).toHaveLength(
+      0,
+    );
+    expect(await check({ middlewares: [] })).toHaveLength(0);
+    for (const bad of [
+      ['a@docker'],
+      ['A@file'],
+      ['a b@file'],
+      ['a@file,b@file'],
+      ['a'],
+      [1],
+      'a@file',
+    ]) {
+      expect((await check({ middlewares: bad })).length).toBeGreaterThan(0);
+    }
+  });
+});
+
 describe('domain DTOs', () => {
   const update = (body: object) =>
     validate(plainToInstance(UpdateDomainDto, body));
   const add = (body: object) => validate(plainToInstance(AddDomainDto, body));
 
-  it('PATCH takes a uuid, null or an empty string, and requires the key', async () => {
+  it('PATCH takes a uuid, null or an empty string', async () => {
     expect(await update({ certificateId: CERT.id })).toHaveLength(0);
     expect(await update({ certificateId: null })).toHaveLength(0);
     expect(await update({ certificateId: '' })).toHaveLength(0);
     expect((await update({ certificateId: 'nope' })).length).toBeGreaterThan(0);
-    expect((await update({})).length).toBeGreaterThan(0);
+    // both keys are optional at the DTO level; the service wants at least one
+    expect(await update({})).toHaveLength(0);
   });
 
   it('POST accepts certificateId omitted, null, "" or a uuid, and rejects junk', async () => {

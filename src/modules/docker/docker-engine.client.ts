@@ -14,9 +14,20 @@ export interface ContainerSummary {
   Id: string;
   Names: string[];
   Image: string;
+  /** Full id (`sha256:…`) of the image the container was created from. */
+  ImageID?: string;
+  /** Unix seconds. */
+  Created?: number;
   State: string;
   Status: string;
   Labels?: Record<string, string>;
+  Mounts?: {
+    Type: string;
+    Name?: string;
+    Source?: string;
+    Destination?: string;
+  }[];
+  NetworkSettings?: { Networks?: Record<string, { NetworkID?: string }> };
   /** Published ports (`PublicPort` only when bound on the host). */
   Ports?: {
     IP?: string;
@@ -43,6 +54,13 @@ export interface ContainerCreateBody {
   };
   HostConfig?: {
     Binds?: string[];
+    /** Long-form mounts; a `bind` mount fails if the host path is missing instead of creating it. */
+    Mounts?: {
+      Type: 'bind';
+      Source: string;
+      Target: string;
+      ReadOnly?: boolean;
+    }[];
     PortBindings?: Record<string, { HostIp?: string; HostPort: string }[]>;
     RestartPolicy?: { Name: string; MaximumRetryCount?: number };
     /** Needed by nested builders (BuildKit); nothing else asks for it. */
@@ -60,6 +78,8 @@ export interface ContainerCreateBody {
 
 export interface ContainerInspect {
   Id: string;
+  /** `/name` */
+  Name?: string;
   State: {
     Status: string;
     Running: boolean;
@@ -265,8 +285,39 @@ export interface SystemDataUsage {
   LayersSize: number;
   Images: Array<{ Size: number; SharedSize: number }>;
   Containers: Array<{ SizeRw?: number }>;
-  Volumes: Array<{ Name: string; UsageData?: { Size: number } | null }>;
+  Volumes: Array<{
+    Name: string;
+    Driver?: string;
+    Mountpoint?: string;
+    CreatedAt?: string;
+    Labels?: Record<string, string> | null;
+    /** `Size` and `RefCount` are -1 when the daemon could not compute them. */
+    UsageData?: { Size: number; RefCount?: number } | null;
+  }>;
   BuildCache?: Array<{ Size: number; Shared: boolean }> | null;
+}
+
+/** Subset of `GET /images/json` (spec: Image > List Images). */
+export interface ImageSummary {
+  Id: string;
+  RepoTags?: string[] | null;
+  RepoDigests?: string[] | null;
+  /** Unix seconds. */
+  Created: number;
+  Size: number;
+  Labels?: Record<string, string> | null;
+}
+
+/** Subset of `GET /networks` (spec: Network > List networks). */
+export interface NetworkSummary {
+  Id: string;
+  Name: string;
+  Driver: string;
+  Scope: string;
+  Internal?: boolean;
+  Created?: string;
+  Labels?: Record<string, string> | null;
+  IPAM?: { Config?: { Subnet?: string; Gateway?: string }[] | null } | null;
 }
 
 /** Credentials for `X-Registry-Auth` (spec: Authentication section). */
@@ -361,6 +412,16 @@ export class DockerEngineClient {
       if (err instanceof DockerEngineError && err.status === 404) return null;
       throw err;
     }
+  }
+
+  /** `GET /images/json` — images with at least a tag, plus dangling ones (`RepoTags` null). */
+  listImages(): Promise<ImageSummary[]> {
+    return this.json('GET', '/images/json');
+  }
+
+  /** `GET /networks` */
+  listNetworks(): Promise<NetworkSummary[]> {
+    return this.json('GET', '/networks');
   }
 
   /** `DELETE /images/{name}` — untags; layers go once nothing references them. 404 = already gone. */

@@ -36,6 +36,39 @@ export class SshSession implements TerminalSession {
     return session.connect().then(() => session);
   }
 
+  /**
+   * Connects and authenticates, then closes — no shell. Used to check that a
+   * key is accepted; rejects with ssh2's error (see `isAuthFailure`) or a
+   * timeout.
+   */
+  static probe(ssh: SshTarget, timeoutMs: number): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const conn = new Client();
+      const timer = setTimeout(() => {
+        conn.end();
+        reject(new Error(`no answer within ${Math.round(timeoutMs / 1000)}s`));
+      }, timeoutMs);
+      const finish = (err?: Error) => {
+        clearTimeout(timer);
+        conn.end();
+        if (err) reject(err);
+        else resolve();
+      };
+      conn
+        .on('ready', () => finish())
+        .on('error', (err) => finish(err))
+        .connect({
+          host: ssh.host,
+          port: ssh.port,
+          username: ssh.username,
+          privateKey: ssh.privateKey,
+          passphrase: ssh.passphrase,
+          password: ssh.password,
+          readyTimeout: timeoutMs,
+        });
+    });
+  }
+
   private connect(): Promise<void> {
     const config: ConnectConfig = {
       host: this.ssh.host,

@@ -109,6 +109,24 @@ export function authorizeCommand(publicKey: string): string {
   ].join(' && ');
 }
 
+/**
+ * Plain-text advice that goes with `authorizeCommand`, which stays a single
+ * line (the web copies it as-is). `where` is where to change the login:
+ * "environment" (the aoox host) or "servers" (a registered remote server).
+ */
+export function authorizeAdvice(
+  username: string,
+  where: 'environment' | 'servers',
+): string {
+  const setting =
+    where === 'environment'
+      ? 'Infrastructure > Environment (User)'
+      : 'the server settings (Infrastructure > Remote servers)';
+  const run = `Run the command as ${username} on that machine (in that account's shell, not with sudo).`;
+  if (username !== 'root') return run;
+  return `${run} Logging in as root is often refused by sshd on cloud servers (PermitRootLogin) and root usually has no authorized_keys; if that is the cause, set the login user in ${setting} to your normal account and run the command as that user instead.`;
+}
+
 /** Command for the "key dir not writable" case (container runs as uid 1000). */
 export function grantKeyDirCommand(dir: string): string {
   return `sudo chown -R 1000:1000 ${dir}`;

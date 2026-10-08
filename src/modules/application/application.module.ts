@@ -5,6 +5,7 @@ import { AuthModule } from '../auth/auth.module';
 import { DockerModule } from '../docker/docker.module';
 import { GitCredentialModule } from '../git-credential/git-credential.module';
 import { CertificateModule } from '../certificate/certificate.module';
+import { ProxyConfigModule } from '../proxy-config/proxy-config.module';
 import { SecretSourceModule } from '../secret-source/secret-source.module';
 import { SecretSourceAppController } from './secret-source/secret-source-app.controller';
 import { SecretSourceAppService } from './secret-source/secret-source-app.service';
@@ -28,6 +29,7 @@ import { CheckDomainDnsService } from './check-domain-dns/check-domain-dns.servi
 import { DeleteDomainController } from './delete-domain/delete-domain.controller';
 import { UpdateDomainController } from './update-domain/update-domain.controller';
 import { UpdateDomainService } from './update-domain/update-domain.service';
+import { ListDomainMiddlewaresController } from './list-domain-middlewares/list-domain-middlewares.controller';
 import { ListDomainsController } from './list-domains/list-domains.controller';
 import { Domain } from './domain.entity';
 import { Mount } from './mount.entity';
@@ -108,6 +110,7 @@ import { UpdateApplicationService } from './update-application/update-applicatio
     GitCredentialModule,
     SecretSourceModule,
     CertificateModule,
+    ProxyConfigModule,
     ProjectModule,
     RegistryModule,
     ProxyModule,
@@ -139,6 +142,7 @@ import { UpdateApplicationService } from './update-application/update-applicatio
     UpdateMountController,
     DeleteMountController,
     ListDomainsController,
+    ListDomainMiddlewaresController,
     DeleteDomainController,
     UpdateDomainController,
     CheckDomainDnsController,

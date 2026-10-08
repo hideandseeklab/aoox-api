@@ -226,7 +226,7 @@ export class MaintenanceService {
    * `isCandidateVolume`) with no DB row left to own them. Local host only —
    * a remote server's volumes are never looked at here.
    */
-  private async orphanVolumeNames(df?: SystemDataUsage): Promise<string[]> {
+  async orphanVolumeNames(df?: SystemDataUsage): Promise<string[]> {
     const [usage, applications, managedDatabases, composeAppRows, mounts] =
       await Promise.all([
         df ? Promise.resolve(df) : this.docker.engine.systemDataUsage(),

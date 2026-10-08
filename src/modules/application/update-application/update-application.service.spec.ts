@@ -1,8 +1,25 @@
 import { ConflictException } from '@nestjs/common';
+import { ProxyService } from '../../proxy/proxy.service';
 import { Application } from '../application.entity';
 import { UpdateApplicationService } from './update-application.service';
 
-function harness(over: Partial<Application> = {}, activeDeployments = 0) {
+interface DomainRow {
+  id: string;
+  host: string;
+  https: boolean;
+  middlewares: string[];
+  certificateId?: string | null;
+}
+
+function harness(
+  over: Partial<Application> = {},
+  activeDeployments = 0,
+  extra: {
+    domains?: DomainRow[];
+    /** enabled middlewares per destination: server id (or 'host') -> refs */
+    available?: Record<string, string[]>;
+  } = {},
+) {
   const app = {
     id: 'app-1',
     appName: 'web',
@@ -36,24 +53,51 @@ function harness(over: Partial<Application> = {}, activeDeployments = 0) {
     findOwnedOrFail: jest.fn().mockResolvedValue(app),
     repo: { save, findOne: jest.fn(() => Promise.resolve({ ...dbRow })) },
     deployments: { count: jest.fn().mockResolvedValue(activeDeployments) },
+    domains: {
+      find: jest.fn(() => Promise.resolve(extra.domains ?? [])),
+      save: jest.fn((d: DomainRow) => Promise.resolve(d)),
+    },
+  };
+  const proxyConfig = {
+    availableMiddlewares: jest.fn((serverId: string | null) =>
+      Promise.resolve(
+        (extra.available?.[serverId ?? 'host'] ?? []).map((ref) => ({
+          ref,
+          file: 'f',
+        })),
+      ),
+    ),
   };
   const runner = {
     applyRuntimeConfig: jest.fn().mockResolvedValue(undefined),
     queueRuntimeConfig: jest.fn().mockResolvedValue(null),
   };
+  const certSync = { syncServer: jest.fn().mockResolvedValue({}) };
   const hostPorts = { assertFree: jest.fn().mockResolvedValue(undefined) };
   const remote = { forServer: jest.fn().mockResolvedValue({}) };
   const svc = new UpdateApplicationService(
     applications as never,
     {} as never,
     {} as never,
-    {} as never,
+    { findOrFail: jest.fn().mockResolvedValue({}) } as never,
     remote as never,
     runner as never,
     { isActive: jest.fn().mockResolvedValue(true) } as never,
     hostPorts as never,
+    proxyConfig as never,
+    certSync as never,
   );
-  return { svc, app, runner, hostPorts, save, applications, dbRow };
+  return {
+    svc,
+    app,
+    runner,
+    hostPorts,
+    save,
+    applications,
+    dbRow,
+    proxyConfig,
+    certSync,
+  };
 }
 
 const update = (h: ReturnType<typeof harness>, hostPort: number | null) =>
@@ -162,5 +206,221 @@ describe('UpdateApplicationService host port', () => {
       .mockRejectedValueOnce(new Error('daemon down'));
     await expect(update(h, 5434)).rejects.toThrow(/redeploy the application/);
     expect(h.app.status).toBe('error');
+  });
+});
+
+describe('UpdateApplicationService moving to another proxy', () => {
+  const dom = (host: string, middlewares: string[]): DomainRow => ({
+    id: host,
+    host,
+    https: true,
+    middlewares,
+  });
+  const move = (h: ReturnType<typeof harness>, serverId: string | null) =>
+    h.svc.execute('owner', 'app-1', { serverId }, 'me@x.y') as Promise<
+      Application & { droppedMiddlewares?: unknown }
+    >;
+
+  it('moving to a server without files drops every middleware, saves, and reports it', async () => {
+    const h = harness({}, 0, {
+      domains: [dom('a.x.com', ['auth@file', 'hdrs@file']), dom('b.x.com', [])],
+      available: { srv2: [] },
+    });
+    const saved = await move(h, 'srv2');
+    expect(h.proxyConfig.availableMiddlewares).toHaveBeenCalledWith('srv2');
+    expect(h.applications.domains.save).toHaveBeenCalledTimes(1);
+    expect(h.applications.domains.save).toHaveBeenCalledWith(
+      expect.objectContaining({ host: 'a.x.com', middlewares: [] }),
+    );
+    expect(saved.droppedMiddlewares).toEqual([
+      { domain: 'a.x.com', names: ['auth@file', 'hdrs@file'] },
+    ]);
+  });
+
+  it('keeps the middlewares whose name the destination defines in an enabled file, drops the rest', async () => {
+    const h = harness({}, 0, {
+      domains: [dom('a.x.com', ['auth@file', 'hdrs@file'])],
+      available: { srv2: ['hdrs@file'] },
+    });
+    const saved = await move(h, 'srv2');
+    expect(h.applications.domains.save).toHaveBeenCalledWith(
+      expect.objectContaining({ middlewares: ['hdrs@file'] }),
+    );
+    expect(saved.droppedMiddlewares).toEqual([
+      { domain: 'a.x.com', names: ['auth@file'] },
+    ]);
+  });
+
+  it('a file that is only disabled on the destination does not count (availableMiddlewares lists enabled ones only)', async () => {
+    const h = harness({}, 0, {
+      domains: [dom('a.x.com', ['auth@file'])],
+      available: { srv2: [] }, // the disabled file is simply not listed
+    });
+    const saved = await move(h, 'srv2');
+    expect(saved.droppedMiddlewares).toEqual([
+      { domain: 'a.x.com', names: ['auth@file'] },
+    ]);
+  });
+
+  it('moving back to the host checks the host files (null server)', async () => {
+    const h = harness({ serverId: 'srv2' }, 0, {
+      domains: [dom('a.x.com', ['auth@file'])],
+      available: { host: ['auth@file'] },
+    });
+    const saved = await move(h, null);
+    expect(h.proxyConfig.availableMiddlewares).toHaveBeenCalledWith(null);
+    expect(h.applications.domains.save).not.toHaveBeenCalled();
+    expect('droppedMiddlewares' in saved).toBe(false);
+  });
+
+  it('remote to another remote uses the new server', async () => {
+    const h = harness({ serverId: 'srv1' }, 0, {
+      domains: [dom('a.x.com', ['auth@file'])],
+      available: { srv1: ['auth@file'], srv2: [] },
+    });
+    const saved = await move(h, 'srv2');
+    expect(saved.droppedMiddlewares).toEqual([
+      { domain: 'a.x.com', names: ['auth@file'] },
+    ]);
+  });
+
+  it('does not touch domains when the server does not change', async () => {
+    const same = harness({ serverId: 'srv1' }, 0, {
+      domains: [dom('a.x.com', ['auth@file'])],
+    });
+    await same.svc.execute('owner', 'app-1', { serverId: 'srv1' }, 'me@x.y');
+    await same.svc.execute('owner', 'app-1', { name: 'x' }, 'me@x.y');
+    expect(same.applications.domains.find).not.toHaveBeenCalled();
+    expect(same.proxyConfig.availableMiddlewares).not.toHaveBeenCalled();
+    expect(same.applications.domains.save).not.toHaveBeenCalled();
+  });
+
+  it('skips the proxy lookup when no domain has middlewares', async () => {
+    const h = harness({}, 0, { domains: [dom('a.x.com', [])] });
+    const saved = await move(h, 'srv2');
+    expect(h.proxyConfig.availableMiddlewares).not.toHaveBeenCalled();
+    expect('droppedMiddlewares' in saved).toBe(false);
+  });
+
+  it('the labels computed afterwards do not mention a dropped middleware', async () => {
+    const rows = [dom('a.x.com', ['auth@file', 'hdrs@file'])];
+    const h = harness({}, 0, {
+      domains: rows,
+      available: { srv2: ['hdrs@file'] },
+    });
+    await move(h, 'srv2');
+    const labels = ProxyService.buildLabels(
+      'web',
+      80,
+      rows.map((d) => ({
+        host: d.host,
+        https: d.https,
+        middlewares: d.middlewares,
+      })),
+      { httpsPort: 443, acme: true },
+    );
+    const values = Object.entries(labels)
+      .filter(([k]) => k.endsWith('.middlewares'))
+      .map(([, v]) => v);
+    expect(values).toContain('hdrs@file');
+    expect(JSON.stringify(labels)).not.toContain('auth@file');
+  });
+});
+
+describe('UpdateApplicationService moving with custom certificates', () => {
+  const dom = (host: string, certificateId: string | null): DomainRow => ({
+    id: host,
+    host,
+    https: true,
+    middlewares: [],
+    certificateId,
+  });
+  type Answer = Application & {
+    droppedMiddlewares?: unknown;
+    certificateSyncError?: string;
+  };
+  const move = (h: ReturnType<typeof harness>, serverId: string | null) =>
+    h.svc.execute('owner', 'app-1', { serverId }, 'me@x.y') as Promise<Answer>;
+
+  it('host to remote: writes the destination first, then sweeps the origin', async () => {
+    const h = harness({}, 0, { domains: [dom('a.x.com', 'cert-1')] });
+    const saved = await move(h, 'srv2');
+    expect(h.certSync.syncServer.mock.calls).toEqual([['srv2'], [null]]);
+    const [dest, origin] = h.certSync.syncServer.mock.invocationCallOrder;
+    expect(dest).toBeLessThan(origin);
+    expect(saved.serverId).toBe('srv2');
+    expect('certificateSyncError' in saved).toBe(false);
+  });
+
+  it('remote to host: destination is the host (null), origin the old server', async () => {
+    const h = harness({ serverId: 'srv1' }, 0, {
+      domains: [dom('a.x.com', 'cert-1'), dom('b.x.com', null)],
+    });
+    await move(h, null);
+    expect(h.certSync.syncServer.mock.calls).toEqual([[null], ['srv1']]);
+  });
+
+  it('remote to another remote syncs both servers', async () => {
+    const h = harness({ serverId: 'srv1' }, 0, {
+      domains: [dom('a.x.com', 'cert-1')],
+    });
+    await move(h, 'srv2');
+    expect(h.certSync.syncServer.mock.calls).toEqual([['srv2'], ['srv1']]);
+  });
+
+  it('no domain with a certificate: nothing is synced', async () => {
+    const h = harness({}, 0, {
+      domains: [dom('a.x.com', null), dom('b.x.com', null)],
+    });
+    const saved = await move(h, 'srv2');
+    expect(h.certSync.syncServer).not.toHaveBeenCalled();
+    expect('certificateSyncError' in saved).toBe(false);
+  });
+
+  it('no server change: nothing is synced, even with certificates', async () => {
+    const h = harness({ serverId: 'srv1' }, 0, {
+      domains: [dom('a.x.com', 'cert-1')],
+    });
+    await h.svc.execute('owner', 'app-1', { serverId: 'srv1' }, 'me@x.y');
+    await h.svc.execute('owner', 'app-1', { name: 'x' }, 'me@x.y');
+    expect(h.certSync.syncServer).not.toHaveBeenCalled();
+  });
+
+  it('a failed destination sync keeps the move and reports certificateSyncError', async () => {
+    const h = harness({}, 0, { domains: [dom('a.x.com', 'cert-1')] });
+    h.certSync.syncServer.mockRejectedValueOnce(new Error('ssh refused'));
+    const saved = await move(h, 'srv2');
+    expect(saved.serverId).toBe('srv2');
+    expect(h.save).toHaveBeenCalledWith(
+      expect.objectContaining({ serverId: 'srv2' }),
+    );
+    expect(saved.certificateSyncError).toMatch(/ssh refused/);
+    expect(saved.certificateSyncError).toMatch(
+      /Save the domain or the certificate again/,
+    );
+    // The origin sweep still runs.
+    expect(h.certSync.syncServer.mock.calls).toEqual([['srv2'], [null]]);
+  });
+
+  it('a failed origin sync is only a warning', async () => {
+    const h = harness({}, 0, { domains: [dom('a.x.com', 'cert-1')] });
+    h.certSync.syncServer
+      .mockResolvedValueOnce({})
+      .mockRejectedValueOnce(new Error('old server down'));
+    const saved = await move(h, 'srv2');
+    expect(saved.serverId).toBe('srv2');
+    expect('certificateSyncError' in saved).toBe(false);
+  });
+
+  it('still reports dropped middlewares next to a certificate sync problem, and queries domains once', async () => {
+    const rows = [{ ...dom('a.x.com', 'cert-1'), middlewares: ['auth@file'] }];
+    const h = harness({}, 0, { domains: rows, available: { srv2: [] } });
+    h.certSync.syncServer.mockRejectedValueOnce(new Error('boom'));
+    const saved = await move(h, 'srv2');
+    expect(saved.droppedMiddlewares).toEqual([
+      { domain: 'a.x.com', names: ['auth@file'] },
+    ]);
+    expect(saved.certificateSyncError).toMatch(/boom/);
+    expect(h.applications.domains.find).toHaveBeenCalledTimes(1);
   });
 });

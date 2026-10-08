@@ -517,7 +517,12 @@ describe('DeploymentRunnerService', () => {
 
   it('tells the proxy which domains serve an uploaded certificate (so they never ask ACME)', async () => {
     applications.domains.find.mockResolvedValueOnce([
-      { host: 'a.example.com', https: true, certificateId: 'cert-1' },
+      {
+        host: 'a.example.com',
+        https: true,
+        certificateId: 'cert-1',
+        middlewares: ['auth@file'],
+      },
       { host: 'b.example.com', https: true, certificateId: null },
       { host: 'c.example.com', https: false, certificateId: null },
     ]);
@@ -526,9 +531,24 @@ describe('DeploymentRunnerService', () => {
       expect.any(String),
       expect.any(Number),
       [
-        { host: 'a.example.com', https: true, customCert: true },
-        { host: 'b.example.com', https: true, customCert: false },
-        { host: 'c.example.com', https: false, customCert: false },
+        {
+          host: 'a.example.com',
+          https: true,
+          customCert: true,
+          middlewares: ['auth@file'],
+        },
+        {
+          host: 'b.example.com',
+          https: true,
+          customCert: false,
+          middlewares: [],
+        },
+        {
+          host: 'c.example.com',
+          https: false,
+          customCert: false,
+          middlewares: [],
+        },
       ],
       undefined, // the proxy double has no settings; the real service passes them
     );

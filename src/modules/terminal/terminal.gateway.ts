@@ -11,6 +11,7 @@ import {
 } from '@nestjs/websockets';
 import type { Socket } from 'socket.io';
 import {
+  authorizeAdvice,
   describeKeyError,
   isAuthFailure,
   SshKeyPermissionError,
@@ -158,15 +159,23 @@ export class TerminalGateway
     }
     if (isAuthFailure(err)) {
       // authHint re-reads the server; if that fails, fall back to a plain message.
-      const { where, command } = await this.backend
+      const { where, username, command } = await this.backend
         .authHint(serverId)
-        .catch(() => ({ where: 'the target', command: null }));
+        .catch(() => ({
+          where: 'the target',
+          username: null as string | null,
+          command: null,
+        }));
+      const advice = username
+        ? authorizeAdvice(username, serverId ? 'servers' : 'environment')
+        : null;
       if (command) {
         return [
           `SSH authentication failed for ${where}.`,
-          'Run this once on that machine, as that user, then reconnect:',
+          `Run this once on that machine, as ${username ?? 'that user'}, then reconnect:`,
           '',
           `  ${command}`,
+          ...(advice ? ['', advice] : []),
         ].join('\r\n');
       }
       return `SSH authentication failed for ${where}: check the user and key/password`;

@@ -48,6 +48,13 @@ export class Domain {
   })
   certificate: CustomCertificate | null;
 
+  /**
+   * Traefik middlewares to put in front of this host, as `name@file` from the
+   * operator's dynamic config files on the application's proxy.
+   */
+  @Column({ type: 'jsonb', default: () => "'[]'" })
+  middlewares: string[];
+
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;
 }

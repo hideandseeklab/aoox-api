@@ -539,6 +539,8 @@ export class DeploymentRunnerService {
           https: d.https,
           // Uploaded certificate: its router must not ask ACME for one.
           customCert: !!d.certificateId,
+          // Operator middlewares (name@file) for this host.
+          middlewares: d.middlewares ?? [],
         }));
     const proxySettings = app.serverId
       ? proxySettingsOf(await this.servers.findOrFail(app.serverId))

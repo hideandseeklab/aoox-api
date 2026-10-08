@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { CertificateSyncService } from '../../certificate/certificate-sync.service';
 import { CertificateService } from '../../certificate/certificate.service';
+import { ProxyConfigService } from '../../proxy-config/proxy-config.service';
 import { ProxyService } from '../../proxy/proxy.service';
 import { RemoteDockerService } from '../../server/remote-docker.service';
 import { proxySettingsOf } from '../../server/server.entity';
@@ -28,9 +29,14 @@ export class UpdateDomainService {
     private readonly servers: ServerService,
     private readonly certs: CertificateService,
     private readonly certSync: CertificateSyncService,
+    private readonly proxyConfig: ProxyConfigService,
   ) {}
 
-  /** Assigns an uploaded certificate to a domain, or (null) back to automatic ones. */
+  /**
+   * Assigns an uploaded certificate to a domain (null = back to automatic
+   * ones) and/or sets its operator middlewares; each part is optional, the
+   * labels are rebuilt once for whatever changed.
+   */
   async execute(
     ownerId: string,
     applicationId: string,
@@ -43,9 +49,14 @@ export class UpdateDomainService {
     });
     if (!domain) throw new NotFoundException('Domain not found');
 
-    const certificate = dto.certificateId
-      ? await this.certs.findOrFail(dto.certificateId)
-      : null;
+    if (dto.certificateId === undefined && dto.middlewares === undefined) {
+      throw new BadRequestException('Send certificateId and/or middlewares');
+    }
+    const certChange = dto.certificateId !== undefined;
+    const certificate =
+      certChange && dto.certificateId
+        ? await this.certs.findOrFail(dto.certificateId)
+        : null;
     if (certificate) {
       if (!domain.https) {
         throw new BadRequestException(
@@ -54,16 +65,36 @@ export class UpdateDomainService {
       }
       this.certs.assertCovers([domain.host], certificate.domains);
     }
+    const middlewares =
+      dto.middlewares === undefined ? undefined : [...new Set(dto.middlewares)];
+    if (middlewares) {
+      await this.proxyConfig.assertMiddlewaresExist(app.serverId, middlewares);
+    }
     const previousCertificateId = domain.certificateId ?? null;
     const hadCertificate = previousCertificateId !== null;
-    if ((domain.certificateId ?? null) === (certificate?.id ?? null)) {
-      return toDomainDto(domain, certificate?.name ?? null);
+    const nextCertificateId = certChange
+      ? (certificate?.id ?? null)
+      : previousCertificateId;
+    const currentMiddlewares = domain.middlewares ?? [];
+    const middlewaresChanged =
+      middlewares !== undefined &&
+      middlewares.join(',') !== currentMiddlewares.join(',');
+    if (previousCertificateId === nextCertificateId && !middlewaresChanged) {
+      return toDomainDto(
+        domain,
+        certificate?.name ??
+          (previousCertificateId
+            ? await this.nameOf(previousCertificateId)
+            : null),
+      );
     }
-    domain.certificateId = certificate?.id ?? null;
+    const certificateChanged = previousCertificateId !== nextCertificateId;
+    domain.certificateId = nextCertificateId;
+    if (middlewares !== undefined) domain.middlewares = middlewares;
     domain.certificate = null; // the id column is what is written
     await this.applications.domains.save(domain);
 
-    if (certificate || hadCertificate) {
+    if (certificateChanged && (certificate || hadCertificate)) {
       const docker = await this.remote.forServer(app.serverId);
       const settings = app.serverId
         ? proxySettingsOf(await this.servers.findOrFail(app.serverId))
@@ -83,6 +114,7 @@ export class UpdateDomainService {
           `Certificate sync failed for ${domain.host}: ${String(err)}`,
         );
         domain.certificateId = previousCertificateId;
+        domain.middlewares = currentMiddlewares;
         domain.certificate = null;
         await this.applications.domains.save(domain);
         throw new BadGatewayException(
@@ -96,8 +128,18 @@ export class UpdateDomainService {
     // Not `domain.certificateId`: TypeORM nulls that field on the entity after
     // `save` because `domain.certificate` is null, although the column was written.
     return toDomainDto(
-      { ...domain, certificateId: certificate?.id ?? null },
-      certificate?.name ?? null,
+      { ...domain, certificateId: nextCertificateId },
+      certificate?.name ??
+        (nextCertificateId ? await this.nameOf(nextCertificateId) : null),
     );
+  }
+
+  /** Name of the certificate that stays assigned when only middlewares change. */
+  private async nameOf(certificateId: string): Promise<string | null> {
+    try {
+      return (await this.certs.findOrFail(certificateId)).name;
+    } catch {
+      return null;
+    }
   }
 }

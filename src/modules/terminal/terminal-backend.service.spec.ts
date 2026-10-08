@@ -193,6 +193,7 @@ describe('TerminalBackendService credential precedence', () => {
     const svc = new TerminalBackendService(config({}), keys, servers);
     await expect(svc.authHint('srv-1')).resolves.toEqual({
       where: 'ubuntu@vps',
+      username: 'ubuntu',
       command: expect.stringContaining("echo 'ssh-ed25519 GEN'") as string,
     });
 
@@ -203,7 +204,82 @@ describe('TerminalBackendService credential precedence', () => {
     });
     await expect(svc.authHint('srv-1')).resolves.toEqual({
       where: 'ubuntu@vps',
+      username: 'ubuntu',
       command: null,
     });
+  });
+
+  it('status names the account to authorize as, with the root caveat only for root', () => {
+    const asRoot = new TerminalBackendService(
+      config({ TERMINAL_SSH_HOST: 'host' }),
+      keys,
+      servers,
+    ).status();
+    expect(asRoot.username).toBe('root');
+    expect(asRoot.authorizeCommand).toContain("echo 'ssh-ed25519 GEN'");
+    expect(asRoot.authorizeNote).toContain('as root');
+    expect(asRoot.authorizeNote).toContain('PermitRootLogin');
+    expect(asRoot.authorizeNote).toContain('Infrastructure > Environment');
+
+    const asUbuntu = new TerminalBackendService(
+      config({ TERMINAL_SSH_HOST: 'host', TERMINAL_SSH_USER: 'ubuntu' }),
+      keys,
+      servers,
+    ).status();
+    expect(asUbuntu.authorizeNote).toContain('as ubuntu');
+    expect(asUbuntu.authorizeNote).not.toContain('PermitRootLogin');
+    // The command itself stays a single line the web can copy as-is.
+    expect(asUbuntu.authorizeCommand).not.toContain('\n');
+  });
+
+  it('canAutoAuthorize only for the generated key against the Docker host with a valid login', () => {
+    const status = (env: Record<string, string>) =>
+      new TerminalBackendService(config(env), keys, servers);
+    const ok = status({ TERMINAL_SSH_HOST: 'host.docker.internal' });
+    expect(ok.autoAuthorizeBlocker()).toBeNull();
+    expect(ok.status().canAutoAuthorize).toBe(true);
+    expect(
+      status({
+        TERMINAL_SSH_HOST: '172.17.0.1',
+        TERMINAL_SSH_USER: 'ubuntu',
+      }).status().canAutoAuthorize,
+    ).toBe(true);
+
+    const no = (env: Record<string, string>) =>
+      status(env).status().canAutoAuthorize;
+    expect(no({})).toBe(false); // local pty
+    expect(
+      no({
+        TERMINAL_SSH_HOST: 'host.docker.internal',
+        TERMINAL_SSH_PASSWORD: 'pw',
+      }),
+    ).toBe(false);
+    expect(
+      no({
+        TERMINAL_SSH_HOST: 'host.docker.internal',
+        TERMINAL_SSH_PRIVATE_KEY: 'k',
+      }),
+    ).toBe(false);
+    expect(no({ TERMINAL_SSH_HOST: '203.0.113.9' })).toBe(false);
+    expect(
+      no({ TERMINAL_SSH_HOST: 'localhost', TERMINAL_SSH_USER: 'a b' }),
+    ).toBe(false);
+    expect(
+      status({ TERMINAL_SSH_HOST: '203.0.113.9' }).autoAuthorizeBlocker(),
+    ).toContain('not the Docker host');
+  });
+
+  it('status has no note without an authorize command (local mode, password auth)', () => {
+    expect(
+      new TerminalBackendService(config({}), keys, servers).status()
+        .authorizeNote,
+    ).toBeNull();
+    expect(
+      new TerminalBackendService(
+        config({ TERMINAL_SSH_HOST: 'host', TERMINAL_SSH_PASSWORD: 'pw' }),
+        keys,
+        servers,
+      ).status().authorizeNote,
+    ).toBeNull();
   });
 });

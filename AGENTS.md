@@ -143,6 +143,30 @@ NestJS 11 backend for aoox (self-hosted PaaS).
 - **`TERMINAL_SSH_USER` kosong → `root`** (`DEFAULT_TERMINAL_SSH_USER` di `terminal-backend.service.ts`): `install.sh`/`aoox install` menulis `TERMINAL_SSH_USER=root` hanya untuk
   instalasi BARU, sedangkan `aoox update`/"Terapkan update" hanya mengganti image dan tidak pernah menyentuh `.env.dist` — instalasi lama tidak punya barisnya, dan dulu terminal
   melempar `TERMINAL_SSH_USER is not set` walau `TERMINAL_SSH_HOST` terisi. Sekarang backend SSH-ke-host memakai `root` (default installer; install-nya sendiri butuh root).
+  Instalasi BARU lewat `aoox install` kini menulis user yang menjalankan `sudo` (`SUDO_USER`), bukan `root` (lihat AGENTS aoox-cli) — image cloud (Ubuntu/Tencent)
+  biasanya menolak login SSH root dan root tak punya `authorized_keys`, jadi "SSH authentication failed for root@host.docker.internal" muncul untuk user `ubuntu`;
+  default API di atas tetap `root` untuk instalasi lama yang tak punya barisnya.
+  **Petunjuk gagal-auth**: `authorizeAdvice(username, where)` (`ssh/ssh-key.service.ts`) — kalimat "jalankan sebagai <user>" (bukan dengan sudo) dan, hanya bila user = `root`,
+  catatan `PermitRootLogin`: isi User di Infrastruktur → Environment (atau pengaturan server untuk server remote) lalu jalankan perintah sebagai user itu. Dipakai dua tempat: teks event
+  `error` gateway (argumen kedua; bentuk event & `hint` ketiga **tidak berubah**) dan field baru `authorizeNote` di `GET /terminal/status` (aditif; `null` bila tak ada perintah
+  otorisasi). `authorizeCommand` tetap satu baris persis seperti dulu (web menyalinnya apa adanya — jangan taruh komentar `#` di dalamnya, sisa baris jadi komentar shell).
+  `TerminalBackendService.authHint()` kini juga membalas `username`.
+  **Otorisasi key otomatis** (`authorize-terminal/`, `POST /terminal/authorize`, `@Roles('owner')`, throttle 5/menit, tanpa body; POST ⇒ viewer 403, masuk audit log otomatis):
+  menulis **public key platform** (`SshKeyService.load().publicKey`) ke `~/.ssh/authorized_keys` user `TERMINAL_SSH_USER` di host Docker, menggantikan `echo '<key>' >> …` manual.
+  200 `{ok:true, user, alreadyAuthorized, verified, message}`; `verified` = setelah menulis, `SshSession.probe` (login lalu tutup, tanpa shell, 8 s) berhasil — gagal tidak menggagalkan
+  endpoint (`verified:false` + alasan; auth ditolak → "sshd may use a different AuthorizedKeysFile, SELinux, key login disabled"). 400 bila: bukan backend SSH, kredensial eksplisit (key/password env),
+  `TERMINAL_SSH_HOST` bukan host Docker (`host.docker.internal`/`localhost`/`127.0.0.1`/`::1`/`172.17.0.1`, `isLocalSshHost`), nama user tak valid, user tak ada di passwd host, home tak valid
+  (`isValidHome`: absolut, bukan `/`, tanpa `..`/spasi/kontrol), `.ssh`/`authorized_keys` symlink; 502 bila container pembantu gagal. `GET /terminal/status` + `canAutoAuthorize` (true hanya bila
+  `autoAuthorizeBlocker()` null) agar web menampilkan tombol hanya bila bisa. **Mekanisme**: dua container `busybox:stable` sekali-jalan (`DockerService.runOnceWithOutput`, `NetworkMode: none`,
+  label `aoox.component=build`, selalu dihapus): (1) `/etc/passwd` host di-mount **read-only** dan `awk` membaca `uid:gid:home` — nama user hanya lewat env `AOOX_USER` + `ENVIRON[]`;
+  (2) home di-mount rw lewat `HostConfig.Mounts` bentuk panjang (bukan `Binds`: mount `bind` **gagal** bila path host tidak ada, sedangkan `Binds` diam-diam membuat direktori milik root — diuji)
+  dan skrip tetap `WRITE_SCRIPT` (`terminal-authorize.ts`) menerima `KEY`/`OWNER_UID`/`OWNER_GID` lewat env: `mkdir -p`, `chmod 700 .ssh`, `chmod 600 authorized_keys`, `grep -qxF` (exit 10 = sudah ada →
+  `alreadyAuthorized`), tambah newline bila perlu, `chown uid:gid` pada `.ssh` dan file (**tidak rekursif**, menyimpang dari "chown -R" di rancangan awal karena helper berjalan sebagai root dan tidak boleh
+  mengikuti tautan dari dalam home user), menolak symlink (exit 3). Output log Engine diberi awalan timestamp → `parseAccountOutput` mencocokkan ekor baris.
+  **Keamanan**: akses ini setara yang sudah dimiliki API lewat docker socket; hanya owner; yang ditulis hanya public key (tidak pernah password/private key); audit log mencatat. **Batas**:
+  `AuthorizedKeysFile` non-standar, SELinux, home non-standar/NFS, `sshd` yang mematikan login key, server remote (tetap manual), dan mode PTY lokal. Diuji nyata di Docker: skrip tulis di volume
+  dengan `/etc/passwd` palsu (`.ssh` belum ada; sudah ada dengan key lain tanpa newline akhir; key sama = tidak ganda; izin longgar diperbaiki; symlink ditolak), lookup passwd + penolakan mount
+  home yang tidak ada lewat `DockerService` asli. **Belum diuji**: host Linux dengan sshd sungguhan (jalur `verified` hanya unit test).
   **Hanya** untuk backend env — server remote tetap memakai `Server.username`-nya sendiri. `GET /terminal/status` tidak lagi punya error itu dan membalas `username` efektif +
   `usernameSource: 'env' | 'default'` (null di mode lokal) supaya web membedakan "diset eksplisit" dari "default". Event Socket.IO `error` kini punya argumen kedua opsional
   `hint` (`'environment'` = gagal membuka shell host, `'servers'` = server remote; `undefined` untuk PTY lokal dan error tiket/origin) — dihitung `TerminalGateway.configHint()`
@@ -654,7 +678,13 @@ NestJS 11 backend for aoox (self-hosted PaaS).
   membaca `certs.yml` baru sebelum berkas lama hilang; daftar simpan dan jeda lewat env, tidak diinterpolasi; gagal = warning).
   Sync gagal di add-domain → baris domain baru dihapus + 502; di PATCH → penugasan lama dikembalikan + 502 (jangan tinggalkan router `-secure-custom` yang menunjuk berkas yang tidak ada; Traefik akan
   menyajikan sertifikat bawaan self-signed). Restore instance (snapshot DB) **tidak** me-resync volume sertifikat; simpan ulang sertifikatnya (PUT) bila volume hilang.
-  Satu sync sekaligus per daemon (antrian promise). Dipanggil setelah: add-domain dengan sertifikat, PATCH domain (assign/unassign), PUT sertifikat, hapus domain (best effort), hapus aplikasi (best effort).
+  Satu sync sekaligus per daemon (antrian promise). Dipanggil setelah: add-domain dengan sertifikat, PATCH domain (assign/unassign), PUT sertifikat, hapus domain (best effort), hapus aplikasi (best effort), dan **pindah server**
+  (`PATCH /applications/:id` yang mengubah `serverId`, hanya bila ada domain aplikasi itu dengan `certificateId`): `UpdateApplicationService.moveCertificates` memanggil `syncServer(serverBaru)` (null = host) **lebih dulu**, lalu
+  `syncServer(serverLama)` supaya berkas yang tak dipakai lagi di daemon asal disapu — keduanya lewat antrean per daemon yang sama, tanpa jalur tulis baru. Sinkron TUJUAN gagal tidak membatalkan pindah (konsisten dengan
+  pindah yang tidak me-recreate container): warning di log dan field aditif `certificateSyncError: string` pada respons PATCH **hanya bila gagal** (pesan menyarankan menyimpan ulang domain/sertifikat; sapuan asal tetap dicoba);
+  sinkron ASAL gagal = warning saja. Tanpa perubahan `serverId` atau tanpa domain bersertifikat tidak ada panggilan sinkron. Sinkron ke daemon tujuan bisa memicu `upgradeToCustomCerts` (proxy lama tanpa provider file
+  dibuat ulang sekali, perilaku sertifikat yang sudah ada) — tanpa persetujuan terpisah di jalur ini. Diuji unit (urutan tujuan→asal, host↔remote, remote↔remote, tanpa sertifikat, tanpa perubahan, kegagalan tujuan/asal,
+  berdampingan dengan `droppedMiddlewares`); **belum diuji nyata** (server remote tidak tersedia).
   **Provision proxy tidak memanggil sync**: volume tetap ada antar provision dan sync menulis ke volume walau proxy belum ada, jadi proxy yang di-provision belakangan langsung memuatnya (penyimpangan dari
   "dipanggil saat provision proxy": `ProxyModule` tidak boleh meng-import `CertificateModule`, siklus). Kunci plaintext hanya ada di volume (0600) dan kolom terenkripsi.
 - **Proxy lama**: `ProxyStatus.customCerts` (`GET /proxy`, `GET /servers/:id/proxy`) = container punya provider file **dan** volume (`ProxyService.supportsCustomCerts`, dari `inspectContainer`).
@@ -669,6 +699,53 @@ NestJS 11 backend for aoox (self-hosted PaaS).
 - **Diuji**: unit (validasi/bundel/kunci terenkripsi/tidak cocok/kedaluwarsa, `domainMatches`, renderer, label, sync dengan handle palsu lokal dan remote, proxy lama, watcher + cooldown, 409 hapus, akses
   viewer/PATCH, redaksi audit, DTO `""`/null). **Belum diuji nyata** (Docker mati saat dikerjakan): migrasi di Postgres sungguhan, Traefik yang benar-benar menyajikan sertifikat (SNI, wildcard, issuer),
   Traefik dengan direktori dinamis kosong saat start, pemuatan ulang saat berkas diganti di volume, recreate proxy lama, server remote lewat SSH. Lakukan smoke test dengan sertifikat self-signed sebelum rilis.
+
+## Konfigurasi dinamis Traefik (editor di dashboard)
+
+- `src/modules/proxy-config/` — berkas konfigurasi **dinamis** Traefik (file provider) tulisan operator, per proxy (host atau server remote). Entity `ProxyConfigFile`
+  (`proxy_config_files`: `name` slug `[a-z0-9-]{1,40}` unik per `server_id` (dua indeks unik parsial; `server_id` null = host, FK `servers` ON DELETE CASCADE), `content` YAML, `enabled`,
+  timestamptz; migrasi `ProxyConfigFiles`). **DB = sumber kebenaran**: volume bisa ditulis ulang kapan pun (`POST /proxy/config/sync`) — restore instance memulihkan baris tetapi
+  **tidak** menulis volume (sama seperti sertifikat), jadi web punya tombol "Terapkan ulang". `ProxyConfigModule` hanya membaca entity `Domain` (referensi middleware) dan di-import
+  `ApplicationModule`, tidak pernah sebaliknya; controller statis (`presets`, `sync`, `status`) didaftarkan **sebelum** yang ber-`:id`.
+- **Penulisan** (`proxy-config-sync.service.ts`): ke volume `aoox_proxy_certs` (dipasang `/etc/traefik/dynamic` di proxy, `/dynamic` di helper) lewat busybox + `putArchive` — pola
+  `CertificateSyncService`, antrian satu-sinkron-per-daemon sendiri (kedua modul menulis berkas berbeda di volume yang sama, jadi tidak perlu berbagi antrian). Nama berkas **selalu**
+  `user-<name>.yml` (`userFileName`), jadi sapuan `*.crt`/`*.key` dan penulisan ulang `certs.yml` milik modul sertifikat tidak pernah menyentuhnya, dan sinkron ini **tidak pernah**
+  menulis `certs.yml`/crt/key; penyapuan hanya mencocokkan `user-*.yml` yang tak ada di daftar simpan (tanpa jeda 5 detik seperti sertifikat — berkas saling merujuk lewat `nama@file`,
+  bukan path, jadi tak ada risiko urutan). Berkas dinonaktifkan = dihapus dari volume tetapi tetap di DB. Proxy lama tanpa provider file dibuat ulang **sekali**
+  (`ProxyService.upgradeToCustomCerts`, sama dengan sertifikat) dan karena itu API meminta persetujuan: `409 {code: 'proxy-restart-required'}` kecuali `acceptProxyRestart: true`
+  (create/update body, sync query); `GET /proxy/config/status` → `{proxy, fileProvider, needsRecreate}` supaya web bertanya sebelum menyimpan; respons sync membawa `notice` bila terjadi.
+- **Validasi** (`proxy-config-schema.ts`, pure): `js-yaml` `load` (**dependensi langsung**, v4 CJS + `@types/js-yaml` dev — sebelumnya hanya transitif lewat eslint/nest-cli; jangan ganti ke
+  paket ESM-only, memecahkan Jest), maks 64 KB (byte), hanya kunci top-level `http` dengan `middlewares|routers|services|serversTransports`; `tls`/`tcp`/`udp` ditolak dengan alasan,
+  kunci lain ditolak; nama elemen `[a-z0-9-]{1,63}`; nama harus unik per proxy lintas berkas aktif (400). Validasi struktur saja — opsi tiap middleware divalidasi Traefik sendiri.
+- **Verifikasi & pemulihan**: setelah tulis (dan proxy `running`), tunggu `verifyWaitMs` 4 dtk, baca `containerLogsSince` log `aoox-proxy`, `errorsAbout()` (`traefik-log.ts`, pure) mengambil
+  baris error yang menyebut nama berkas **atau** elemen `nama@file` dari berkas itu (galat berkas lain tidak dituduhkan; warna ANSI/timestamp dibuang, ulangan dilipat). Ada galat →
+  baris DB dikembalikan (hapus baris baru / isi lama), sinkron ulang tanpa verifikasi, balas 400 dengan kutipan Traefik. Daemon tak terjangkau → juga dikembalikan + 502. Proxy mati/tak ada
+  → hanya `warning` (berkas tersimpan). Format galat Traefik nyata (diuji): `ERR Error occurred during watcher callback error="collecting file configs: /etc/traefik/dynamic/user-x.yml: field
+  not found, node: opsi"` (opsi tak dikenal/tipe salah), `ERR error="middleware \"x@file\" does not exist" routerName=r@file`, `ERR error="error while parsing rule …"`.
+  **Batas**: nilai keliru yang tidak dicatat Traefik di level INFO (mis. URL service `://nope`) lolos; konfigurasi valid tetap bisa menimpa perutean domain lain — itu sebabnya tulis = owner saja.
+- **API** (`@Roles('owner','admin')` baca, `@Roles('owner')` tulis, throttle 20/menit): `GET /proxy/config?serverId=` (tanpa isi; `usedByDomains`), `GET /proxy/config/:id`, `POST` `{name, content,
+  enabled?, serverId?, acceptProxyRestart?}`, `PUT /:id` `{content?, enabled?, acceptProxyRestart?}`, `DELETE /:id`, `POST /proxy/config/sync`, `GET /proxy/config/presets`, `POST
+  /proxy/config/presets/:preset {params}` (hanya membangun YAML, tidak menyimpan; owner). Audit log: key `content` dan `password` sudah di-redact. Hash basic auth disimpan di YAML sebagai
+  `user:$2y$…` (bcryptjs `$2b$` ditulis ulang jadi `$2y$`, algoritma sama; diuji nyata dengan Traefik: 401 tanpa/salah kredensial, 200 dengan).
+- **Preset** (`proxy-config-presets.ts`, pure + bcrypt): `basic-auth`, `security-headers`, `rate-limit`, `ip-allowlist`, `redirect-www`; hanya pembuat YAML (hasilnya berkas biasa yang bisa diedit).
+  `redirect-www` memakai `redirectRegex` tanpa look-ahead (RE2) — harus dipasang hanya ke host yang diarahkan.
+- **Middleware per domain** (`Domain.middlewares` jsonb `string[]` default `[]`, migrasi `DomainMiddlewares`): `PATCH /applications/:id/domains/:domainId` kini menerima `certificateId?` **dan/atau**
+  `middlewares?` (minimal satu, 400 bila kosong; developer+, viewer 403 lewat aturan tulis; `applyRuntimeConfig`). Nama `name@file` (`MIDDLEWARE_REF`, `proxy/middleware-ref.ts`) harus ada di berkas
+  **aktif** pada proxy yang melayani aplikasi (`ProxyConfigService.assertMiddlewaresExist(app.serverId, …)` → 400). `GET /applications/:id/domain-middlewares` (semua anggota project) → `[{ref, file}]`.
+  Menonaktifkan/menghapus/menulis ulang berkas sehingga middleware yang dipakai domain di proxy itu hilang = **409** menyebut domain (dan nama middleware); sifat ini sengaja ketat, bukan peringatan.
+  `ProxyService.buildLabels`: `RoutedDomain.middlewares`; **satu router per daftar middleware berbeda** (Traefik memasang middleware per router, satu router melayani banyak host) — grup tanpa
+  middleware memakai nama router lama persis (label domain tanpa middleware tidak berubah, diuji sama persis), grup lain `-m<sha1 8 hex dari daftar>` (stabil, tidak bergantung domain lain), untuk router
+  `-secure`, `-secure-custom`, dan router http polos (host yang dilayani lewat http; tanpa ACME host https dilayani di keduanya dan keduanya membawa middleware). Router `-redirect` **tidak** membawa
+  middleware (hanya mengalihkan, middleware `-https@docker`-nya tetap). Entri yang bukan `name@file` dibuang sebelum menjadi nilai label (tanpa injeksi). **Pindah server**: `PATCH /applications/:id`
+  yang mengubah `serverId` (host↔remote, remote↔remote) memanggil `UpdateApplicationService.pruneDomainMiddlewares()` tepat setelah app disimpan dan **sebelum** jalur mana pun yang menghitung ulang label:
+  tiap domain hanya mempertahankan middleware yang NAMANYA didefinisikan berkas **aktif** di proxy tujuan (`ProxyConfigService.availableMiddlewares(app.serverId)`, null = host), sisanya dibuang,
+  warning log per domain, dan respons PATCH (entity `Application`) mendapat field aditif `droppedMiddlewares: [{domain, names[]}]` **hanya bila ada yang dibuang** (bentuk respons lain tidak berubah).
+  Tanpa perubahan `serverId` atau tanpa domain bermiddleware, tidak ada query ke proxy. Pindah server tidak memindahkan berkas konfigurasi dinamis, tetapi **sertifikat kustom ikut ditangani** (lihat bagian Sertifikat SSL kustom: `UpdateApplicationService.moveCertificates`, tepat setelah `pruneDomainMiddlewares`,
+  memakai daftar domain yang sama — satu query). Ekspor/impor project tidak membawa berkas
+  maupun middleware domain (impor tetap berhasil bila file sumbernya membawa field itu — diabaikan, diuji).
+- **Belum / di luar cakupan**: konfigurasi **statis** Traefik (level log, access log, IP tepercaya — butuh recreate proxy), editor visual middleware, TCP/UDP, validasi opsi per middleware di sisi aoox.
+  **Diuji nyata** (Traefik milik dev, hanya lewat berkas `user-test-*`): berkas dimuat/ditolak/dipulihkan, nonaktif→404, basic auth, header, middleware per domain (header, basic auth, keduanya
+  berurutan), 409/400; UI. **Belum diuji**: server remote sungguhan (SSH), Swarm, domain HTTPS dengan sertifikat kustom + middleware (hanya unit test label), proxy lama yang dibuat ulang.
 
 ## Notifikasi
 
@@ -1160,6 +1237,44 @@ NestJS 11 backend for aoox (self-hosted PaaS).
   `service` — jangan pakai `declare` di DTO turunan: dekorator validasinya tidak terdaftar). `ComposeModule` sekarang meng-export `ComposeService`.
   Belum: riwayat > 20 di UI, streaming output.
 
+## Docker manager (Infrastruktur > Docker)
+
+- `src/modules/docker-manager/` — lihat dan lakukan hal dasar di daemon mana pun: host (`serverId` kosong) atau server remote (`?serverId=<uuid>` → `RemoteDockerService.forServer`,
+  `DockerTargetService.handle`; uuid tak dikenal 404, bukan uuid 400). Bukan Portainer: tanpa exec/shell, compose editor, build/pull manual. Flow di folder sendiri:
+  `list-containers`, `container-logs`, `container-action` (start/stop/restart), `remove-container`, `list-images`, `remove-image` (+ prune dangling), `list-volumes`, `list-networks`.
+  Satu panggilan Engine per tab (`listContainers all` + `listImages`/`listNetworks`/`system/df`); "dipakai oleh" dihitung dari **satu** `listContainers` (`ImageID`, `Mounts`,
+  `NetworkSettings.Networks`), bukan N+1. Klien: `listImages`, `listNetworks`, `ContainerSummary` bertambah `ImageID/Created/Mounts/NetworkSettings`, `HostConfig.Mounts`.
+- **Route** (semua `@Controller('docker')`): `GET /docker/containers`, `GET /docker/containers/:id/logs?tail` (1–500, default 200, dipotong 500 baris/200 KB; satu kali ambil, bukan stream),
+  `POST /docker/containers/:id/start|stop|restart` (204), `DELETE /docker/containers/:id?force=` (204; berjalan tanpa force = 409 dari daemon), `GET /docker/images`,
+  `POST /docker/images/prune` (hanya dangling), `DELETE /docker/images/:id` (204), `GET /docker/volumes`, `GET /docker/networks`. **Peran**: baca + log `@Roles('owner','admin')`, semua tulis
+  `@Roles('owner')` (token API ber-scope ditolak otomatis oleh `@Roles`; token readOnly 403 untuk tulis; member 403 untuk semua; diuji nyata). Tulis di-throttle 30/menit, volume 20/menit
+  (`/system/df` berat). Tiap route tulis ada teks Indonesia di `aoox-web/.../audit-log.format.ts` (6 kunci, 1:1).
+- **Pengaman (inti fitur, `managed.ts` murni + `DockerTargetService.resolveUnmanaged`)**: setiap tulis container meng-`inspect` dulu dan memutuskan dari **apa yang dilaporkan daemon**
+  (id penuh, nama, label), bukan dari string yang dikirim — nama dan id mendapat putusan yang sama. `classifyContainer` menganggap milik aoox (→ **403**, pesan menunjuk halaman resource):
+  hostname API sendiri (`os.hostname()` = id pendek container; hanya untuk daemon host; harus 12–64 hex), label `aoox.application/.database/.compose/.companion`, `aoox.component=*`
+  (proxy, registry, build, job, backup…), compose project `aoox` (postgres/api/web panel — **setelah** cek component, supaya `aoox-proxy` yang juga berlabel project `aoox` terbaca "proxy"),
+  project `aoox-<slug>` (stack user), dan nama berawalan `aoox-`/`aoox_` walau tanpa label. Referensi container divalidasi (`isSafeContainerRef`: 64 hex atau nama Docker sah) sebelum dikirim ke
+  daemon, id image (`isSafeImageId`) juga; tidak ada yang disisipkan ke perintah shell (hanya path Engine API ter-encode). Respons daftar memakai DTO eksplisit — tanpa `Config.Env`/label mentah.
+  Log container boleh dibaca untuk container aoox juga (membaca tidak merusak); aksi tidak.
+- **Image**: hapus hanya bila **tidak ada container (jalan atau berhenti)** yang dibuat dari image itu (409 menyebut nama container) dan bukan image aoox (`isAooxImage`: `aoox-*` helper,
+  `aoox/<project>/<app>`, `hideandseeklab/aoox-*` → 409 "bersihkan lewat Disk Docker"); id dicocokkan terhadap daftar daemon dan harus tepat satu. **Lapis perlindungan kedua** (`image-protection.ts` murni + `ImageProtectionService`, 3 query per list/hapus,
+  bukan per image; `protectedReason` ikut di DTO list supaya web menyembunyikan tombol): **409** bila image (a) direferensikan DB sebagai `Application.currentImage`, `Deployment.imageRef` yang
+  masih tersimpan (rollback memakainya; baris lama yang dibersihkan `MaintenanceService` otomatis tak lagi melindungi) atau `PreviewDeployment.imageRef` berstatus `building`/`running`, dibatasi aplikasi
+  di daemon itu (`Application.serverId` = server terpilih, atau `IS NULL` untuk host), atau (b) — **hanya di host** — repo-nya berawalan host registry lokal (`REGISTRY_PUBLIC_HOST:REGISTRY_PORT`
+  default `localhost:5000`, plus `url`/`domain` baris `registries` bertipe `self-hosted`): "milik registry aoox, hapus lewat Registry". Kecocokan ref memakai `parseImageRef` (kanonik:
+  `docker.io/library/nginx` = `nginx` = `nginx:latest`, host dengan port tidak tertukar dengan tag, `@sha256` dicocokkan ke `RepoDigests`, id penuh/pendek ke `Id`) — diuji unit, termasuk
+  `localhost:5000` ≠ `localhost:5001`. Server remote tidak memakai aturan registry (isinya hanya salinan tarikan) tetapi tetap dilindungi bila cocok dengan baris DB server itu.
+  Prune hanya dangling milik **semua** pemakai daemon itu, tidak terbatas aoox — web menyebut ini di dialog konfirmasi beserta perkiraan jumlah/ukuran dari daftar yang sudah dimuat.
+  **Belum ada** (tahap 2, sengaja tidak dikerjakan): hapus volume/network non-aoox. **Belum teruji nyata**: server remote lewat SSH, dan jalur hostname-API-sendiri di container API sungguhan.
+- **Volume**: ukuran dari `system/df` (`-1` → `null`), penanda `managed` (`isAooxVolume`), `orphan` memakai `MaintenanceService.orphanVolumeNames(df)` (kini publik; `MaintenanceModule` meng-export
+  `MaintenanceService`) — **hanya host**; server remote selalu `orphan:false` karena DB panel hanya tahu volume host. Network: bawaan (`bridge/host/none/ingress/docker_gwbridge`), `managed`
+  (`aoox`, `aoox-swarm`, project `aoox*`). Volume dan network tahap ini baca saja.
+- **Diuji nyata** (API dan web milik sendiri di DB terisolasi, Docker lokal): decoy berlabel aoox (component, project `aoox`, `aoox.application`, nama `aoox-…`) ditolak 403 untuk stop/restart/start/hapus/hapus-force
+  lewat nama **dan** id, StartedAt tak berubah; lalu `aoox-proxy`/`aoox-registry`/`aoox_db` sungguhan ditolak 403 untuk lima aksi yang sama dan tidak tersentuh; container biasa: log, stop, start (304 diperlakukan sukses),
+  restart, hapus tanpa force 409 / force 204, hapus yang berhenti, container yang tidak ada 404; image dipakai 409, tak terpakai 204, id aneh 404; volume/network terdaftar; admin baca 200 tulis 403, member 403, token readOnly baca 200 tulis 403,
+  token ber-scope 403, audit log mencatat tiap aksi (termasuk 403/404/409). **Belum diuji nyata**: server remote lewat SSH (kodenya sama, `forServer`), prune dangling di host ini (ada image dangling milik user;
+  hanya unit test), jalur hostname-sendiri di container API sungguhan (hanya unit test; di host dev hostname bukan id container).
+
 ## Pemeliharaan disk
 
 - `src/modules/maintenance/` — `MaintenanceService.usage()` (`GET /maintenance/disk`, owner/admin: `GET /system/df` diringkas + `reclaimableBytes` = image dangling + build cache
@@ -1195,6 +1310,7 @@ NestJS 11 backend for aoox (self-hosted PaaS).
 
 ## Ekspor/impor project
 
+- Domain diekspor hanya `{host, https}`: **berkas konfigurasi dinamis Traefik** (per proxy) dan **`Domain.middlewares`** tidak ikut; domain hasil impor tanpa middleware, dan impor tidak gagal bila file sumber membawa field `middlewares` (diabaikan, ada tesnya).
 - `src/modules/project-transfer/` — format sendiri (`project-export.types.ts`: `format: 'aoox-project'`, `version: 1`). Tanpa id: referensi ke objek platform
   (registry, git credential, tujuan backup, server) dibawa **berdasarkan nama** dan dicocokkan saat impor; yang tidak ketemu → kolom null + `warnings`, bukan error.
   Isi: project (nama/deskripsi/env), aplikasi (sumber, build, env/buildArgs, domain, mount, job, jadwal backup, limit, preview), database (engine/tag/nama/user, mount, job,

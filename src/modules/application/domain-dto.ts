@@ -8,13 +8,21 @@ export interface DomainDto {
   https: boolean;
   certificateId: string | null;
   certificateName: string | null;
+  /** Operator middlewares (`name@file`) in front of this host, in order. */
+  middlewares: string[];
   createdAt: Date;
 }
 
 export function toDomainDto(
   d: Pick<
     Domain,
-    'id' | 'applicationId' | 'host' | 'https' | 'certificateId' | 'createdAt'
+    | 'id'
+    | 'applicationId'
+    | 'host'
+    | 'https'
+    | 'certificateId'
+    | 'middlewares'
+    | 'createdAt'
   >,
   certificateName: string | null,
 ): DomainDto {
@@ -25,6 +33,7 @@ export function toDomainDto(
     https: d.https,
     certificateId: d.certificateId ?? null,
     certificateName: d.certificateId ? certificateName : null,
+    middlewares: d.middlewares ?? [],
     createdAt: d.createdAt,
   };
 }

@@ -232,6 +232,34 @@ describe('ProjectImportService', () => {
     expect(report.created.applications).toBe(1);
   });
 
+  it('a domain that carries middlewares (not part of the format) still imports, without them', async () => {
+    const { service, domains } = build({});
+    const report = await service.import(
+      {
+        ...base,
+        applications: [
+          {
+            name: 'api',
+            appName: 'api-mw1',
+            domains: [
+              {
+                host: 'mw.example.com',
+                https: true,
+                middlewares: ['auth@file'],
+              },
+            ],
+          },
+        ],
+      },
+      options,
+    );
+    expect(report.created.domains).toBe(1);
+    expect(report.warnings).toEqual([]);
+    expect(domains.save).toHaveBeenCalledTimes(1);
+    const created = JSON.stringify(domains.create.mock.calls[0][0]);
+    expect(created).not.toContain('middlewares');
+  });
+
   it('renames a slug that already exists and skips taken domains', async () => {
     const { service, apps, domains } = build({
       apps: [{ id: 'old', appName: 'api-abc123' }],

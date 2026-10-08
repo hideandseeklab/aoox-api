@@ -5,11 +5,16 @@ import { ServerService } from '../server/server.service';
 import { LocalPtySession } from './local-pty.session';
 import { SshSession, SshTarget } from '../ssh/ssh.session';
 import {
+  authorizeAdvice,
   authorizeCommand,
   describeKeyError,
   publicKeyLine,
   SshKeyService,
 } from '../ssh/ssh-key.service';
+import {
+  isLocalSshHost,
+  isValidLoginName,
+} from './authorize-terminal/terminal-authorize';
 import { TerminalSize } from './terminal.protocol';
 import { TerminalSession } from './terminal.session';
 
@@ -43,6 +48,10 @@ export interface TerminalStatus {
   publicKey: string | null;
   /** One-liner the user runs on the host, once, to allow the key. */
   authorizeCommand: string | null;
+  /** Which account to run `authorizeCommand` as, and what to do if root is refused (null when there is no command). */
+  authorizeNote: string | null;
+  /** True when `POST /terminal/authorize` can write the key for the user (see `autoAuthorizeBlocker`). */
+  canAutoAuthorize: boolean;
   /** Why the credential could not be prepared (e.g. key dir not writable). */
   error: string | null;
 }
@@ -111,20 +120,54 @@ export class TerminalBackendService {
 
   /** Login identity for a target and, when it is the platform key, the
    *  command that authorizes it there. Used for the auth-failure message. */
-  async authHint(
-    serverId?: string,
-  ): Promise<{ where: string; command: string | null }> {
+  async authHint(serverId?: string): Promise<{
+    where: string;
+    username: string;
+    command: string | null;
+  }> {
     if (serverId) {
       const { target, usesPlatformKey } = await this.servers.resolve(serverId);
       return {
         where: `${target.username}@${target.host}`,
+        username: target.username,
         command: usesPlatformKey
           ? authorizeCommand(this.keys.load().publicKey)
           : null,
       };
     }
     const s = this.status();
-    return { where: `${s.username}@${s.host}`, command: s.authorizeCommand };
+    return {
+      where: `${s.username}@${s.host}`,
+      username: s.username ?? DEFAULT_TERMINAL_SSH_USER,
+      command: s.authorizeCommand,
+    };
+  }
+
+  /**
+   * Why the platform key cannot be authorized on the host automatically
+   * (null = it can). Only the SSH-to-host backend with the generated key,
+   * pointed at the machine the Docker daemon runs on, qualifies.
+   */
+  autoAuthorizeBlocker(): string | null {
+    const ssh = this.ssh;
+    if (!ssh) {
+      return 'The terminal runs a local shell (TERMINAL_SSH_HOST is not set), so there is no host key to authorize.';
+    }
+    if (this.keySource !== 'generated') {
+      return 'An explicit key or password is configured (TERMINAL_SSH_PRIVATE_KEY/_FILE or TERMINAL_SSH_PASSWORD), so the platform key is not used.';
+    }
+    if (!isLocalSshHost(ssh.host)) {
+      return `TERMINAL_SSH_HOST (${ssh.host}) is not the Docker host; authorize the key on that machine manually.`;
+    }
+    if (!isValidLoginName(ssh.username)) {
+      return `TERMINAL_SSH_USER (${ssh.username}) is not a valid login name.`;
+    }
+    return null;
+  }
+
+  /** Target for the generated platform key (used to test a fresh authorization). */
+  platformTarget(): SshTarget {
+    return this.resolveTarget();
   }
 
   /** Public key of whichever credential is in use (null for password auth). */
@@ -146,6 +189,8 @@ export class TerminalBackendService {
       keySource: this.keySource,
       publicKey: null,
       authorizeCommand: null,
+      authorizeNote: null,
+      canAutoAuthorize: this.autoAuthorizeBlocker() === null,
       error: null,
     };
     if (!this.ssh) return base;
@@ -155,6 +200,9 @@ export class TerminalBackendService {
         ...base,
         publicKey,
         authorizeCommand: publicKey ? authorizeCommand(publicKey) : null,
+        authorizeNote: publicKey
+          ? authorizeAdvice(this.ssh.username, 'environment')
+          : null,
       };
     } catch (err) {
       return { ...base, error: describeKeyError(err) };

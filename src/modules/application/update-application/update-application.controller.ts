@@ -5,7 +5,10 @@ import type { JwtPayload } from '../../auth/jwt.strategy';
 import { Application } from '../application.entity';
 import { ApplicationParamsDto } from '../get-application/get-application.dto';
 import { UpdateApplicationDto } from './update-application.dto';
-import { UpdateApplicationService } from './update-application.service';
+import {
+  DroppedMiddlewares,
+  UpdateApplicationService,
+} from './update-application.service';
 
 @Controller('applications')
 @UseGuards(JwtAuthGuard)
@@ -17,7 +20,7 @@ export class UpdateApplicationController {
     @CurrentUser() user: JwtPayload,
     @Param() params: ApplicationParamsDto,
     @Body() dto: UpdateApplicationDto,
-  ): Promise<Application> {
+  ): Promise<Application & { droppedMiddlewares?: DroppedMiddlewares[] }> {
     return this.service.execute(user.sub, params.id, dto, user.email);
   }
 }
