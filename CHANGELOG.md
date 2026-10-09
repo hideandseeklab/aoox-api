@@ -10,6 +10,10 @@ Versions below 1.0.0 may include breaking changes in a minor release.
 
 ### Added
 
+- **Deploy step times.** `deployments.step_times` (jsonb, migration `DeploymentStepTimes`) records when each timed step (`building`, `pushing`, `starting`) was first reached, written by the runner on each status change; `queued` is `createdAt` and the end is `finishedAt`. `GET /applications/:id/deployments` and `GET /deployments/:id` return `stepTimes` (null on old rows), and the `deployment:status` socket event carries an optional `at` timestamp so a live page can time steps.
+- **In-app notification inbox.** Every event passed to `NotificationService.broadcast` (deployments, backup and job failures, container/server/HTTP down and recovered, disk, certificate, DNS, app errors) is also stored in `inbox_events`, whatever the channels and toggles are, with the same already-redacted text. Project events are visible only to people who can access that project; platform events (disk, server, certificate) only to owner and admin. `GET /inbox?limit&before` returns the items plus the caller's unread count and `POST /inbox/read` marks everything read (per user, `users.inbox_read_at`; existing users start with nothing unread). Rows are kept 30 days and at most 1000 (nightly prune). Migration `InboxAndOnboarding`.
+- **Onboarding checklist.** `GET /onboarding` (owner only; others get `visible: false` without any lookups) computes the getting-started steps from the real state: local registry, reverse proxy running, panel domain (optional), first project and first running application/database/stack. It turns invisible when every required step is done, and `POST /onboarding/dismiss` (owner, audited) hides it for good for that user.
+
 - **Docker manager API** (`/docker/*`, `?serverId=` picks the host or a remote server): lists containers (no env vars in the answer), images
   (with how many containers use each), volumes (sizes from one `system/df`, orphan marker for aoox's own volumes on the host) and networks;
   owner/admin can read them and tail a container's logs (one shot, at most 500 lines). The owner can start, stop, restart and remove

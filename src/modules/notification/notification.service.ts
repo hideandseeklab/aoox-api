@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { decryptSecret, encryptSecret } from '../docker/secret.util';
+import { InboxService } from '../inbox/inbox.service';
 import { NotificationMessage, sendNotification } from './notification-sender';
 import { Notification, NotificationConfig } from './notification.entity';
 
@@ -66,6 +67,7 @@ export class NotificationService {
     @InjectRepository(Notification)
     readonly repo: Repository<Notification>,
     config: ConfigService,
+    private readonly inbox: InboxService,
   ) {
     this.encryptionKey = config.getOrThrow<string>('ENCRYPTION_KEY');
   }
@@ -130,13 +132,16 @@ export class NotificationService {
   }
 
   /**
-   * Sends `message` to every channel subscribed to `event`. Failures are
+   * Records `message` in the in-app inbox, then sends it to every channel
+   * subscribed to `event`. Failures are
    * logged per channel and never thrown — callers are fire-and-forget.
    */
   async broadcast(
     event: NotificationEvent,
     message: NotificationMessage,
   ): Promise<void> {
+    // The in-app inbox keeps every event, whatever the channels or toggles say.
+    await this.inbox.record(event, message);
     const channels = await this.listWithConfig();
     await Promise.all(
       channels

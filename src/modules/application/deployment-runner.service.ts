@@ -31,6 +31,7 @@ import { Deployment, DeploymentStatus } from './deployment.entity';
 import { DeploymentEventsService } from './deployment-events.service';
 import { triggerSummary } from './trigger-summary';
 import { EnvResolverService, parseEnvLines } from './env-resolver.service';
+import { recordStep } from './deployment-steps';
 import { gitContextRef, rootDirectoryError } from './root-directory';
 import { NixpacksBuilderService } from './nixpacks-builder.service';
 import { RailpackBuilderService } from './railpack-builder.service';
@@ -782,7 +783,7 @@ export interface BuildLog {
 }
 
 /** Buffers progress lines and persists them to the deployment row in batches. */
-class DeploymentLog implements BuildLog {
+export class DeploymentLog implements BuildLog {
   private buffer = '';
   private lastFlush = 0;
   private secrets: string[] = [];
@@ -811,11 +812,18 @@ class DeploymentLog implements BuildLog {
   }
 
   private setStatus(status: DeploymentStatus): void {
+    const now = new Date();
     this.deployment.status = status;
+    this.deployment.stepTimes = recordStep(
+      this.deployment.stepTimes,
+      status,
+      now,
+    );
     this.events.emitStatus({
       deploymentId: this.deployment.id,
       applicationId: this.deployment.applicationId,
       status,
+      at: now.toISOString(),
     });
   }
 

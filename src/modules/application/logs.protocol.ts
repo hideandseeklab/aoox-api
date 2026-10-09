@@ -23,6 +23,8 @@ export interface LogsServerEvents {
   'deployment:status': (payload: {
     deploymentId: string;
     status: string;
+    /** ISO time the status was announced; absent on the snapshot sent when subscribing. */
+    at?: string;
   }) => void;
   /** Broadcast to every socket ticketed for the application, not just one
    * already subscribed to a deployment — lets an open page notice a

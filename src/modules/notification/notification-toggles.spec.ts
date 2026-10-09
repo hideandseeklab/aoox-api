@@ -64,6 +64,7 @@ describe('notification toggles', () => {
         },
       } as never,
       { getOrThrow: () => 'k' } as never,
+      { record: jest.fn() } as never,
     );
     const create = new CreateNotificationService(svc);
     for (const value of [true, false]) {
@@ -97,6 +98,7 @@ describe('notification toggles', () => {
         },
       } as never,
       { getOrThrow: () => 'k' } as never,
+      { record: jest.fn() } as never,
     );
     await new CreateNotificationService(svc).execute({
       name: 'n',

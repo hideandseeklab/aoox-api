@@ -52,9 +52,12 @@ describe('NotificationService.broadcast', () => {
   const repo = {
     createQueryBuilder: () => qb,
   } as unknown as Repository<Notification>;
-  const svc = new NotificationService(repo, {
-    getOrThrow: () => 'k',
-  } as unknown as ConfigService);
+  const inbox = { record: jest.fn().mockResolvedValue(undefined) };
+  const svc = new NotificationService(
+    repo,
+    { getOrThrow: () => 'k' } as unknown as ConfigService,
+    inbox as never,
+  );
   const message = { title: 't', level: 'info' as const, fields: [], data: {} };
 
   beforeEach(() => {
@@ -71,6 +74,12 @@ describe('NotificationService.broadcast', () => {
     expect(
       sendNotification.mock.calls.map((c) => (c[0] as { url: string }).url),
     ).toEqual(urls);
+  });
+
+  it('records every event in the in-app inbox first, even when no channel wants it', async () => {
+    await svc.broadcast('diskLow', message);
+    expect(inbox.record).toHaveBeenCalledWith('diskLow', message);
+    expect(sendNotification).not.toHaveBeenCalled();
   });
 
   it('logs and continues when one channel fails', async () => {

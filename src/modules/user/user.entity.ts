@@ -46,6 +46,24 @@ export class User {
   })
   totpBackupHashes: string[] | null;
 
+  /** Inbox events older than this count as read (set to "now" by "mark all as read"). */
+  @Column({
+    name: 'inbox_read_at',
+    type: 'timestamptz',
+    default: () => 'now()',
+    select: false,
+  })
+  inboxReadAt: Date;
+
+  /** When the user hid the dashboard's onboarding checklist; null = still showing. */
+  @Column({
+    name: 'onboarding_dismissed_at',
+    type: 'timestamptz',
+    nullable: true,
+    select: false,
+  })
+  onboardingDismissedAt: Date | null;
+
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;
 

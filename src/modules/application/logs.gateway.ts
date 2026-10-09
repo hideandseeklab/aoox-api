@@ -129,7 +129,11 @@ export class LogsGateway
     });
     const offStatus = this.events.onStatus((e) => {
       if (e.deploymentId === deploymentId) {
-        client.emit('deployment:status', { deploymentId, status: e.status });
+        client.emit('deployment:status', {
+          deploymentId,
+          status: e.status,
+          at: e.at,
+        });
       }
     });
     this.subscriptions.set(client.id, () => {

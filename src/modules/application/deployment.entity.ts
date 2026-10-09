@@ -8,6 +8,7 @@ import {
   PrimaryGeneratedColumn,
 } from 'typeorm';
 import { Application } from './application.entity';
+import type { DeploymentStepTimes } from './deployment-steps';
 
 /** `auto-update` = a build-style deployment queued by the image update watcher. */
 /** `config` = re-run the current image so runtime config (mode, replicas, node…) applies; no build. */
@@ -72,6 +73,13 @@ export class Deployment {
   /** Email of the actor for `manual`, or the git provider's pusher name for `webhook`. */
   @Column({ name: 'triggered_by', type: 'varchar', nullable: true })
   triggeredBy: string | null;
+
+  /**
+   * When each step started (`building` also covers pulling an image), written by
+   * the runner on every status change. Null on deployments from before this existed.
+   */
+  @Column({ name: 'step_times', type: 'jsonb', nullable: true })
+  stepTimes: DeploymentStepTimes | null;
 
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;

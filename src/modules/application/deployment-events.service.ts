@@ -12,6 +12,8 @@ export interface DeploymentStatusEvent {
   deploymentId: string;
   applicationId: string;
   status: DeploymentStatus;
+  /** ISO time the status was announced; lets a live client time the steps itself. */
+  at?: string;
 }
 
 /** Fired once, right when a new deployment row is created (any trigger). */

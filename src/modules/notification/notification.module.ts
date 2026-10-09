@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ScheduleModule } from '@nestjs/schedule';
 import { DockerModule } from '../docker/docker.module';
+import { InboxModule } from '../inbox/inbox.module';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { CreateNotificationController } from './create-notification/create-notification.controller';
 import { CreateNotificationService } from './create-notification/create-notification.service';
@@ -19,6 +20,7 @@ import { TestNotificationService } from './test-notification/test-notification.s
     TypeOrmModule.forFeature([Notification]),
     ScheduleModule.forRoot(),
     DockerModule,
+    InboxModule,
   ],
   controllers: [
     CreateNotificationController,

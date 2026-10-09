@@ -1472,3 +1472,18 @@ NestJS 11 backend for aoox (self-hosted PaaS).
   (semua constraint harus terpenuhi). **Parameter rolling update** per app: `updateParallelism` (1–20), `updateDelaySeconds` (0–600), `updateOrder` `auto|start-first|stop-first`
   (`serviceSpecFor.update`; start-first **tidak dihormati** bila ada host port). Perubahan keduanya di update-application = deployment `config`. Web: field "Constraint tambahan",
   "Rolling update" (task/batch + jeda) dan "Urutan" di form saat mode service; editor label inline per node di kartu Swarm (owner).
+
+## Stepper deploy, inbox notifikasi, onboarding
+
+- **Waktu langkah deploy**: `deployments.step_times` jsonb (`{building?, pushing?, starting?}` = ISO saat langkah **pertama kali** tercapai; `deployment-steps.ts` `recordStep`, pure).
+  Ditulis di `DeploymentLog.setStatus` (runner) dan ikut tersimpan lewat `flush` yang sudah ada; `queued` = `createdAt`, selesai = `finishedAt`. Gagal di tengah → hanya langkah yang
+  sempat tercapai ada. `starting` diumumkan dua kali (health check) → yang pertama menang. Pull image memakai status `building`. `list-deployments` (select eksplisit) dan
+  `get-deployment` mengembalikan `stepTimes` (null di baris lama); event `deployment:status` membawa `at` opsional (socket `/logs`).
+- **Inbox** (`src/modules/inbox/`): semua event yang lewat `NotificationService.broadcast` dicatat dulu ke `inbox_events` (`InboxService.record`, tidak pernah melempar) **sebelum**
+  channel dipilih — tidak bergantung toggle/channel, teks sama dengan pesan channel (sudah ter-redact). Project diturunkan dari `data.applicationId|composeAppId|databaseId`
+  (`inbox-target.ts`); event tanpa project (disk, server, sertifikat…) = platform, hanya owner/admin. Baca (`InboxFeedService`: `GET /inbox?limit&before` + `unread`, `POST /inbox/read`)
+  difilter `ProjectAccessService.accessibleProjectIds`; status dibaca per user lewat `users.inbox_read_at` (default `now()` saat migrasi → tidak ada tumpukan lama). Retensi 30 hari + 1000
+  baris (`@Cron('40 3 * * *')`). **Siklus modul**: `InboxModule` (penyimpanan, hanya entity) di-import `NotificationModule`; pembaca (`InboxFeedModule`, butuh `ProjectModule`) terdaftar di `AppModule`.
+- **Onboarding** (`src/modules/onboarding/`): `GET /onboarding` (owner saja; peran lain `visible:false` tanpa query), langkah registry/proxy/panelDomain(opsional)/project/workload dihitung dari
+  state nyata dengan cek `exists`/`count`; proxy lewat `ProxyService.status()` di-cache 30 dtk (Docker mati = langkah terbuka). `POST /onboarding/dismiss` (`@Roles('owner')`, audit log) menyimpan
+  `users.onboarding_dismissed_at`. Hilang sendiri saat semua langkah wajib selesai. Migrasi `InboxAndOnboarding` (tabel + dua kolom users).

@@ -28,6 +28,7 @@ export class ListDeploymentsService {
         triggeredBy: true,
         createdAt: true,
         finishedAt: true,
+        stepTimes: true,
       },
       order: { createdAt: 'DESC' },
       take: 50,
