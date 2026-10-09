@@ -1,5 +1,9 @@
 # aoox-api
 
+## Language
+
+- Write everything in this repository in English: AGENTS.md, README, CONTRIBUTING, CHANGELOG, code comments and commit messages. Existing Indonesian text is being translated gradually; do not add new Indonesian text.
+
 NestJS 11 backend for aoox (self-hosted PaaS).
 
 ## Struktur folder
