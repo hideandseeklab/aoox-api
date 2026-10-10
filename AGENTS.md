@@ -6,11 +6,10 @@
 
 NestJS 11 backend for aoox (self-hosted PaaS).
 
-## Struktur folder
+## Folder structure
 
-- Semua module ada di `src/modules/<nama-module>/`.
-- Controller, service, dan DTO yang termasuk dalam satu flow disimpan bersama di
-  subdirektori di bawah module, dinamai sesuai flow-nya. Contoh:
+- All modules live in `src/modules/<module-name>/`.
+- Controllers, services, and DTOs that belong to one flow are kept together in a subdirectory under the module, named after the flow. Example:
 
   ```
   src/modules/project/
@@ -25,1469 +24,1334 @@ NestJS 11 backend for aoox (self-hosted PaaS).
       └── list-projects.dto.ts
   ```
 
-## Perintah
+## Commands
 
 - `npm run start:dev` — dev server (watch)
-- `npm run build` — build ke `dist/`
+- `npm run build` — build to `dist/`
 - `npm run lint` — eslint --fix
 - `npm test` / `npm run test:e2e`
 
 ## Git
 
-- Jangan commit atau push kecuali diperintahkan secara eksplisit oleh user.
+- Do not commit or push unless explicitly instructed by the user.
 
 ## Database
 
 - PostgreSQL 16 via `docker-compose.yml` (`npm run db:up` / `db:down`), database `aoox`.
-- Konfigurasi dari `.env` (lihat `.env.example`), dimuat oleh `@nestjs/config`.
-- ORM: TypeORM (`src/modules/database/`). `synchronize` selalu `false` — perubahan schema lewat migrasi:
-  - `npm run migration:generate -- src/modules/database/migrations/<Nama>`
+- Configuration from `.env` (see `.env.example`), loaded by `@nestjs/config`.
+- ORM: TypeORM (`src/modules/database/`). `synchronize` is always `false` — schema changes go through migrations:
+  - `npm run migration:generate -- src/modules/database/migrations/<Name>`
   - `npm run migration:run` / `npm run migration:revert`
-- Entity ditulis sebagai `*.entity.ts` di dalam module masing-masing (`src/modules/<module>/`), otomatis dimuat (`autoLoadEntities`).
+- Entities are written as `*.entity.ts` inside each module (`src/modules/<module>/`), and are loaded automatically (`autoLoadEntities`).
 
 ## Auth
 
 - `src/modules/auth/` — JWT (Bearer) via `@nestjs/jwt` + `passport-jwt`. Flow: `sign-in/`.
-  Artefak non-flow (`jwt.strategy.ts`, `jwt-auth.guard.ts`, `current-user.decorator.ts`) di root module.
-- `src/modules/user/` — entity `User` (`users`), `UserService` untuk query lintas flow.
-- Onboarding: `setup-status/` (`GET /auth/setup-status`) dan `setup/` (`POST /auth/setup`, hanya saat tabel `users` kosong, transaksi SERIALIZABLE) membuat owner pertama.
-  `me/` (`GET /auth/me`) dipakai web untuk memverifikasi session **dan** membawa `version` (versi API yang sedang berjalan dari `package.json`, `me/app-version.ts`, dibaca sekali) untuk semua peran —
-  sidebar web menampilkannya di bawah logo tanpa panggilan tambahan (layout dashboard sudah memanggil `/auth/me`); `GET /instance/update` tetap owner-only.
-- `AdminBootstrapService` (user module): kalau `ADMIN_EMAIL`+`ADMIN_PASSWORD` di-set dan belum ada user, buat owner saat boot. Idempotent — tidak pernah menimpa user yang ada.
-  Dev: `.env` berisi `admin@gmail.com` / `admin` untuk ini (tidak ada lagi migrasi seed).
-- Hash password lewat `src/modules/user/password.util.ts` (bcryptjs).
-- **`JwtStrategy.validate` membaca ulang user dari DB tiap request** (role & keberadaan): ganti peran/hapus user berlaku di request berikutnya, bukan saat token 7 hari
-  kedaluwarsa. Tiket terminal 60 detik tetap membawa `role` dari payload.
-- **Anggota & undangan**: `src/modules/invitation/` — entity `Invitation` (`invitations`: email, role, `token_hash` SHA-256 unik, `invited_by_id`, `expires_at` 7 hari, `accepted_at`).
-  `create-invitation` (owner/admin; hanya owner boleh mengundang owner; mengganti undangan pending untuk email yang sama; token hanya dikembalikan sekali +
-  `acceptUrl` = `${WEB_ORIGIN}/invite/<token>`), `list/revoke-invitation`, **publik** `GET /invitations/by-token/:token` (preview) dan `POST /invitations/accept`
-  (throttle 10/menit; email+role dari undangan, form hanya nama+password; klaim `accepted_at` dalam transaksi → satu link satu akun; membalas `SignInResponseDto`).
-  `src/modules/user/`: `list-users` (owner/admin), `update-user-role` & `delete-user` (owner saja; tidak boleh diri sendiri, `assertNotLastOwner`,
-  `assertOwnsNoProjects` karena `projects.owner_id` cascade). Tidak ada kirim email — link disalin dari Settings. Keanggotaan per project: lihat bagian Project.
-- **API token** (`src/modules/api-token/`, entity `ApiToken` di `api_tokens`: `token_hash` SHA-256 unik `select:false`, `prefix` 10 char untuk tampilan, `expires_at`, `last_used_at`,
+  Non-flow artifacts (`jwt.strategy.ts`, `jwt-auth.guard.ts`, `current-user.decorator.ts`) live at the module root.
+- `src/modules/user/` — entity `User` (`users`), `UserService` for cross-flow queries.
+- Onboarding: `setup-status/` (`GET /auth/setup-status`) and `setup/` (`POST /auth/setup`, only while the `users` table is empty, SERIALIZABLE transaction) create the first owner.
+  `me/` (`GET /auth/me`) is used by the web app to verify the session **and** carries `version` (the running API version from `package.json`, `me/app-version.ts`, read once) for all roles —
+  the web sidebar shows it below the logo with no extra call (the dashboard layout already calls `/auth/me`); `GET /instance/update` remains owner-only.
+- `AdminBootstrapService` (user module): if `ADMIN_EMAIL`+`ADMIN_PASSWORD` are set and no user exists yet, create an owner at boot. Idempotent — it never overwrites existing users.
+  Dev: `.env` contains `admin@gmail.com` / `admin` for this (there is no seed migration anymore).
+- Password hashing via `src/modules/user/password.util.ts` (bcryptjs).
+- **`JwtStrategy.validate` reloads the user from the DB on every request** (role & existence): changing a role or deleting a user takes effect on the next request, not when the 7-day token expires.
+  The 60-second terminal ticket still carries `role` from its payload.
+- **Members & invitations**: `src/modules/invitation/` — entity `Invitation` (`invitations`: email, role, `token_hash` SHA-256 unique, `invited_by_id`, `expires_at` 7 days, `accepted_at`).
+  `create-invitation` (owner/admin; only an owner may invite an owner; replaces the pending invitation for the same email; the token is returned only once +
+  `acceptUrl` = `${WEB_ORIGIN}/invite/<token>`), `list/revoke-invitation`, **public** `GET /invitations/by-token/:token` (preview) and `POST /invitations/accept`
+  (throttle 10/minute; email+role come from the invitation, the form only asks for name+password; claiming `accepted_at` happens in a transaction → one link, one account; replies with `SignInResponseDto`).
+  `src/modules/user/`: `list-users` (owner/admin), `update-user-role` & `delete-user` (owner only; cannot act on yourself, `assertNotLastOwner`,
+  `assertOwnsNoProjects` because `projects.owner_id` cascades). No emails are sent — the link is copied from Settings. Per-project membership: see the Project section.
+- **API token** (`src/modules/api-token/`, entity `ApiToken` in `api_tokens`: `token_hash` SHA-256 unique `select:false`, `prefix` 10 chars for display, `expires_at`, `last_used_at`,
   `read_only`, `project_ids` jsonb):
-  token `aoox_` + 40 alfanumerik, plaintext hanya dikembalikan sekali oleh `POST /api-tokens`; bertindak sebagai user pemiliknya (role sama, dibaca dari DB tiap request).
-  `JwtAuthGuard` sekarang menerima keduanya: bearer yang `looksLikeApiToken` → `ApiTokenService.resolve` (hash lookup, cek expiry, `lastUsedAt` ditulis maks 1×/menit) → `req.user`
-  `{sub,email,role,tokenId}`; selain itu jatuh ke passport-jwt. Token salah/kedaluwarsa → 401. Modul `@Global()` karena guard di-instantiate di tiap module. Flow `create/list/delete-api-token`
-  (`/api-tokens`, milik user sendiri). **Scope per token** (migrasi `ApiTokenScope`): `readOnly` → tiap request yang mengubah state ditolak 403 (memakai `isWriteRequest()` yang sama
-  dengan viewer, jadi tiket websocket tetap boleh); `projectIds` → token hanya melihat project itu **dan** ditolak di semua route ber-`@Roles` (kelola registry, server, proxy, swarm,
-  notifikasi, maintenance, audit log, anggota — pengaturan platform). Yang tetap terbuka untuk token ber-scope adalah route platform **tanpa** `@Roles`, semuanya GET baca
-  (`list-registries`, `list-repositories`, `list-tags`, `self-hosted-status`, `proxy-status`, `list-destinations`) — memang untuk semua member; `POST /users/me/password`
-  juga tanpa `@Roles` tapi sudah menolak aktor API token sendiri. Tiket terminal (`POST /terminal/tickets`) = tulis → token baca-saja 403 (diuji). Keduanya diputuskan **hanya di `JwtAuthGuard`**, yang menaruh `TokenScope` di request context (`setTokenScope`;
-  sesi mendapat `FULL_SCOPE`, sehingga scope yang kosong hanya berarti "bukan request HTTP" = pekerjaan background, bukan salah kabel); `ProjectAccessService.roleFor`/
-  `accessibleProjectIds` meng-**iris**-nya dengan akses user — scope tidak pernah memperluas, termasuk untuk owner/admin platform. `POST`/`DELETE /api-tokens` menolak aktor
-  yang memakai API token (`user.tokenId` → 403) supaya token tidak bisa mencetak token tanpa batas; `projectIds` yang diminta divalidasi lewat `accessibleProjectIds` pembuatnya.
-  Diuji E2E (token penuh/baca saja/ber-scope): deploy 202/403/409, log-ticket 201 untuk ketiganya, `GET /databases/:id` project lain 200/200/404, `/proxy` `/swarm` `/audit-logs` 403 untuk
-  token ber-scope. Belum: scope per resource (mis. hanya deploy), token milik organisasi.
-- **Audit log** (`src/modules/audit-log/`, `@Global()`; entity `AuditLog` di `audit_logs`: aktor snapshot `actor_id`/`actor_email`, `via` session|token|webhook|anonymous, `token_id`,
-  `action` = template route (`POST /applications/:id/deploy`), `path`, `params`, `body` (di-redact: key mengandung password/secret/token/key/content/env → `[redacted]`, string dipotong 200,
-  total ≤ 4 KB; `redact.ts` pure & di-unit-test), `status`, `ip`). Ditulis `AuditLogInterceptor` (`APP_INTERCEPTOR`) untuk semua request non-GET yang sampai handler, dengan status akhir
-  (2xx atau kode HttpException); guard yang menolak (401/403) tidak tercatat. `POST /auth/sign-in` & `/2fa` dicatat sendiri oleh `SignInService` (sukses 200 / gagal 401, IP).
-  Insert fire-and-forget (`save` — `insert` TypeORM menolak tipe jsonb). Retensi 90 hari (`@Cron` 03:17). `GET /audit-logs?limit&before&actorId&action` owner/admin (cursor `before`).
-- **Password**: `POST /users/me/password` (`change-password/`, butuh password lama, hanya sesi — bukan API token) dan `POST /users/:id/password` (`set-user-password/`, owner untuk
-  non-owner, reset tanpa email — disampaikan langsung). Min. 8 karakter (dev `admin`/`admin` hanya lewat bootstrap env).
-- **2FA TOTP** (`src/modules/auth/two-factor/`): `totp.ts` = implementasi sendiri RFC 4226/6238 (SHA-1, 6 digit, 30 s, ±1 langkah, base32, `otpauth://`) dengan vektor uji RFC —
-  **bukan otplib** (v13 bergantung `@scure/base` ESM-only yang memecahkan Jest, pola yang sama dengan Nest v12). `qrcode` (CJS) untuk data URL QR. Kolom user: `totp_secret_encrypted`
-  (AES `ENCRYPTION_KEY`, `select:false`), `totp_enabled`, `totp_backup_hashes` (SHA-256 10 kode cadangan, dihapus saat dipakai). Flow `POST /auth/2fa/setup` (rahasia baru + QR, belum aktif),
-  `/enable {code}` (mengembalikan kode cadangan sekali), `/disable {password}`; owner `POST /users/:id/2fa/disable` untuk non-owner yang terkunci. Semua hanya dari sesi password.
-  Sign-in dua langkah: `POST /auth/sign-in` → `{requiresTwoFactor, challengeToken}` (JWT 5 menit `scope: '2fa'`) → `POST /auth/sign-in/2fa {challengeToken, code}` (TOTP atau kode cadangan).
-  **`JwtStrategy.validate` menolak JWT ber-`scope`** (challenge, tiket terminal/logs) sebagai sesi — sebelumnya challenge token lolos sebagai Bearer penuh. API token melewati 2FA (rahasia terpisah).
-- **Swagger/OpenAPI**: `@nestjs/swagger@11` (v12 ESM-only seperti paket Nest lain) di `main.ts` → `/docs` (UI) dan `/docs-json`; skema DTO/entity diambil **plugin CLI** `@nestjs/swagger`
-  di `nest-cli.json` (`introspectComments`, suffix `.dto.ts` & `.entity.ts`) — tanpa `@ApiProperty` manual. Jest tidak memakai plugin (hanya `nest build`), jadi skema hanya lengkap di build.
-  Dekorator `@ApiTags/@ApiBearerAuth/@ApiOperation` baru dipakai di api-token; endpoint lain tampil tanpa deskripsi.
-- `ValidationPipe` global (`whitelist`, `forbidNonWhitelisted`) — semua body harus lewat DTO class-validator.
-- Rate limit: `@nestjs/throttler` global (300/menit) via `APP_GUARD`; `sign-in` & `setup` 10/menit, `terminal/tickets` 20/menit (`@Throttle`).
-- Versi paket Nest harus di jalur v11 (`@nestjs/jwt@11`, `@nestjs/config@4`, `@nestjs/passport@11`, `@nestjs/typeorm@11`, `@nestjs/websockets@11`) —
-  rilis v12 ESM-only dan memecahkan Jest.
+  token `aoox_` + 40 alphanumeric characters, plaintext returned only once by `POST /api-tokens`; acts as its owner user (same role, read from the DB on every request).
+  `JwtAuthGuard` now accepts both: a bearer that `looksLikeApiToken` → `ApiTokenService.resolve` (hash lookup, expiry check, `lastUsedAt` written at most 1×/minute) → `req.user`
+  `{sub,email,role,tokenId}`; otherwise it falls through to passport-jwt. Wrong/expired token → 401. The module is `@Global()` because the guard is instantiated in every module. Flow `create/list/delete-api-token`
+  (`/api-tokens`, owned by the user themselves). **Scope per token** (migration `ApiTokenScope`): `readOnly` → every state-changing request is rejected with 403 (uses the same `isWriteRequest()` as viewer, so websocket tickets are still allowed);
+  `projectIds` → the token only sees those projects **and** is rejected on all `@Roles`-decorated routes (manage registries, servers, proxy, swarm,
+  notifications, maintenance, audit log, members — platform settings). What stays open to scoped tokens are platform routes **without** `@Roles`, all of them read-only GETs
+  (`list-registries`, `list-repositories`, `list-tags`, `self-hosted-status`, `proxy-status`, `list-destinations`) — intended for all members; `POST /users/me/password`
+  is also without `@Roles` but already rejects API-token actors. Terminal tickets (`POST /terminal/tickets`) = write → read-only token gets 403 (tested). Both are decided **only in `JwtAuthGuard`**, which puts a `TokenScope` into the request context (`setTokenScope`;
+  sessions get `FULL_SCOPE`, so an empty scope only means "not an HTTP request" = background work, not a wiring bug); `ProjectAccessService.roleFor`/
+  `accessibleProjectIds` **intersect** it with the user's access — a scope never expands access, including for platform owner/admin. `POST`/`DELETE /api-tokens` reject actors
+  using an API token (`user.tokenId` → 403) so a token cannot mint unlimited tokens; the requested `projectIds` are validated via `accessibleProjectIds` of the creator.
+  Tested E2E (full/read-only/scoped tokens): deploy 202/403/409, log-ticket 201 for all three, `GET /databases/:id` on another project 200/200/404, `/proxy` `/swarm` `/audit-logs` 403 for
+  the scoped token. Not yet: per-resource scopes (e.g. deploy only), organization-owned tokens.
+- **Audit log** (`src/modules/audit-log/`, `@Global()`; entity `AuditLog` in `audit_logs`: actor snapshot `actor_id`/`actor_email`, `via` session|token|webhook|anonymous, `token_id`,
+  `action` = route template (`POST /applications/:id/deploy`), `path`, `params`, `body` (redacted: keys containing password/secret/token/key/content/env → `[redacted]`, strings truncated to 200,
+  total ≤ 4 KB; `redact.ts` is pure & unit-tested), `status`, `ip`). Written by `AuditLogInterceptor` (`APP_INTERCEPTOR`) for all non-GET requests that reach a handler, with the final status
+  (2xx or HttpException code); guards that reject (401/403) are not logged. `POST /auth/sign-in` & `/2fa` are logged by `SignInService` itself (success 200 / failure 401, IP).
+  Inserts are fire-and-forget (`save` — TypeORM's `insert` rejects the jsonb type). Retention 90 days (`@Cron` 03:17). `GET /audit-logs?limit&before&actorId&action` owner/admin (cursor `before`).
+- **Password**: `POST /users/me/password` (`change-password/`, requires the old password, session only — not API tokens) and `POST /users/:id/password` (`set-user-password/`, owner for non-owners, reset without email — handed over directly). Minimum 8 characters (dev `admin`/`admin` only via bootstrap env).
+- **2FA TOTP** (`src/modules/auth/two-factor/`): `totp.ts` = our own implementation of RFC 4226/6238 (SHA-1, 6 digits, 30 s, ±1 step, base32, `otpauth://`) with RFC test vectors —
+  **not otplib** (v13 depends on the ESM-only `@scure/base`, which breaks Jest — same pattern as Nest v12). `qrcode` (CJS) for the QR data URL. User columns: `totp_secret_encrypted`
+  (AES with `ENCRYPTION_KEY`, `select:false`), `totp_enabled`, `totp_backup_hashes` (SHA-256 of 10 backup codes, removed when used). Flow `POST /auth/2fa/setup` (new secret + QR, not active yet),
+  `/enable {code}` (returns the backup codes once), `/disable {password}`; owner `POST /users/:id/2fa/disable` for a locked-out non-owner. All only from a password session.
+  Two-step sign-in: `POST /auth/sign-in` → `{requiresTwoFactor, challengeToken}` (5-minute JWT with `scope: '2fa'`) → `POST /auth/sign-in/2fa {challengeToken, code}` (TOTP or backup code).
+  **`JwtStrategy.validate` rejects JWTs carrying a `scope`** (challenge, terminal/logs tickets) as a session — previously a challenge token passed as a full Bearer. API tokens skip 2FA (separate secret).
+- **Swagger/OpenAPI**: `@nestjs/swagger@11` (v12 is ESM-only like other Nest packages) in `main.ts` → `/docs` (UI) and `/docs-json`; DTO/entity schemas are picked up by the **CLI plugin** `@nestjs/swagger`
+  in `nest-cli.json` (`introspectComments`, suffixes `.dto.ts` & `.entity.ts`) — no manual `@ApiProperty`. Jest does not use the plugin (only `nest build` does), so schemas are complete only in the build.
+  The `@ApiTags/@ApiBearerAuth/@ApiOperation` decorators are so far used only in api-token; other endpoints appear without descriptions.
+- Global `ValidationPipe` (`whitelist`, `forbidNonWhitelisted`) — every body must go through a class-validator DTO.
+- Rate limiting: global `@nestjs/throttler` (300/minute) via `APP_GUARD`; `sign-in` & `setup` 10/minute, `terminal/tickets` 20/minute (`@Throttle`).
+- Nest packages must stay on the v11 line (`@nestjs/jwt@11`, `@nestjs/config@4`, `@nestjs/passport@11`, `@nestjs/typeorm@11`, `@nestjs/websockets@11`) —
+  v12 releases are ESM-only and break Jest.
 
 ## Project
 
-- `src/modules/project/` — entity `Project` (`projects`, FK `owner_id` → `users`, cascade delete) dan **`ProjectMember`** (`project_members`: `project_id`+`user_id` unik, cascade
-  keduanya, `role` `admin|developer|viewer`). **Akses per project** lewat satu tempat, `ProjectAccessService` (di-export ProjectModule): owner/admin platform → semua project (sebagai admin);
-  pembuat (`owner_id`) → project itu sebagai admin; selain itu hanya project dengan row `project_members`. Project yang tak boleh dilihat = **404** (bukan 403, id tidak bocor).
-  `ProjectService.findOwnedOrFail` dan 6 `findOwnedOrFail` lain (application, compose, managed DB, database backup, volume backup, job — job lewat app/DB/compose pemiliknya)
-  memanggil `access.assertAccess(ownerId, project)`; `list-projects` memakai `access.whereAccessible`, `project-summary` `accessibleProjectIds` (`$1::boolean OR p.id = ANY($2)`).
-  Yang **sengaja** tidak lewat cek: gateway logs/terminal (tiketnya sudah lewat `findOwnedOrFail`), webhook (token = auth), semua pekerjaan background (scheduler/watcher/runner memakai repo
-  langsung — jangan dialihkan ke cek ini, nanti berhenti terjadwal), resource platform (registry, server, proxy, notifikasi, swarm…) yang dijaga `RolesGuard`. Penolakan guard tidak masuk audit log
-  (404 probing anggota tidak tercatat). Spec `project-access.service.spec.ts` memutar ke-7 helper: anggota lihat, orang luar 404 — gagal bila ada resource ke-8 yang lupa.
-  Migrasi `ProjectMembers` **mem-backfill** setiap user `member` ke setiap project sebagai `developer` (upgrade tidak mengubah apa pun sampai admin mengeluarkan orang).
-  **Level peran**: `admin` = kelola anggota + hapus project (`assertAdmin` → 403); `developer` = semua aksi lain; `viewer` = **baca saja** — ditegakkan terpusat di `assertAccess`
-  lewat `src/modules/auth/request-context.ts`: middleware global menaruh `{method, path}` request di `AsyncLocalStorage` (`req.originalUrl`, karena `req.path` relatif terhadap mount point
-  middleware), `isWriteRequest()` (pure, di-unit-test) menganggap GET/HEAD/OPTIONS dan POST `…/log-ticket` (tiket websocket = baca) sebagai baca, selain itu tulis → viewer 403.
-  Pekerjaan background tidak punya store → tidak pernah dibatasi. Konsekuensi yang disengaja: `POST /databases/:id/query` ditolak untuk viewer meski hanya SELECT (endpoint-nya bisa menulis
-  untuk owner/admin). `get-application`/`get-database` mengembalikan `projectRole` agar web bisa menyembunyikan aksi. Diuji: viewer GET app/db/log 200, log-ticket 201, deploy/patch/delete/backup/query 403,
-  kelola anggota 403; developer boleh ubah project tapi anggota & hapus project 403. Flow anggota: `list-members` (`GET /projects/:id/members` → `{myRole, members[]}` termasuk anggota implisit), `add-member` (`POST`, by **email** akun yang sudah ada;
-  owner/admin platform & pembuat ditolak 400 karena sudah implisit), `update-member` (`PATCH /:userId`), `remove-member`. Hapus user: row keanggotaan ikut cascade.
-- `project-summary/` (`GET /projects/summary`, didaftarkan **sebelum** `get-project` agar tidak tertangkap `:id`): `{total, active, inactive}` — aktif = punya ≥1 application/
-  managed database/compose app berstatus `running` (kolom status yang diamati aoox, satu query SQL dengan `count(*) FILTER`), tanpa panggilan Docker; difilter per akses.
-- `list-projects/` membalas `ProjectListItemDto` = project + `instances[]` (`{kind: application|database|compose, id, name, status, engine, deploying}`; satu query
-  `UNION ALL` atas tiga tabel dengan `project_id = ANY($1)`, raw SQL seperti summary karena ProjectModule tidak bisa meng-import module lain — mereka meng-import-nya)
-  untuk kartu overview. **`deploying`**: badge "sedang deploy" tanpa panggilan Docker — application = `EXISTS` di `deployments` dengan status aktif
-  (`queued`/`building`/`pushing`/`starting`, subquery per baris di dalam `UNION ALL` yang sama, masih satu round-trip); database = `status = 'creating'`;
-  compose = `status = 'deploying'` (stack sudah punya status ini sendiri, disamakan bentuknya jadi satu boolean seragam lintas kind supaya web tidak perlu
-  logika per-kind). Web: `project-card.tsx` menampilkan badge amber + `ProjectsAutoRefresh` (client component, `router.refresh()` tiap 4 detik) yang hanya
-  aktif selama ada instance `deploying` di halaman `/projects`, berhenti sendiri begitu badge terakhir hilang.
-- Flow: `create-project/`, `list-projects/`, `get-project/`, `update-project/`, `delete-project/` — semua `@UseGuards(JwtAuthGuard)`,
-  owner diambil dari `@CurrentUser()`, tidak pernah dari body.
-- Kolom waktu memakai `timestamptz` (migrasi `UseTimestamptz`); gunakan tipe yang sama untuk entity baru.
+- `src/modules/project/` — entity `Project` (`projects`, FK `owner_id` → `users`, cascade delete) and **`ProjectMember`** (`project_members`: `project_id`+`user_id` unique, cascade on
+  both, `role` `admin|developer|viewer`). **Per-project access** goes through one place, `ProjectAccessService` (exported by ProjectModule): platform owner/admin → all projects (as admin);
+  the creator (`owner_id`) → that project as admin; otherwise only projects that have a `project_members` row. A project the caller may not see returns **404** (not 403, so the id does not leak).
+  `ProjectService.findOwnedOrFail` and 6 other `findOwnedOrFail` (application, compose, managed DB, database backup, volume backup, job — jobs through their app/DB/compose owner)
+  call `access.assertAccess(ownerId, project)`; `list-projects` uses `access.whereAccessible`, `project-summary` uses `accessibleProjectIds` (`$1::boolean OR p.id = ANY($2)`).
+  What **deliberately** skips the check: logs/terminal gateways (their tickets already passed `findOwnedOrFail`), webhooks (token = auth), all background work (schedulers/watchers/runners use repositories
+  directly — do not redirect them to this check, or they will stop running on schedule), and platform resources (registry, servers, proxy, notifications, swarm…) guarded by `RolesGuard`. Guard rejections are not written to the audit log
+  (404 probing for members is not recorded). The spec `project-access.service.spec.ts` runs through all 7 helpers: members can see, outsiders get 404 — it fails if an 8th resource is forgotten.
+  The `ProjectMembers` migration **backfills** every `member` user into every project as `developer` (the upgrade changes nothing until an admin removes someone).
+  **Role levels**: `admin` = manage members + delete project (`assertAdmin` → 403); `developer` = all other actions; `viewer` = **read only** — enforced centrally in `assertAccess`
+  via `src/modules/auth/request-context.ts`: a global middleware puts the request's `{method, path}` into `AsyncLocalStorage` (`req.originalUrl`, because `req.path` is relative to the middleware mount point),
+  `isWriteRequest()` (pure, unit-tested) treats GET/HEAD/OPTIONS and POST `…/log-ticket` (websocket ticket = read) as reads, everything else as writes → viewer 403.
+  Background work has no store, so it is never restricted. A deliberate consequence: `POST /databases/:id/query` is rejected for viewers even for SELECT (the endpoint can write for owner/admin).
+  `get-application`/`get-database` return `projectRole` so the web can hide actions. Tested: viewer GET app/db/log 200, log-ticket 201, deploy/patch/delete/backup/query 403,
+  managing members 403; developer may change the project but member management and project deletion 403. Member flows: `list-members` (`GET /projects/:id/members` → `{myRole, members[]}` including implicit members), `add-member` (`POST`, by **email** of an existing account;
+  platform owner/admin and the creator are rejected with 400 because they are already implicit), `update-member` (`PATCH /:userId`), `remove-member`. Deleting a user cascades their membership rows.
+- `project-summary/` (`GET /projects/summary`, registered **before** `get-project` so it is not captured by `:id`): `{total, active, inactive}` — active = has ≥1 application/
+  managed database/compose app in status `running` (the status column observed by aoox, one SQL query with `count(*) FILTER`), no Docker calls; filtered by access.
+- `list-projects/` returns `ProjectListItemDto` = project + `instances[]` (`{kind: application|database|compose, id, name, status, engine, deploying}`; one `UNION ALL` query over the three tables with `project_id = ANY($1)`, raw SQL like summary because ProjectModule cannot import other modules — they import it)
+  for the overview cards. **`deploying`**: a "deploying" badge without Docker calls — application = `EXISTS` in `deployments` with an active status
+  (`queued`/`building`/`pushing`/`starting`, a per-row subquery inside the same `UNION ALL`, still one round trip); database = `status = 'creating'`;
+  compose = `status = 'deploying'` (the stack already has this status itself; it is normalized into one uniform boolean across kinds so the web does not need per-kind logic). Web: `project-card.tsx` shows an amber badge + `ProjectsAutoRefresh` (client component, `router.refresh()` every 4 seconds) that is active only while any `deploying` instance is on the `/projects` page and stops by itself once the last badge disappears.
+- Flows: `create-project/`, `list-projects/`, `get-project/`, `update-project/`, `delete-project/` — all `@UseGuards(JwtAuthGuard)`,
+  the owner is taken from `@CurrentUser()`, never from the body.
+- Time columns use `timestamptz` (migration `UseTimestamptz`); use the same type for new entities.
 
 ## Terminal (web shell)
 
-- `src/modules/terminal/` — `terminal.gateway.ts`: Socket.IO gateway namespace `/terminal` (`@nestjs/websockets` +
-  `@nestjs/platform-socket.io`, sesuai https://docs.nestjs.com/websockets/gateways), satu `TerminalSession` per socket. Flow `create-ticket/` (`POST /terminal/tickets`).
-- Backend shell dipilih `terminal-backend.service.ts`: **`ssh.session.ts`** (library `ssh2`, ke host) bila `TERMINAL_SSH_HOST` di-set,
-  kalau tidak **`local-pty.session.ts`** (`node-pty`: PowerShell di Windows / `$SHELL` di Unix). Di Docker selalu pakai SSH agar terminal masuk ke host, bukan container.
-- `src/modules/ssh/` — primitif SSH bersama: `ssh.session.ts` (`SshSession.open(target, size)`, library `ssh2`) dan `ssh-key.service.ts` (**key platform** otomatis:
-  ed25519 via `ssh2.utils.generateKeyPairSync`, disimpan di `TERMINAL_SSH_KEY_DIR`, default `./secrets` — di dist compose `/run/secrets/aoox`, bind mount rw, di-gitignore;
-  helper `authorizeCommand`, `describeKeyError`, `isAuthFailure`). `SshModule` di-import terminal & server module.
-- Kredensial SSH ke host (urutan prioritas): `TERMINAL_SSH_PRIVATE_KEY`/`_FILE` → `TERMINAL_SSH_PASSWORD` → key platform.
-  API tidak bisa menulis `authorized_keys` host, jadi user menjalankan satu perintah sekali di host. Perintah + public key tampil di
-  `GET /terminal/status` (`terminal-status/`, owner/admin) dan dikirim gateway sebagai event `error` saat SSH gagal auth (`isAuthFailure`);
-  dir key tidak writable (uid 1000) → `SshKeyPermissionError` + petunjuk `chown`. Masalah kredensial tidak pernah menggagalkan boot — hanya muncul per koneksi/status.
-- **`TERMINAL_SSH_USER` kosong → `root`** (`DEFAULT_TERMINAL_SSH_USER` di `terminal-backend.service.ts`): `install.sh`/`aoox install` menulis `TERMINAL_SSH_USER=root` hanya untuk
-  instalasi BARU, sedangkan `aoox update`/"Terapkan update" hanya mengganti image dan tidak pernah menyentuh `.env.dist` — instalasi lama tidak punya barisnya, dan dulu terminal
-  melempar `TERMINAL_SSH_USER is not set` walau `TERMINAL_SSH_HOST` terisi. Sekarang backend SSH-ke-host memakai `root` (default installer; install-nya sendiri butuh root).
-  Instalasi BARU lewat `aoox install` kini menulis user yang menjalankan `sudo` (`SUDO_USER`), bukan `root` (lihat AGENTS aoox-cli) — image cloud (Ubuntu/Tencent)
-  biasanya menolak login SSH root dan root tak punya `authorized_keys`, jadi "SSH authentication failed for root@host.docker.internal" muncul untuk user `ubuntu`;
-  default API di atas tetap `root` untuk instalasi lama yang tak punya barisnya.
-  **Petunjuk gagal-auth**: `authorizeAdvice(username, where)` (`ssh/ssh-key.service.ts`) — kalimat "jalankan sebagai <user>" (bukan dengan sudo) dan, hanya bila user = `root`,
-  catatan `PermitRootLogin`: isi User di Infrastruktur → Environment (atau pengaturan server untuk server remote) lalu jalankan perintah sebagai user itu. Dipakai dua tempat: teks event
-  `error` gateway (argumen kedua; bentuk event & `hint` ketiga **tidak berubah**) dan field baru `authorizeNote` di `GET /terminal/status` (aditif; `null` bila tak ada perintah
-  otorisasi). `authorizeCommand` tetap satu baris persis seperti dulu (web menyalinnya apa adanya — jangan taruh komentar `#` di dalamnya, sisa baris jadi komentar shell).
-  `TerminalBackendService.authHint()` kini juga membalas `username`.
-  **Otorisasi key otomatis** (`authorize-terminal/`, `POST /terminal/authorize`, `@Roles('owner')`, throttle 5/menit, tanpa body; POST ⇒ viewer 403, masuk audit log otomatis):
-  menulis **public key platform** (`SshKeyService.load().publicKey`) ke `~/.ssh/authorized_keys` user `TERMINAL_SSH_USER` di host Docker, menggantikan `echo '<key>' >> …` manual.
-  200 `{ok:true, user, alreadyAuthorized, verified, message}`; `verified` = setelah menulis, `SshSession.probe` (login lalu tutup, tanpa shell, 8 s) berhasil — gagal tidak menggagalkan
-  endpoint (`verified:false` + alasan; auth ditolak → "sshd may use a different AuthorizedKeysFile, SELinux, key login disabled"). 400 bila: bukan backend SSH, kredensial eksplisit (key/password env),
-  `TERMINAL_SSH_HOST` bukan host Docker (`host.docker.internal`/`localhost`/`127.0.0.1`/`::1`/`172.17.0.1`, `isLocalSshHost`), nama user tak valid, user tak ada di passwd host, home tak valid
-  (`isValidHome`: absolut, bukan `/`, tanpa `..`/spasi/kontrol), `.ssh`/`authorized_keys` symlink; 502 bila container pembantu gagal. `GET /terminal/status` + `canAutoAuthorize` (true hanya bila
-  `autoAuthorizeBlocker()` null) agar web menampilkan tombol hanya bila bisa. **Mekanisme**: dua container `busybox:stable` sekali-jalan (`DockerService.runOnceWithOutput`, `NetworkMode: none`,
-  label `aoox.component=build`, selalu dihapus): (1) `/etc/passwd` host di-mount **read-only** dan `awk` membaca `uid:gid:home` — nama user hanya lewat env `AOOX_USER` + `ENVIRON[]`;
-  (2) home di-mount rw lewat `HostConfig.Mounts` bentuk panjang (bukan `Binds`: mount `bind` **gagal** bila path host tidak ada, sedangkan `Binds` diam-diam membuat direktori milik root — diuji)
-  dan skrip tetap `WRITE_SCRIPT` (`terminal-authorize.ts`) menerima `KEY`/`OWNER_UID`/`OWNER_GID` lewat env: `mkdir -p`, `chmod 700 .ssh`, `chmod 600 authorized_keys`, `grep -qxF` (exit 10 = sudah ada →
-  `alreadyAuthorized`), tambah newline bila perlu, `chown uid:gid` pada `.ssh` dan file (**tidak rekursif**, menyimpang dari "chown -R" di rancangan awal karena helper berjalan sebagai root dan tidak boleh
-  mengikuti tautan dari dalam home user), menolak symlink (exit 3). Output log Engine diberi awalan timestamp → `parseAccountOutput` mencocokkan ekor baris.
-  **Keamanan**: akses ini setara yang sudah dimiliki API lewat docker socket; hanya owner; yang ditulis hanya public key (tidak pernah password/private key); audit log mencatat. **Batas**:
-  `AuthorizedKeysFile` non-standar, SELinux, home non-standar/NFS, `sshd` yang mematikan login key, server remote (tetap manual), dan mode PTY lokal. Diuji nyata di Docker: skrip tulis di volume
-  dengan `/etc/passwd` palsu (`.ssh` belum ada; sudah ada dengan key lain tanpa newline akhir; key sama = tidak ganda; izin longgar diperbaiki; symlink ditolak), lookup passwd + penolakan mount
-  home yang tidak ada lewat `DockerService` asli. **Belum diuji**: host Linux dengan sshd sungguhan (jalur `verified` hanya unit test).
-  **Hanya** untuk backend env — server remote tetap memakai `Server.username`-nya sendiri. `GET /terminal/status` tidak lagi punya error itu dan membalas `username` efektif +
-  `usernameSource: 'env' | 'default'` (null di mode lokal) supaya web membedakan "diset eksplisit" dari "default". Event Socket.IO `error` kini punya argumen kedua opsional
-  `hint` (`'environment'` = gagal membuka shell host, `'servers'` = server remote; `undefined` untuk PTY lokal dan error tiket/origin) — dihitung `TerminalGateway.configHint()`
-  dan dicermin di web (`terminal.protocol.ts`), dipakai `terminal-view.tsx` untuk menampilkan tautan ke Infrastruktur → Environment / Server remote (Environment hanya owner,
-  jadi admin melihat nama halamannya, bukan tautan).
-- **Server remote** (`src/modules/server/`, entity `Server` di `servers`: host/port/username, `private_key_encrypted` nullable `select:false` — null = pakai key platform):
-  flow `create/list/delete-server`, `test-server` (buka+tutup shell; gagal auth → `authorizeCommand` bila memakai key platform), `platform-ssh-key/` (`GET /servers/ssh-key`).
-  Semua `@Roles('owner','admin')`. `ServerService.resolve(id)` → `SshTarget` (+`usesPlatformKey`).
-  Terminal ke server remote: klien kirim `serverId` di body `POST /terminal/tickets`; service memverifikasi server ada dan **mengikatnya ke payload tiket** —
-  gateway hanya membaca `payload.serverId`, `handshake.auth.serverId` diabaikan. `TerminalBackendService.open(size, serverId?)`; `authHint(serverId?)` untuk pesan gagal auth.
-- **Deploy ke server remote**: `Application.serverId` (FK `servers`, `ON DELETE RESTRICT` → hapus server yang masih punya app = 409). Transport = cara `docker -H ssh://`:
-  `ssh-docker.agent.ts` (docker module) = `http.Agent` yang per request meng-`exec` **`docker system dial-stdio`** di server lewat satu sesi `ssh2` (lazy, reconnect) —
-  hanya butuh docker CLI di server, bukan port forwarding (sshd yang di-hardening `AllowTcpForwarding no` tetap jalan; streamlocal forward gagal di sana). Channel ssh2 diberi
-  no-op `setNoDelay/setKeepAlive/setTimeout/ref/unref` supaya diterima klien HTTP Node; **harus lewat Agent** — `createConnection` di opsi request dengan `agent:false` diabaikan Node
-  (request nyasar ke localhost:80). `DockerEngineClient` menerima `{socketPath}` atau `{agent,label}`; `engine.target` untuk log.
-  `DockerHandle` (docker.service.ts) = helper (`findContainerByName`, `ensureNetwork/Image`, `runOnce*`) di atas satu engine; `DockerService` = handle lokal.
-  `RemoteDockerService.forServer(serverId|null)` (server module, cache satu sesi per server, `forget(id)`) dipakai runner, get/stop/start/delete, logs, logs gateway, metrics,
-  dan builder nixpacks (`build(input, onLine, docker)`). Di server remote: build di daemon server, **tidak ada push** ke registry (registry lokal tidak terjangkau dari sana;
-  imageRef `aoox/<project>/<app>:<tag>`, rollback memakai image yang masih ada di server), **tanpa label Traefik** (proxy hanya di host — pakai port host),
-  metrik & notifikasi container-mati **ikut dipantau** (lihat "Pemantauan server remote" di bawah); disk-watcher, certificate-watcher, dan retensi disk tetap lokal. `test-server` juga mengecek Docker lewat tunnel (`dockerVersion`/`dockerError`).
-- **Proxy per server**: `ProxyService` kini bekerja pada `DockerHandle` mana pun dengan `ProxySettings` eksplisit (`statusOn/provisionOn/removeOn`; `status/provision/remove` =
-  handle lokal + `localSettings` dari env). `Server` punya `proxy_http_port`/`proxy_https_port`/`acme_email`/`acme_staging` (`proxySettingsOf(server)`); flow `server-proxy/`
-  (`GET/POST/DELETE /servers/:id/proxy`, POST menyimpan setting lalu **mengganti** container proxy yang ada). Runner `replaceContainer` tidak lagi membuang domain untuk app remote:
-  label Traefik dibuat dengan setting proxy server itu (`labelsFor(..., settings)`), jadi tab Domain & cek DNS berlaku di server remote. Nama container proxy sama (`aoox-proxy`)
-  di tiap daemon — jangan mengarahkan "server" ke daemon yang sama dengan host (uji saya memakai container sshd+docker-cli dengan socket host: proxy host ikut terganti; diprovision ulang).
-- **Backup volume di server remote**: `VolumeBackupService` memakai `remote.forServer(app.serverId)` untuk helper tar/restore/unduh/hapus; `BackupDestinationService.upload/download/remove`
-  dan `BackupFilesService.localFiles/annotate/ensureLocal` menerima `DockerHandle` opsional (rclone & busybox berjalan di daemon app; volume `aoox_backups` ada per daemon).
-  Gate `serverId` di service/scheduler/controller dihapus. Diuji lewat server simulasi SSH: proxy provision + domain routing, backup → restore → unduh.
-- Event: klien → `input(string)`, `resize({cols,rows})`; server → `output`, `exit`, `error`. Definisi di `terminal.protocol.ts` (dicermin di web).
-- Auth: browser tidak bisa kirim header Authorization di handshake, jadi klien menukar session dengan **tiket JWT 60 detik**
-  (`scope: terminal`) dan mengirimnya di `socket.handshake.auth` bersama `cols/rows`. Gateway juga menolak `Origin` ≠ `WEB_ORIGIN`.
-- Shell di-kill saat socket putus. `main.ts` mengaktifkan CORS untuk `WEB_ORIGIN` karena ada klien browser langsung.
-- Hanya role `owner`/`admin` (`TERMINAL_ROLES`): dicek saat membuat tiket (403) dan lagi di gateway dari `role` di payload tiket. Tiket sekali pakai (`jti`, in-memory).
-- Ini setara remote shell di host — hanya untuk lingkungan dev/self-hosted yang dipercaya. Host key SSH belum diverifikasi.
+- `src/modules/terminal/` — `terminal.gateway.ts`: Socket.IO gateway on namespace `/terminal` (`@nestjs/websockets` +
+  `@nestjs/platform-socket.io`, following https://docs.nestjs.com/websockets/gateways), one `TerminalSession` per socket. Flow `create-ticket/` (`POST /terminal/tickets`).
+- The shell backend is chosen by `terminal-backend.service.ts`: **`ssh.session.ts`** (`ssh2` library, to the host) when `TERMINAL_SSH_HOST` is set,
+  otherwise **`local-pty.session.ts`** (`node-pty`: PowerShell on Windows / `$SHELL` on Unix). In Docker it always uses SSH so the terminal enters the host, not the container.
+- `src/modules/ssh/` — shared SSH primitives: `ssh.session.ts` (`SshSession.open(target, size)`, `ssh2` library) and `ssh-key.service.ts` (automatic **platform key**:
+  ed25519 via `ssh2.utils.generateKeyPairSync`, stored in `TERMINAL_SSH_KEY_DIR`, default `./secrets` — in the dist compose `/run/secrets/aoox`, read-write bind mount, git-ignored;
+  helpers `authorizeCommand`, `describeKeyError`, `isAuthFailure`). `SshModule` is imported by the terminal and server modules.
+- SSH credentials to the host (priority order): `TERMINAL_SSH_PRIVATE_KEY`/`_FILE` → `TERMINAL_SSH_PASSWORD` → platform key.
+  The API cannot write the host's `authorized_keys`, so the user runs one command once on the host. The command + public key are shown in
+  `GET /terminal/status` (`terminal-status/`, owner/admin) and sent by the gateway as an `error` event when SSH authentication fails (`isAuthFailure`);
+  if the key directory is not writable (uid 1000) → `SshKeyPermissionError` + a `chown` hint. Credential problems never fail boot — they only surface per connection/status.
+- **`TERMINAL_SSH_USER` empty → `root`** (`DEFAULT_TERMINAL_SSH_USER` in `terminal-backend.service.ts`): `install.sh`/`aoox install` writes `TERMINAL_SSH_USER=root` only for NEW installations, while `aoox update`/"Terapkan update" (Apply update) only replaces the image and never touches `.env.dist` — older installations lack that line, and the terminal used to throw `TERMINAL_SSH_USER is not set` even when `TERMINAL_SSH_HOST` was set. The SSH-to-host backend now uses `root` (the installer default; the installer itself needs root).
+  NEW installations via `aoox install` now write the user running `sudo` (`SUDO_USER`) instead of `root` (see AGENTS of aoox-cli) — cloud images (Ubuntu/Tencent)
+  usually refuse root SSH login and root has no `authorized_keys`, so "SSH authentication failed for root@host.docker.internal" appeared for the `ubuntu` user;
+  the API default above stays `root` for older installations that lack the line.
+  **Auth-failure hint**: `authorizeAdvice(username, where)` (`ssh/ssh-key.service.ts`) — the sentence "run as <user>" (not with sudo) and, only when user = `root`,
+  a note about `PermitRootLogin`: set User in Infrastructure → Environment (or the server settings for a remote server), then run the command as that user. Used in two places: the text of the gateway's
+  `error` event (second argument; the event shape and the third `hint` argument **do not change**) and the new `authorizeNote` field in `GET /terminal/status` (additive; `null` when there is no authorize command).
+  `authorizeCommand` remains exactly one line as before (the web copies it as-is — do not put `#` comments in it, the rest of the line would become a shell comment).
+  `TerminalBackendService.authHint()` now also returns `username`.
+  **Automatic key authorization** (`authorize-terminal/`, `POST /terminal/authorize`, `@Roles('owner')`, throttle 5/minute, no body; POST ⇒ viewer 403, logged in the audit log automatically):
+  writes the **platform public key** (`SshKeyService.load().publicKey`) to `~/.ssh/authorized_keys` of user `TERMINAL_SSH_USER` on the Docker host, replacing the manual `echo '<key>' >> …`.
+  200 `{ok:true, user, alreadyAuthorized, verified, message}`; `verified` = after writing, `SshSession.probe` (log in, then close, no shell, 8 s) succeeded — failure does not fail the endpoint (`verified:false` + reason; auth rejected → "sshd may use a different AuthorizedKeysFile, SELinux, key login disabled"). 400 when: not the SSH backend, explicit credentials (key/password env),
+  `TERMINAL_SSH_HOST` is not the Docker host (`host.docker.internal`/`localhost`/`127.0.0.1`/`::1`/`172.17.0.1`, `isLocalSshHost`), invalid user name, user not in the host's passwd, invalid home (`isValidHome`: absolute, not `/`, no `..`/spaces/control characters), `.ssh`/`authorized_keys` is a symlink; 502 when the helper container fails. `GET /terminal/status` + `canAutoAuthorize` (true only when `autoAuthorizeBlocker()` is null) so the web shows the button only when it can work. **Mechanism**: two one-shot `busybox:stable` containers (`DockerService.runOnceWithOutput`, `NetworkMode: none`,
+  label `aoox.component=build`, always removed): (1) the host's `/etc/passwd` is mounted **read-only** and `awk` reads `uid:gid:home` — the user name only comes through the env `AOOX_USER` + `ENVIRON[]`;
+  (2) the home is mounted read-write via the long-form `HostConfig.Mounts` (not `Binds`: a `bind` mount **fails** when the host path does not exist, whereas `Binds` silently creates a root-owned directory — tested) and the script `WRITE_SCRIPT` (`terminal-authorize.ts`) receives `KEY`/`OWNER_UID`/`OWNER_GID` via env: `mkdir -p`, `chmod 700 .ssh`, `chmod 600 authorized_keys`, `grep -qxF` (exit 10 = already present →
+  `alreadyAuthorized`), adds a newline when needed, `chown uid:gid` on `.ssh` and the file (**not recursive**, deviating from "chown -R" in the early design because the helper runs as root and must not follow links from inside the user's home), refuses symlinks (exit 3). Engine log output gets a timestamp prefix → `parseAccountOutput` matches the tail of the line.
+  **Security**: this access is equivalent to what the API already has through the Docker socket; owner only; only the public key is written (never a password or private key); the audit log records it. **Limits**:
+  non-standard `AuthorizedKeysFile`, SELinux, non-standard home/NFS, `sshd` that disables key login, remote servers (still manual), and local PTY mode. Tested for real in Docker: the write script on a volume with a fake `/etc/passwd` (`.ssh` absent; present with another key and no trailing newline; same key = no duplicate; loose permissions fixed; symlink refused), passwd lookup and refusal of a non-existent home mount through the real `DockerService`. **Not tested yet**: a Linux host with a real sshd (the `verified` path is unit-test only).
+  **Only** for the env backend — remote servers keep using their own `Server.username`. `GET /terminal/status` no longer has that error and returns the effective `username` +
+  `usernameSource: 'env' | 'default'` (null in local mode) so the web can tell "explicitly set" apart from "default". The Socket.IO `error` event now has an optional second argument
+  `hint` (`'environment'` = failed to open the host shell, `'servers'` = remote server; `undefined` for local PTY and ticket/origin errors) — computed by `TerminalGateway.configHint()`
+  and mirrored in the web (`terminal.protocol.ts`), used by `terminal-view.tsx` to show a link to Infrastructure → Environment / Remote servers (Environment is owner-only,
+  so admins see the page name, not a link).
+- **Remote servers** (`src/modules/server/`, entity `Server` in `servers`: host/port/username, `private_key_encrypted` nullable `select:false` — null = use the platform key):
+  flows `create/list/delete-server`, `test-server` (open+close a shell; on auth failure → `authorizeCommand` when using the platform key), `platform-ssh-key/` (`GET /servers/ssh-key`).
+  All `@Roles('owner','admin')`. `ServerService.resolve(id)` → `SshTarget` (+`usesPlatformKey`).
+  Terminal to a remote server: the client sends `serverId` in the body of `POST /terminal/tickets`; the service verifies the server exists and **binds it to the ticket payload** —
+  the gateway reads only `payload.serverId`, and `handshake.auth.serverId` is ignored. `TerminalBackendService.open(size, serverId?)`; `authHint(serverId?)` for auth-failure messages.
+- **Deploying to a remote server**: `Application.serverId` (FK `servers`, `ON DELETE RESTRICT` → deleting a server that still has apps = 409). Transport = the way `docker -H ssh://` works:
+  `ssh-docker.agent.ts` (docker module) = an `http.Agent` that per request runs **`docker system dial-stdio`** on the server through one `ssh2` session (lazy, reconnects) —
+  it only needs the docker CLI on the server, not port forwarding (sshd hardened with `AllowTcpForwarding no` still works; streamlocal forwarding fails there). The ssh2 channel gets no-op `setNoDelay/setKeepAlive/setTimeout/ref/unref` so Node's HTTP client accepts it; **it must go through the Agent** — `createConnection` in request options with `agent:false` is ignored by Node
+  (the request goes to localhost:80). `DockerEngineClient` accepts `{socketPath}` or `{agent,label}`; `engine.target` is used for logs.
+  `DockerHandle` (docker.service.ts) = helpers (`findContainerByName`, `ensureNetwork/Image`, `runOnce*`) on top of one engine; `DockerService` = the local handle.
+  `RemoteDockerService.forServer(serverId|null)` (server module, one session cached per server, `forget(id)`) is used by the runner, get/stop/start/delete, logs, logs gateway, metrics,
+  and the nixpacks builder (`build(input, onLine, docker)`). On remote servers: the build runs on the server's daemon, **no push** to a registry (the local registry is unreachable from there; the
+  imageRef is `aoox/<project>/<app>:<tag>`, rollback uses images still present on the server), **no Traefik labels** (the proxy exists only on the host — use the host port),
+  container-down metrics & notifications **are monitored** (see "Remote server monitoring" below); the disk watcher, certificate watcher, and disk retention remain local. `test-server` also checks Docker through the tunnel (`dockerVersion`/`dockerError`).
+- **Per-server proxy**: `ProxyService` now works on any `DockerHandle` with explicit `ProxySettings` (`statusOn/provisionOn/removeOn`; `status/provision/remove` =
+  the local handle + `localSettings` from env). `Server` has `proxy_http_port`/`proxy_https_port`/`acme_email`/`acme_staging` (`proxySettingsOf(server)`); flow `server-proxy/`
+  (`GET/POST/DELETE /servers/:id/proxy`, POST saves the settings and then **replaces** the existing proxy container). The runner's `replaceContainer` no longer drops domains for remote apps:
+  the Traefik labels are built with that server's proxy settings (`labelsFor(..., settings)`), so the Domain tab and DNS check work on remote servers. The proxy container name is the same (`aoox-proxy`)
+  on every daemon — do not point a "server" at the same daemon as the host (my test used an sshd+docker-cli container with the host socket: the host proxy was replaced too; re-provisioned).
+- **Volume backups on remote servers**: `VolumeBackupService` uses `remote.forServer(app.serverId)` for the tar/restore/download/delete helpers; `BackupDestinationService.upload/download/remove`
+  and `BackupFilesService.localFiles/annotate/ensureLocal` accept an optional `DockerHandle` (rclone & busybox run on the app's daemon; the `aoox_backups` volume exists per daemon).
+  The `serverId` gate in the service/scheduler/controller was removed. Tested via a simulated SSH server: proxy provisioning + domain routing, backup → restore → download.
+- Events: client → `input(string)`, `resize({cols,rows})`; server → `output`, `exit`, `error`. Defined in `terminal.protocol.ts` (mirrored in the web).
+- Auth: browsers cannot send an Authorization header during the handshake, so the client exchanges the session for a **60-second JWT ticket**
+  (`scope: terminal`) and sends it in `socket.handshake.auth` together with `cols/rows`. The gateway also rejects an `Origin` other than `WEB_ORIGIN`.
+- The shell is killed when the socket disconnects. `main.ts` enables CORS for `WEB_ORIGIN` because browser clients connect directly.
+- Only the `owner`/`admin` roles (`TERMINAL_ROLES`): checked when creating the ticket (403) and again in the gateway from the `role` in the ticket payload. Single-use tickets (`jti`, in-memory).
+- This is equivalent to a remote shell on the host — only for trusted dev/self-hosted environments. The SSH host key is not verified yet.
 
-## Console container
+## Container console
 
-- Beda dari Terminal (shell di **host** lewat SSH): Console (`src/modules/application/console.gateway.ts`, namespace `/console`) adalah `docker exec -it` masuk ke
-  **container aplikasi itu sendiri**, lewat Docker Engine API — bukan SSH sama sekali. `DockerEngineClient.execTty()` (`docker-engine.client.ts`): `POST /containers/{id}/exec`
-  dengan `Tty: true` lalu `POST /exec/{id}/start` di-**hijack** (`Connection: Upgrade`/`Upgrade: tcp`, sesuai docs.docker.com/reference/api/engine/ "Hijacking") lewat method privat
-  `hijack()` yang mendengarkan event `'upgrade'` Node `http.request` untuk mengambil socket duplex mentah — TTY mode tidak punya frame header 8-byte seperti `exec`/`execWithCode`
-  biasa, jadi stdout/stderr sudah byte polos. **Transport-agnostic otomatis**: `hijack()` memakai `this.connection` yang sama dengan seluruh client (socket lokal atau
-  `SshDockerAgent`/`docker system dial-stdio` untuk server remote) — tidak ada kode terpisah untuk app di server remote, karena `http.request` memperlakukan event `'upgrade'`
-  sama persis apa pun transportnya. `resizeExec()` = `POST /exec/{id}/resize?h=&w=`; `execExitCode()` = `GET /exec/{id}/json` setelah socket `close` untuk `ExitCode`.
-- Shell: `sh -c 'command -v bash >/dev/null 2>&1 && exec bash || exec sh'` (`SHELL_DETECT_CMD` di `console.gateway.ts`) — coba bash dulu (nyaman), fallback ke sh (hampir selalu ada).
-  **Diuji nyata**: container `debian:bookworm-slim` (bash) dan `alpine` (sh saja) dua-duanya kepilih shell yang benar; `registry.k8s.io/pause:3.9` (image scratch tanpa shell
-  sama sekali, tapi tetap berjalan selamanya — pengganti "distroless" yang bisa di-`docker run` tanpa command) meng-hijack **berhasil**, lalu daemon sendiri yang menstream
-  pesan `OCI runtime exec failed: ... executable file not found` sebagai output terminal biasa sebelum keluar kode 127 — **bukan** event `error` yang diterjemahkan;
-  ini disengaja dibiarkan apa adanya karena persis begitu juga tampilannya di `docker exec -it` CLI sungguhan. `describeExecError()` tetap ada sebagai jaring pengaman untuk
-  kasus daemon menolak **sebelum** hijack (container berhenti → pesan "is not running", diuji nyata dengan container yang di-stop).
-- **Tiket** (`create-console-ticket/`, `POST /applications/:id/console-ticket`, throttle 20/menit): berbeda dari `log-ticket`, tiket ini **mengikat container id yang sudah
-  di-resolve** ke payload (`ConsoleTicketPayload.containerId`) — bukan hanya `applicationId` — supaya handshake socket tidak pernah bisa memilih container sendiri, pola yang
-  sama dengan `serverId` di tiket terminal. Mode `container` → `RemoteDockerService.forServer(app.serverId).findContainerByName(containerNameFor(app))`, harus `State ===
-  'running'` atau 400. Mode `service` (swarm) → `SwarmDeployService.taskContainers(app)` (task **di node ini saja**, lihat bagian Docker Swarm); tanpa `containerId` di body →
-  task terbaru (indeks 0, sudah diurutkan `taskContainers()`); dengan `containerId` → divalidasi harus ada di daftar task saat ini, kalau tidak 400.
-  **Kontrol akses gratis dari infrastruktur yang sudah ada, tanpa kode baru**: route ini **sengaja tidak** ditambahkan ke `READ_ONLY_POSTS` di `request-context.ts` (yang
-  hanya berisi `/log-ticket`) — jadi `isWriteRequest()` menganggapnya tulis, dan `ProjectAccessService.assertAccess()` (dipanggil via `ApplicationService.findOwnedOrFail`)
-  otomatis menolak `viewer` dengan 403; `JwtAuthGuard` otomatis menolak token API `readOnly` dengan 403 juga (mekanisme yang persis sama dengan endpoint tulis lainnya).
-  Developer/admin/owner lolos. Karena request ini sampai ke handler (bukan ditolak guard), **audit log mencatatnya otomatis** lewat `AuditLogInterceptor` yang sudah ada
-  (`action: "POST /applications/:id/console-ticket"`, status 200/403, aktor, tanpa kode tambahan) — diuji nyata: viewer 403 tercatat, token readOnly 403 **tidak** tercatat
-  (ditolak di guard, konsisten dengan aturan "guard yang menolak tidak tercatat" di bagian Auth → API token).
-- `ConsoleGateway` meniru pola `TerminalGateway` persis: `usedTickets` Map in-memory (tiket sekali pakai), cek `Origin` ≠ `WEB_ORIGIN` → tolak, event protokol
-  (`input`/`resize`/`output`/`exit`/`error`) identik. `console.protocol.ts` (dicermin di web `features/console/console.protocol.ts`). Exec di-`destroy()` saat socket
-  Socket.IO putus (`handleDisconnect`); container yang mati/exec yang berakhir mengirim `exit` dengan kode dari `execExitCode()` lalu men-disconnect socket.
-- **Diuji end-to-end lewat HTTP + WebSocket sungguhan** (bukan cuma `DockerEngineClient` sendirian): sign-in sungguhan → buat tiket via `POST .../console-ticket` →
-  connect `socket.io-client` ke `/console` dengan tiket itu → kirim `input`, terima `output` (echo shell asli) → `resize` → `exit 0` → event `exit` kode 0. Juga: origin
-  salah ditolak, tiket dipakai dua kali ditolak di percobaan kedua, token API `readOnly` 403, project `viewer` 403, `developer` 200 — semua terhadap akun & tiket asli,
-  bukan mock.
-- **Belum diuji independen di sesi ini**: server remote sungguhan (SSH) dan cluster Swarm sungguhan untuk fitur ini spesifik — mekanisme hijack sendiri transport-agnostic
-  by construction (sama `this.connection` yang dipakai build/push/exec lain yang **sudah** diuji lewat SSH di bagian lain AGENTS ini), tapi kombinasi penuh
-  "console ke task swarm di server remote" belum dicoba end-to-end lewat VPS/cluster sungguhan — sarankan smoke test manual sebelum production.
+- Unlike the Terminal (a shell on the **host** over SSH): the Console (`src/modules/application/console.gateway.ts`, namespace `/console`) is `docker exec -it` into
+  **the application's own container**, through the Docker Engine API — not SSH at all. `DockerEngineClient.execTty()` (`docker-engine.client.ts`): `POST /containers/{id}/exec`
+  with `Tty: true`, then `POST /exec/{id}/start` is **hijacked** (`Connection: Upgrade`/`Upgrade: tcp`, per docs.docker.com/reference/api/engine/ "Hijacking") through the private method
+  `hijack()`, which listens for Node `http.request`'s `'upgrade'` event to take the raw duplex socket — TTY mode has no 8-byte frame header like plain `exec`/`execWithCode`,
+  so stdout/stderr are already plain bytes. **Automatically transport-agnostic**: `hijack()` uses the same `this.connection` as the whole client (a local socket or
+  `SshDockerAgent`/`docker system dial-stdio` for remote servers) — there is no separate code for apps on remote servers, because `http.request` treats the `'upgrade'` event
+  exactly the same whatever the transport. `resizeExec()` = `POST /exec/{id}/resize?h=&w=`; `execExitCode()` = `GET /exec/{id}/json` after the socket `close`, for `ExitCode`.
+- Shell: `sh -c 'command -v bash >/dev/null 2>&1 && exec bash || exec sh'` (`SHELL_DETECT_CMD` in `console.gateway.ts`) — try bash first (more comfortable), fall back to sh (almost always present).
+  **Tested for real**: `debian:bookworm-slim` (bash) and `alpine` (sh only) both picked the right shell; `registry.k8s.io/pause:3.9` (a scratch image with no shell at all, but it keeps running forever — a stand-in for "distroless" that can be `docker run` without a command) hijacks **successfully**, then the daemon itself streams the message `OCI runtime exec failed: ... executable file not found` as normal terminal output before exiting with code 127 — **not** a translated `error` event;
+  this is intentionally left as is, because that is exactly how the real `docker exec -it` CLI shows it. `describeExecError()` remains as a safety net for the case where the daemon refuses **before** the hijack (container stopped → "is not running" message, tested for real with a stopped container).
+- **Ticket** (`create-console-ticket/`, `POST /applications/:id/console-ticket`, throttle 20/minute): unlike `log-ticket`, this ticket **binds the already-resolved container id** into the payload (`ConsoleTicketPayload.containerId`) — not just the `applicationId` — so the socket handshake can never choose its own container, the same pattern as `serverId` in the terminal ticket. Mode `container` → `RemoteDockerService.forServer(app.serverId).findContainerByName(containerNameFor(app))`, must be `State ===
+  'running'` or 400. Mode `service` (swarm) → `SwarmDeployService.taskContainers(app)` (tasks **on this node only**, see the Docker Swarm section); without `containerId` in the body → the latest
+  task (index 0, already sorted by `taskContainers()`); with `containerId` → it must be in the current task list, otherwise 400.
+  **Access control comes for free from existing infrastructure, with no new code**: this route is **deliberately not** added to `READ_ONLY_POSTS` in `request-context.ts` (which only contains `/log-ticket`) — so `isWriteRequest()` treats it as a write, and `ProjectAccessService.assertAccess()` (called via `ApplicationService.findOwnedOrFail`)
+  automatically rejects `viewer` with 403; `JwtAuthGuard` automatically rejects `readOnly` API tokens with 403 too (exactly the same mechanism as other write endpoints).
+  Developer/admin/owner pass. Because the request reaches the handler (it is not rejected by a guard), **the audit log records it automatically** through the existing `AuditLogInterceptor`
+  (`action: "POST /applications/:id/console-ticket"`, status 200/403, actor, no extra code) — tested for real: the viewer 403 is recorded; the readOnly token 403 is **not** recorded
+  (rejected in the guard, consistent with the rule "rejections by guards are not logged" in the Auth → API token section).
+- `ConsoleGateway` copies the `TerminalGateway` pattern exactly: in-memory `usedTickets` Map (single-use tickets), an `Origin` ≠ `WEB_ORIGIN` check → reject, the same protocol events
+  (`input`/`resize`/`output`/`exit`/`error`). `console.protocol.ts` (mirrored in the web at `features/console/console.protocol.ts`). The exec is `destroy()`ed when the Socket.IO socket disconnects (`handleDisconnect`); a dying container or an exec that ends sends `exit` with the code from `execExitCode()` and then disconnects the socket.
+- **Tested end-to-end over real HTTP + WebSocket** (not just `DockerEngineClient` alone): real sign-in → create a ticket via `POST .../console-ticket` →
+  connect `socket.io-client` to `/console` with that ticket → send `input`, receive `output` (the real shell echo) → `resize` → `exit 0` → `exit` event with code 0. Also: wrong origin rejected, a ticket used twice rejected on the second attempt, readOnly API token 403, project `viewer` 403, `developer` 200 — all against real accounts and tickets,
+  not mocks.
+- **Not independently tested in this session**: real remote servers (SSH) and a real Swarm cluster for this specific feature — the hijack mechanism itself is transport-agnostic by construction (the same `this.connection` used by the build/push/exec paths that **have** been tested over SSH in other parts of this AGENTS file), but the full combination
+  "console to a swarm task on a remote server" has not been tried end-to-end on a real VPS/cluster — a manual smoke test is recommended before production.
 
-## Prinsip
+## Principles
 
-- Selalu ikuti dokumentasi resmi framework/library (NestJS, TypeORM, dll.) untuk pemilihan paket dan pola kode.
+- Always follow the official documentation of the framework/library (NestJS, TypeORM, etc.) when choosing packages and code patterns.
 
-## Docker / distribusi
+## Docker / distribution
 
-- `Dockerfile` (multi-stage, `node:24-bookworm-slim` — bukan alpine, karena `node-pty` perlu glibc dan terminal butuh bash).
-  Image berjalan sebagai user `node`, `DB_MIGRATIONS_RUN=true` → migrasi dijalankan TypeORM saat boot (`migrationsRun`).
-- Semua container yang dibuat API (registry, proxy, app) diberi label `com.docker.compose.project=aoox` (`composeLabels()` di `docker.service.ts`)
-  dan kedua compose file memakai `name: aoox`, sehingga Docker Desktop menampilkannya sebagai satu grup. Volume dev Postgres dipin ke nama lama `aoox-api_postgres_data`.
-- `docker-compose.yml` = Postgres untuk dev saja. `docker-compose.dist.yml` = stack distribusi (postgres + api + web, image `hideandseeklab/aoox-api`/`aoox-web` dari Docker Hub; `-f docker-compose.build.yml` untuk build lokal dari `../aoox-web`);
-  konfigurasi lewat `.env.dist` (contoh: `.env.dist.example`). `POSTGRES_PASSWORD` dan `JWT_SECRET` wajib, tanpa default.
-- Tes cold start: `docker compose -p x -f docker-compose.dist.yml --env-file .env.dist down -v && ... up -d --build`, lalu buka `/setup`.
-- **`docker-compose.dist.yml` dan `docker-compose.domain.yml` punya salinan ter-bundle di `../aoox-cli/assets/install/`**,
-  dipakai `aoox install` untuk bootstrap VPS baru (bundled, bukan `curl` dari GitHub saat instalasi — versi compose selalu selaras dengan versi CLI yang dipasang, tanpa hop jaringan tambahan).
-  **Kalau salah satu file ini berubah, salin ulang ke sana** (tanpa itu `aoox install` memasang stack basi) — dicatat juga di
-  `assets/install/README.md` di sisi CLI, dan `install-env.ts` di sana punya tes yang gagal kalau ada `${VAR}` baru di compose
-  yang belum ditulis ke `.env.dist`-nya.
+- `Dockerfile` (multi-stage, `node:24-bookworm-slim` — not alpine, because `node-pty` needs glibc and the terminal needs bash).
+  The image runs as the `node` user; `DB_MIGRATIONS_RUN=true` → TypeORM runs migrations at boot (`migrationsRun`).
+- All containers created by the API (registry, proxy, apps) get the label `com.docker.compose.project=aoox` (`composeLabels()` in `docker.service.ts`),
+  and both compose files use `name: aoox`, so Docker Desktop shows them as one group. The dev Postgres volume is pinned to the old name `aoox-api_postgres_data`.
+- `docker-compose.yml` = Postgres for development only. `docker-compose.dist.yml` = the distribution stack (postgres + api + web, images `hideandseeklab/aoox-api`/`aoox-web` from Docker Hub; `-f docker-compose.build.yml` to build locally from `../aoox-web`);
+  configured through `.env.dist` (example: `.env.dist.example`). `POSTGRES_PASSWORD` and `JWT_SECRET` are required, with no defaults.
+- Cold-start test: `docker compose -p x -f docker-compose.dist.yml --env-file .env.dist down -v && ... up -d --build`, then open `/setup`.
+- **`docker-compose.dist.yml` and `docker-compose.domain.yml` have bundled copies in `../aoox-cli/assets/install/`**,
+  used by `aoox install` to bootstrap new VPSes (bundled, not `curl` from GitHub at install time — the compose version always matches the installed CLI version, with no extra network hop).
+  **If either of these files changes, copy it again there** (without that, `aoox install` installs a stale stack) — also recorded in
+  `assets/install/README.md` on the CLI side, and `install-env.ts` there has a test that fails if a new `${VAR}` in compose has not been written to its `.env.dist`.
 
-## Tes & CI
+## Tests & CI
 
-- `npm test` — unit spec (Jest) untuk invarian penting: `setup` hanya saat kosong, bootstrap idempotent, gateway menolak tiket salah/role member/tiket bekas, throttle 429.
-  Spec baru diletakkan di samping file yang diuji (`*.spec.ts`), mock repo/DataSource — tidak perlu Postgres.
-- CI GitHub: `.github/workflows/ci.yml` menjalankan lint/build/test di tiap pull request dan push ke main; `docker-publish.yml` menerbitkan image ke Docker Hub pada tag versi (config GitLab CI lama sudah dihapus setelah repo pindah ke GitHub).
-  `docker-compose.dist.yml` memakai image Docker Hub (`API_IMAGE`/`WEB_IMAGE` untuk pin versi, lihat `.env.dist.example`); `docker-compose.build.yml` untuk build lokal.
+- `npm test` — unit specs (Jest) for the important invariants: `setup` only when empty, bootstrap is idempotent, the gateway rejects wrong/member-role/reused tickets, throttle 429.
+  New specs go next to the file they test (`*.spec.ts`), with mocked repositories/DataSource — no Postgres needed.
+- GitHub CI: `.github/workflows/ci.yml` runs lint/build/test on every pull request and on pushes to main; `docker-publish.yml` publishes images to Docker Hub on version tags (the old GitLab CI config was removed after the repo moved to GitHub).
+  `docker-compose.dist.yml` uses the Docker Hub images (`API_IMAGE`/`WEB_IMAGE` to pin versions, see `.env.dist.example`); `docker-compose.build.yml` for local builds.
 
 ## Docker & Registry
 
-- `src/modules/docker/docker-engine.client.ts` — klien **buatan sendiri** untuk Docker Engine HTTP API (`http.request` dengan `socketPath`, versi API dipin `v1.44`,
-  demultiplex stream exec). Tanpa library pihak ketiga (user tidak mau dockerode). `docker.service.ts` membungkusnya (`DOCKER_SOCKET`; default `/var/run/docker.sock`, Windows `//./pipe/docker_engine`).
-  Tambahkan endpoint baru ke klien mengikuti spec resmi (https://docs.docker.com/reference/api/engine/).
-  Di dist compose socket di-mount dan `group_add: DOCKER_GID` karena container berjalan sebagai `node`.
-- **Rotasi log**: `docker/log-config.ts` `logConfig(env)` (pure, di-unit-test) → `HostConfig.LogConfig` `json-file` `max-size`/`max-file` dari `CONTAINER_LOG_MAX_SIZE` (default `10m`,
-  `off` = default Docker tanpa batas) / `CONTAINER_LOG_MAX_FILE` (3), tersedia sebagai `DockerService.logConfig` dan dipasang di semua container jangka panjang: app & preview
-  (`replaceContainer`), managed DB (`provision`), proxy, registry — juga di server remote (kebijakan dari panel). Berlaku saat container **dibuat ulang** (deploy/apply config/provision ulang);
-  container lama tetap tanpa batas sampai itu. Helper sekali-jalan tidak diberi (umur pendek). Stack compose tidak dijangkau (`logging:` di file compose atau `log-opts` daemon).
-  `docker-compose.dist.yml` memakai anchor `x-logging` yang sama untuk postgres/api/web.
-- `src/modules/registry/` — entity `Registry` (`self-hosted` | `external`, password AES-256-GCM dengan `ENCRYPTION_KEY`, `select: false`).
-  `self-hosted-registry.service.ts` menjalankan `registry:3` (htpasswd bcrypt via container sekali jalan, volume `aoox_registry_{data,auth}`,
+- `src/modules/docker/docker-engine.client.ts` — our **own** client for the Docker Engine HTTP API (`http.request` with `socketPath`, API version pinned to `v1.44`,
+  exec stream demultiplexing). No third-party library (the user does not want dockerode). `docker.service.ts` wraps it (`DOCKER_SOCKET`; default `/var/run/docker.sock`, Windows `//./pipe/docker_engine`).
+  Add new endpoints to the client following the official spec (https://docs.docker.com/reference/api/engine/).
+  In the dist compose the socket is mounted and `group_add: DOCKER_GID` is set because the container runs as `node`.
+- **Log rotation**: `docker/log-config.ts` `logConfig(env)` (pure, unit-tested) → `HostConfig.LogConfig` `json-file` `max-size`/`max-file` from `CONTAINER_LOG_MAX_SIZE` (default `10m`,
+  `off` = Docker default with no limit) / `CONTAINER_LOG_MAX_FILE` (3), available as `DockerService.logConfig` and applied to all long-running containers: apps & previews
+  (`replaceContainer`), managed DBs (`provision`), proxy, registry — also on remote servers (policy from the panel). It takes effect when a container is **recreated** (deploy/apply config/re-provision);
+  existing containers stay unlimited until then. One-shot helpers do not get it (short-lived). The compose stack is not reached (`logging:` in the compose file or the daemon's `log-opts`).
+  `docker-compose.dist.yml` uses the same `x-logging` anchor for postgres/api/web.
+- `src/modules/registry/` — entity `Registry` (`self-hosted` | `external`, password AES-256-GCM with `ENCRYPTION_KEY`, `select: false`).
+  `self-hosted-registry.service.ts` runs `registry:3` (htpasswd bcrypt via a one-shot container, volumes `aoox_registry_{data,auth}`,
   `REGISTRY_STORAGE_DELETE_ENABLED=true`). `registry-client.ts` = OCI Distribution API v2 (catalog, tags, manifest digest, delete).
-- Flow: `create-registry/`, `list-registries/`, `delete-registry/`, `test-registry/`, `provision-self-hosted/`, `remove-self-hosted/`,
-  `self-hosted-status/`, `list-repositories/`, `list-tags/`, `delete-tag/`, `garbage-collect/`, `set-registry-domain/`. Manajemen = `@Roles('owner','admin')` (`RolesGuard`), provisioning/GC = owner.
-- **Domain kustom untuk registry lokal** (`set-registry-domain/`, `PATCH /registries/:id/domain`, `@Roles('owner','admin')`, hanya untuk `type: 'self-hosted'`): registry sebelumnya
-  sama sekali tidak terhubung ke Traefik (murni port host, HTTP polos, TLS/`insecure-registries` sepenuhnya tanggung jawab operator). Sekarang bisa direcreate dengan label
-  `ProxyService.buildLabels('aoox-registry', 5000, [{host, https:true}], ...)` (dipakai langsung sebagai static method, pola sama dengan `panel-domain.util.ts`) dan join network
-  `aoox` (`APP_NETWORK`) — mensyaratkan proxy sudah `running` **dan** `acmeEmail` terisi (400 kalau belum, karena tanpa ACME sertifikat default Traefik tidak dipercaya `docker push`).
-  `SelfHostedRegistryService.createContainer()` (private, dipakai `provision()` dan `setDomain()`) selalu `ensureNetwork(APP_NETWORK)` + `NetworkMode: APP_NETWORK` sekarang —
-  port host tetap dipublikasikan juga, jadi akses IP:port tidak hilang. Set domain → `registry.domain` + `registry.url` (jadi domain polos tanpa port, HTTPS standar) diperbarui
-  di DB; hapus domain (`domain: null`) → recreate tanpa label, `url` kembali ke `SelfHostedRegistryService.publicUrl`. Volume data & auth (htpasswd) tidak tersentuh saat recreate,
-  jadi kredensial tetap sama. `apiBaseUrl()` (panggilan API sendiri ke registry) tidak berubah — tetap lewat `REGISTRY_INTERNAL_URL`, tidak pernah lewat domain publik. CLI:
-  `aoox registry domain --set <host>` / `--clear` (cari registry `self-hosted` otomatis, tidak perlu id). Dashboard: field "Domain kustom" di kartu Registry lokal.
-  Efek samping yang diinginkan: `SwarmStatus.registry.reachableFromNodes` (cek regex `registry.url` bukan `localhost`) otomatis jadi `true` begitu domain aktif, tanpa perlu ubah
-  `swarm.service.ts` sama sekali.
-- **Storage S3 opsional untuk registry lokal** (`Registry.storageDestinationId`, FK `backup_destinations` `SET NULL`, hanya diisi saat provisioning — tidak bisa diganti tanpa
-  hapus+provision ulang): default tetap disk lokal (volume `aoox_registry_data`) seperti sebelumnya; kalau `POST /registries/self-hosted` diberi `destinationId`, reuse kredensial
-  `BackupDestination` yang sama dipakai backup database/volume (`BackupDestinationService.resolve()`) dan set driver storage image `registry:3` ke S3 lewat
-  `registry-s3-env.ts` (`registryS3Env()`, pure & di-unit-test — `REGISTRY_STORAGE=s3` + `REGISTRY_STORAGE_S3_{ACCESSKEY,SECRETKEY,REGION,BUCKET,SECURE,FORCEPATHSTYLE}`,
-  `REGIONENDPOINT` hanya kalau ada endpoint kustom/MinIO, `ROOTDIRECTORY` dari `prefix`). Volume data (`aoox_registry_data`) **tidak dibuat/di-mount sama sekali** saat pakai S3 —
-  cuma volume auth (htpasswd) yang tetap lokal, karena autentikasi bukan "data registry". `createContainer()` (dipakai `provision()` **dan** `setDomain()`) menerima
-  `destination: DestinationConfig | null` di kedua tempat supaya ganti domain tidak "lupa" backend S3 yang sudah dipilih — `SetRegistryDomainService` resolve ulang
-  `registry.storageDestinationId` sebelum recreate. Dashboard: pilihan "Lokal" vs tujuan S3 di dialog konfirmasi sebelum tombol Provision (tidak bisa diubah setelahnya dari UI).
-  Belum: migrasi data dari lokal ke S3 (atau sebaliknya) untuk registry yang sudah terlanjur di-provision.
-- Route dengan nama repo bergaris miring memakai wildcard Express 5 (`*repository`) yang tiba sebagai array → di-`@Transform` jadi string di DTO.
-- Hapus tag = hapus manifest (tag lain dengan digest sama ikut hilang); disk kembali setelah GC.
-- **Hapus image sepenuhnya** (`delete-repository/`, `DELETE /registries/:id/repositories/*repository?force=`, `@Roles('owner','admin')` — sama dengan `delete-tag`, karena secara efek
-  ini "delete-tag berkali-kali" ditambah pembersihan folder, bukan operasi seberat GC registry-wide yang owner-only): ditemukan user di VPS bahwa setelah semua tag sebuah repo dihapus
-  **dan** GC dijalankan, repo seperti `dummy/hello` tetap muncul di `_catalog` dengan "0 tag" — penyebabnya, `registry:3` membangun `_catalog` dari nama folder
-  `docker/registry/v2/repositories/<repo>/` di storage, dan **baik Distribution API maupun garbage-collect tidak pernah menghapus folder itu sendiri**, hanya blob/manifest tak terpakai
-  di dalamnya. Distribution API juga tidak punya endpoint "hapus repo". Alurnya: (1) `listTagNames` + `getTag` per tag untuk kumpulan digest unik (tag berbeda bisa berbagi digest,
-  seperti `delete-tag`) → `deleteManifest` per digest; (2) hapus foldernya — lokal lewat helper busybox sekali-jalan (`SelfHostedRegistryService.removeRepositoryData()`, `Cmd` array
-  `['rm','-rf', path]`, **tanpa shell** jadi nama repo tidak pernah lewat interpolasi shell) atau S3 lewat `BackupDestinationService.purgeDir()` (rclone `purge` ke
-  `<ROOTDIRECTORY>/docker/registry/v2/repositories/<repo>`, method baru — sebelumnya cuma ada `remove()` satu file); (3) `garbageCollect(false)` otomatis; (4) `restartRegistry()`
-  (method baru di `DockerEngineClient`, `POST /containers/{id}/restart`). Nama repo divalidasi dua kali: `@Matches` yang sama dengan `delete-tag` di DTO, **dan** lagi
-  `assertValidRepositoryName()` (`repository-name.ts`, di-unit-test) tepat sebelum dipakai membangun path/`Cmd` — menolak `..`, path absolut, dan apa pun di luar bentuk komponen OCI,
-  sebagai lapis kedua yang sengaja terpisah dari validasi DTO.
-  **Jebakan cache blob descriptor**: `registry:3` defaultnya (tanpa env apa pun, tidak pernah di-nonaktifkan di `createContainer()`) mengaktifkan `storage.cache.blobdescriptor: inmemory`
-  — setelah GC menghapus blob, cache di memori itu masih percaya blob itu ada, jadi `docker push` ulang layer yang sama berikutnya melihat "blob already exists" dan **tidak**
-  mengunggah ulang, padahal blobnya sudah hilang dari disk; manifest baru lalu menunjuk ke blob yang tidak ada dan `docker pull` gagal. Dipilih **restart container** setelah GC
-  (cache in-memory, hilang begitu proses baru) daripada mematikan cache-nya — lebih aman dan tidak mengubah perilaku registry di luar momen hapus-image ini. Diuji nyata dengan
-  `registry:3` sungguhan: push 2 repo (satu dengan 2 tag berdigest sama plus repo lain yang berbagi blob yang sama lewat `--mount`), hapus salah satu repo → hilang dari `_catalog`,
-  repo lain utuh, GC melaporkan blob yang benar-benar tidak dipakai lagi (3 blob) sementara blob yang masih dipakai repo lain tidak disentuh (0 blob) — lalu build image baru yang
-  blobnya **benar-benar** ter-GC, hapus repo-nya, **push ulang** persis konten yang sama dan **pull** hasilnya: berhasil penuh (membuktikan jebakan cache di atas benar dan restart
-  menyelesaikannya). Juga diuji: repo 0-tag persis skenario user (hapus tag lalu hapus repo, hilang dari katalog), registry eksternal ditolak 400, token API `readOnly` 403.
-  **Peringatan pemakaian**: sebelum menghapus (kecuali `?force=true`), `usage()` mencari `Application.currentImage`/`imageRef` yang cocok pola `%/<repo>:%` dan membalas 409 dengan
-  daftarnya (juga tersedia sendiri lewat `GET .../repositories/*repository/usage` untuk pratinjau di web sebelum konfirmasi) — diuji nyata dengan aplikasi `sourceType: 'image'`
-  yang `imageRef`-nya menunjuk repo yang mau dihapus: 409 tanpa `force`, 200 dengan `force=true`. **Belum diuji**: S3 (tidak ada MinIO di lingkungan pengujian ini; kode `purgeDir()`
-  memakai ulang `rcloneEnv()`/pola `rclone` yang sudah diuji nyata di tempat lain untuk upload/download/delete, hanya perintah `purge` yang baru).
-- **Jebakan ditemukan saat mengerjakan fitur di atas**: `RegistryService.apiBaseUrl()` memakai `config.get('REGISTRY_INTERNAL_URL') ?? fallback` — `.env`'s
-  `REGISTRY_INTERNAL_URL=` (kosong, bukan dihapus) adalah string kosong, bukan `undefined`, jadi `??` **tidak** jatuh ke fallback dan `RegistryClient` dibuat dengan `baseUrl` kosong,
-  membuat **setiap** panggilan lewat `RegistryClient` (`list-repositories`, `list-tags`, `delete-tag`, `test-registry`, dan fitur hapus-image di atas) gagal 500 `Invalid URL` —
-  pola yang persis sama dengan jebakan `DOCKER_SOCKET` yang sudah didokumentasikan (bagian Docker & Registry, klien Engine API). Ditemukan lewat verifikasi nyata dev server di sesi
-  ini (bukan lewat unit test — mock tidak pernah membaca `.env` sungguhan), diperbaiki dengan mengganti `??` jadi `||` di `apiBaseUrl()`.
-- **Kredensial untuk klien luar** (`get-registry-credentials/`, `GET /registries/:id/credentials`, `@Roles('owner','admin')` — sama dengan `delete-registry`): membalas `{url, username, password}` dengan password **terdekripsi**, pola yang sama dengan `database-credentials` (dipisah dari `GET /registries` supaya list tidak pernah membawa rahasia). Dipakai `aoox deploy` di CLI (`../aoox-cli`) untuk `docker login` sebelum `docker push` — `url` di sini APA ADANYA dari kolom `registries.url` (untuk registry self-hosted = `SelfHostedRegistryService.publicUrl`, sudah menghormati `REGISTRY_PUBLIC_HOST`), bukan `apiBaseUrl()` yang dipakai API sendiri untuk memanggil registry (itu bisa `REGISTRY_INTERNAL_URL`, tidak terjangkau dari luar container API).
-
+- Flows: `create-registry/`, `list-registries/`, `delete-registry/`, `test-registry/`, `provision-self-hosted/`, `remove-self-hosted/`,
+  `self-hosted-status/`, `list-repositories/`, `list-tags/`, `delete-tag/`, `garbage-collect/`, `set-registry-domain/`. Management = `@Roles('owner','admin')` (`RolesGuard`), provisioning/GC = owner.
+- **Custom domain for the local registry** (`set-registry-domain/`, `PATCH /registries/:id/domain`, `@Roles('owner','admin')`, only for `type: 'self-hosted'`): the registry used to be completely unconnected to Traefik (only a host port, plain HTTP; TLS/`insecure-registries` was entirely the operator's responsibility). It can now be recreated with the label
+  `ProxyService.buildLabels('aoox-registry', 5000, [{host, https:true}], ...)` (used directly as a static method, same pattern as `panel-domain.util.ts`) and joined to the `aoox` network (`APP_NETWORK`) — this requires the proxy to already be `running` **and** `acmeEmail` to be set (400 otherwise, because without ACME Traefik's default certificate is not trusted by `docker push`).
+  `SelfHostedRegistryService.createContainer()` (private, used by `provision()` and `setDomain()`) now always does `ensureNetwork(APP_NETWORK)` + `NetworkMode: APP_NETWORK` — the host port is still published, so IP:port access is not lost. Setting a domain → `registry.domain` + `registry.url` (so a bare domain without a port, standard HTTPS) are updated in the DB; removing the domain (`domain: null`) → recreate without the label, `url` goes back to `SelfHostedRegistryService.publicUrl`. The data and auth (htpasswd) volumes are untouched on recreate,
+  so the credentials stay the same. `apiBaseUrl()` (the API's own calls to the registry) is unchanged — it still goes through `REGISTRY_INTERNAL_URL`, never through the public domain. CLI:
+  `aoox registry domain --set <host>` / `--clear` (finds the `self-hosted` registry automatically, no id needed). Dashboard: a "Custom domain" field on the Local registry card.
+  Intended side effect: `SwarmStatus.registry.reachableFromNodes` (the check is a regex on `registry.url` not being `localhost`) becomes `true` automatically once a domain is active, without changing `swarm.service.ts` at all.
+- **Optional S3 storage for the local registry** (`Registry.storageDestinationId`, FK `backup_destinations` `SET NULL`, set only at provisioning — it cannot be changed without deleting and re-provisioning): the default stays local disk (volume `aoox_registry_data`) as before; if `POST /registries/self-hosted` gets a `destinationId`, the same `BackupDestination` credentials used by database/volume backups are reused (`BackupDestinationService.resolve()`), and the `registry:3` image's storage driver is set to S3 through
+  `registry-s3-env.ts` (`registryS3Env()`, pure & unit-tested — `REGISTRY_STORAGE=s3` + `REGISTRY_STORAGE_S3_{ACCESSKEY,SECRETKEY,REGION,BUCKET,SECURE,FORCEPATHSTYLE}`,
+  `REGIONENDPOINT` only when there is a custom endpoint/MinIO, `ROOTDIRECTORY` from `prefix`). The data volume (`aoox_registry_data`) is **not created or mounted at all** when S3 is used —
+  only the auth volume (htpasswd) stays local, because authentication is not "registry data". `createContainer()` (used by `provision()` **and** `setDomain()`) takes `destination: DestinationConfig | null` in both places so a domain change does not "forget" the chosen S3 backend — `SetRegistryDomainService` re-resolves
+  `registry.storageDestinationId` before recreating. Dashboard: a "Local" vs S3 destination choice in the confirmation dialog before the Provision button (it cannot be changed from the UI afterwards).
+  Not yet: migrating data from local to S3 (or the reverse) for a registry that has already been provisioned.
+- Routes with a slash in the repo name use an Express 5 wildcard (`*repository`) that arrives as an array → converted to a string with `@Transform` in the DTO.
+- Deleting a tag = deleting the manifest (other tags with the same digest disappear too); disk space comes back after GC.
+- **Delete an image completely** (`delete-repository/`, `DELETE /registries/:id/repositories/*repository?force=`, `@Roles('owner','admin')` — same as `delete-tag`, because in effect this is "delete-tag many times" plus folder cleanup, not the heavy registry-wide GC that is owner-only): a user on a VPS found that after all tags of a repo were deleted **and** GC was run, a repo such as `dummy/hello` still appeared in `_catalog` with "0 tags" — the cause: `registry:3` builds `_catalog` from the folder names `docker/registry/v2/repositories/<repo>/` in storage, and **neither the Distribution API nor garbage-collect ever deletes that folder itself**, only the unused blobs/manifests inside it. The Distribution API also has no "delete repo" endpoint. The flow: (1) `listTagNames` + `getTag` per tag to collect the unique digests (different tags can share a digest, as in `delete-tag`) → `deleteManifest` per digest; (2) delete the folder — locally through a one-shot busybox helper (`SelfHostedRegistryService.removeRepositoryData()`, a `Cmd` array
+  `['rm','-rf', path]`, **no shell** so the repo name never goes through shell interpolation), or on S3 through `BackupDestinationService.purgeDir()` (rclone `purge` on
+  `<ROOTDIRECTORY>/docker/registry/v2/repositories/<repo>`, a new method — previously there was only `remove()` for a single file); (3) `garbageCollect(false)` automatically; (4) `restartRegistry()`
+  (a new method on `DockerEngineClient`, `POST /containers/{id}/restart`). The repo name is validated twice: the same `@Matches` as `delete-tag` in the DTO, **and** again in
+  `assertValidRepositoryName()` (`repository-name.ts`, unit-tested) right before it is used to build the path/`Cmd` — it rejects `..`, absolute paths, and anything outside the OCI component shape,
+  as a deliberately separate second layer from the DTO validation.
+  **Blob descriptor cache pitfall**: `registry:3` by default (with no env at all; never disabled in `createContainer()`) enables `storage.cache.blobdescriptor: inmemory`
+  — after GC deletes blobs, that in-memory cache still believes they exist, so the next `docker push` of the same layer sees "blob already exists" and **does not** upload it again, even though the blob is gone from disk; the new manifest then points to a missing blob and `docker pull` fails. The chosen fix is to **restart the container** after GC (the in-memory cache disappears with the new process) rather than disabling the cache — safer and it does not change registry behavior outside this delete-image moment. Tested for real
+  with a real `registry:3`: push 2 repos (one with 2 tags sharing a digest, plus another repo sharing the same blob through `--mount`), delete one repo → it disappears from `_catalog`, the other repo is intact, GC reports the blobs that are truly unused (3 blobs) while blobs still used by the other repo are untouched (0 blobs) — then build a new image whose blobs are **actually** GC'd, delete its repo, **push** exactly the same content again and **pull** it back: fully successful (proving the cache pitfall above is real and that the restart fixes it).
+  Also tested: a 0-tag repo, exactly the user's scenario (delete the tags, then delete the repo, it disappears from the catalog), an external registry rejected with 400, a `readOnly` API token 403.
+  **Usage warning**: before deleting (unless `?force=true`), `usage()` looks for `Application.currentImage`/`imageRef` matching the pattern `%/<repo>:%` and replies 409 with
+  the list (also available on its own through `GET .../repositories/*repository/usage` for a preview in the web before confirming) — tested for real with an application of `sourceType: 'image'`
+  whose `imageRef` points to the repo to delete: 409 without `force`, 200 with `force=true`. **Not tested yet**: S3 (there is no MinIO in this test environment; the `purgeDir()` code
+  reuses `rcloneEnv()`/the `rclone` pattern already tested for real elsewhere for upload/download/delete — only the `purge` command is new).
+- **Pitfall found while working on the features above**: `RegistryService.apiBaseUrl()` used `config.get('REGISTRY_INTERNAL_URL') ?? fallback` — `.env`'s
+  `REGISTRY_INTERNAL_URL=` (empty, not removed) is an empty string, not `undefined`, so `??` does **not** fall back, and `RegistryClient` was created with an empty `baseUrl`,
+  making **every** call through `RegistryClient` (`list-repositories`, `list-tags`, `delete-tag`, `test-registry`, and the delete-image feature above) fail with a 500 `Invalid URL` —
+  exactly the same pattern as the `DOCKER_SOCKET` pitfall already documented (the Docker & Registry section, Engine API client). Found through a real dev-server check in this session
+  (not unit tests — mocks never read the real `.env`), fixed by changing `??` to `||` in `apiBaseUrl()`.
+- **Credentials for external clients** (`get-registry-credentials/`, `GET /registries/:id/credentials`, `@Roles('owner','admin')` — same as `delete-registry`): returns `{url, username, password}` with the password **decrypted**, the same pattern as `database-credentials` (separated from `GET /registries` so the list never carries secrets). Used by `aoox deploy` in the CLI (`../aoox-cli`) to `docker login` before `docker push` — the `url` here is taken AS-IS from the `registries.url` column (for a self-hosted registry = `SelfHostedRegistryService.publicUrl`, which already honors `REGISTRY_PUBLIC_HOST`), not the `apiBaseUrl()` the API uses to call the registry itself (that one may be `REGISTRY_INTERNAL_URL`, which is unreachable from outside the API container).
 ## Application & Deploy
 
-- `src/modules/application/` — entity `Application` (di bawah `Project`, `app_name` slug unik → nama container `aoox-app-<appName>`,
-  sumber: `git_url`+`git_branch`+`dockerfile_path`, `container_port`, `host_port` nullable, `env` teks `KEY=VALUE`) dan `Deployment`
-  (`status` queued→building→pushing→starting→success|failed, `image_ref`, `logs` teks, `error_message`, `finished_at`).
-- Kepemilikan lewat project: `ApplicationService.findOwnedOrFail(id, ownerId)` join `project.ownerId`.
-- Flow: `create/list/get/update/delete-application`, `deploy-application` (202, tolak 409 kalau masih ada deployment aktif),
-  `list-deployments` (tanpa logs), `get-deployment` (dengan logs, di-poll web), `stop/start-application`, `application-logs` (log container).
-  `list-applications` (`GET /applications?projectId=`) membalas app + `domains: [{host, https}]` (satu query `IN (...)` untuk seluruh daftar, bukan per app) supaya kartu
-  halaman detail project bisa menautkan ke app yang berjalan; compose (`serviceDomains`/`servicePorts`) dan database (`hostPort`) sudah ada di row list masing-masing.
-- **Cek tabrakan host port** saat `create`/`update-application` men-set `hostPort` (juga `create-database` dan companion — database selalu di daemon host, jadi dicek terhadap `DockerService`; `update-database` tidak punya
-  `hostPort`; **impor project** punya cek tabel sendiri yang hanya melihat app/database/stack dan menjatuhkan port bentrok dengan warning — tidak melihat companion atau container yang sedang jalan):
-  `HostPortService` (`src/modules/host-port/`, hanya meng-impor entity
-  `Application`/`ManagedDatabase`/`ComposeApp`/`DatabaseCompanion` langsung — bukan module-nya — supaya bisa dipakai `ApplicationModule`, `ComposeModule`, `ManagedDatabaseModule` dan companion tanpa siklus,
-  karena `ComposeModule` sudah meng-import `ApplicationModule`). Logika sama dengan `ComposeService.assertHostPortsFree()` (lihat bagian Compose): `applications.host_port`
-  lain, `managed_databases.host_port`, `service_ports` compose, dan port yang sedang di-bind container di daemon. App di server remote (`Application.serverId`) mengecek
-  container lewat `RemoteDockerService.forServer(serverId)`, bukan daemon lokal — cek tabel tetap global. Saat `update`, container milik app sendiri (`aoox-app-<appName>`,
-  `-next` blue/green, atau task swarm berlabel `aoox.application`) dan baris app itu sendiri dikecualikan; cek hanya jalan kalau `hostPort` atau `serverId` berubah.
-  Sebelumnya app yang dibuat tanpa domain **dan** tanpa host port bebas dipilih port yang sudah dipakai lalu gagal diam-diam saat container dibuat — sekarang 400 di awal.
-- **Ubah Port host pada app yang sudah jalan berlaku langsung** (`update-application.service.ts`): port hanya hidup di `HostConfig.PortBindings` container, jadi dulu PATCH cuma menyimpan
-  baris DB dan port baru baru terbuka setelah deploy/rollback berikutnya. Sekarang `hostPort` berubah (null→angka, angka→angka, angka→null) + `currentImage` + `status==='running'` →
-  `runner.applyRuntimeConfig` (mode container: sinkron, recreate dari `currentImage`, tanpa build; dengan port host **tidak ada blue/green** karena dua container tak bisa bind port yang sama
-  → downtime singkat; server remote lewat `RemoteDockerService.forServer` di dalam `replaceContainer`) atau `queueRuntimeConfig` (mode service — rolling update). **Aplikasi `stopped` tidak
-  dinyalakan**: hanya disimpan, dan `start-application` membandingkan `HostConfig.PortBindings[<containerPort>/tcp]` container yang berhenti dengan `app.hostPort` (`publishedPort()`) — beda →
-  cek `assertFree` lalu `applyRuntimeConfig` (recreate + start) alih-alih `startContainer` (container berhenti masih membawa port lamanya). Mode service yang di-scale 0 belum punya jalur ini
-  (berlaku pada deploy/config berikutnya). **Deployment aktif → 409** (bukan "biarkan deployment membacanya"): runner memegang salinan entity `Application` dari saat di-queue, jadi ia
-  membuat container dengan port lama **dan** `repo.save(app)` di akhir menulis balik port lama, menghapus perubahan user diam-diam (TypeORM men-diff terhadap DB). **Kegagalan penerapan**:
-  `replaceContainer` menghapus container lama *sebelum* membuat yang baru (port yang sama), jadi bila create/start gagal (port direbut proses lain setelah `assertFree`) tak ada container tersisa;
-  `applyHostPort()` lalu mengembalikan `hostPort` lama di DB **dan** me-recreate container dengan port lama, dan membalas 409 "…the previous port was restored" (bila restore ikut gagal →
-  status `error` + pesan "redeploy"). Diuji nyata dengan `nginx:alpine` (sumber image): tambah/ganti/hapus port mengikuti tanpa deployment baru, bentrok dengan container lain 400 dan container
-  utuh, stopped tetap stopped lalu start memakai port baru, deployment aktif 409. **Belum diuji nyata**: jalur restore saat gagal (Docker Desktop tidak menolak bind meski Windows menahan
-  port atau port dikecualikan — hanya tes unit), server remote, swarm.
-- `deployment-runner.service.ts` berjalan **detached** dari request: `POST /build?remote=<git>#<branch>` (daemon meng-clone sendiri — tidak butuh git/tar di API)
-  → `POST /images/{name}/push` dengan `X-Registry-Auth` (base64url **dengan padding**, seperti Go) ke registry lokal
-  → hapus container lama → create+start container baru (label `aoox.application`). Image ref: `<registry.url>/<project-slug>/<appName>:<12 char id deployment>`.
-  Selalu berakhir `success`/`failed`; gagal build/push tidak menyentuh container yang sedang jalan dan tidak mengubah `status` app.
-  **PATCH saat deploy berjalan**: runner memegang salinan `Application` dari saat di-queue (build bisa bermenit-menit), dan `repo.save(app)` men-diff salinan basi itu terhadap row
-  → mengembalikan diam-diam apa pun yang diubah PATCH di antaranya. Karena itu runner **tidak pernah** `save` seluruh entity: `persistOutcome()` hanya menulis kolom miliknya lewat
-  `repo.update(id, …)` — `status` + `currentImage` (sukses/rollback/config, dan `status` saat gagal setelah container diganti) dan, untuk sumber image, baseline `imageDigest`/`imageCheckedAt`
-  (di-guard `WHERE image_ref = <yang di-pull>` supaya tidak menimpa digest yang di-reset PATCH `imageRef`). Writer background lain (`ImageUpdateWatcherService`, webhook/secret) sudah
-  memakai `update`. Field lain (nama, env, domain, limit, healthcheck, previews, …) yang diubah saat deploy **selamat**, tetapi container deployment itu dibuat dari nilai saat queue —
-  berlaku di deploy berikutnya. 409 tetap hanya untuk `hostPort` dan secret source (salinan basi akan membuat container dengan port/secret lama, dan `applyHostPort` akan balapan).
-  Sisi sebaliknya: `UpdateApplicationService` membaca ulang `status/currentImage/imageDigest/imageCheckedAt` tepat sebelum `save` (`refreshRunnerColumns`) agar deploy yang selesai di
-  tengah request tidak dibatalkan. `stop/start-application` masih `save` entity utuh (jendela sangat sempit, belum diubah).
-- Log realtime: `logs.gateway.ts` (Socket.IO namespace `/logs`, tiket 60 detik dari `create-log-ticket/` = `POST /applications/:id/log-ticket`, scope `logs`, terikat satu aplikasi).
-  Event klien `subscribe:deployment(id)` / `subscribe:container(tail)` / `unsubscribe`; server `deployment:log` (`snapshot: true` = teks penuh, selain itu append),
-  `deployment:status`, `container:log`, `container:end`. Runner memancarkan chunk lewat `DeploymentEventsService` (EventEmitter in-process + teks live per deployment
-  untuk snapshot sinkron tanpa duplikasi); DB tetap di-flush tiap ~1 detik sebagai penyimpanan. Log container via `followContainerLogs` (`GET /containers/{id}/logs?follow=1`, `StreamDemuxer`).
-  Satu instance API saja — kalau di-scale, ganti emitter dengan Redis pub/sub.
-  Selain langganan per-deployment, tiap socket juga `join()` room `app:<applicationId>` saat handshake (di `handleConnection`, dari `applicationId` tiket) — dipakai
-  event `deployment:created` (di bawah) yang harus sampai ke **semua** socket terhubung ke aplikasi itu, bukan cuma yang sedang subscribe ke satu deployment tertentu.
-- **Asal pemicu deployment** (`Deployment.trigger`: `manual`|`webhook`|`auto-update`, terpisah dari `kind` yang memilih jalur build/rollback/config — `rollback`/`config`
-  selalu `trigger: 'manual'`, `triggeredBy` yang membedakannya dari deploy manual biasa) + `commitSha`/`commitMessage` (dipotong ke baris pertama, 200 char) +
-  `triggeredBy` (email aktor untuk manual/rollback/config — dari `@CurrentUser()`, sama untuk sesi maupun API token; nama pusher untuk webhook). Diisi di titik
-  pembuatan row: `DeployApplicationService.queue(app, kind, info?)` (manual & auto-update lewat `execute()`/`ImageUpdateWatcherService`, default trigger dari `kind`),
-  `WebhookDeployService` (dari `parsePushCommit()` — GitHub `after`/`head_commit.message`/`pusher.name`, GitLab `checkout_sha`/`commits[].message` terakhir/`user_name`),
-  `RollbackApplicationService`, `DeploymentRunnerService.queueRuntimeConfig()`. Baris pertama log deployment juga menyebutkannya (`triggerSummary()`, pure & di-unit-test,
-  mis. `==> Triggered by webhook (a1b2c3d "fix x" by octocat)`) via `DeploymentLog.note()` (seperti `step()` tapi tanpa ganti status) — redaksi token/password tetap berlaku
-  karena lewat `append()` yang sama. Diekspos di `list-deployments`/`get-deployment` (field baru ditambahkan ke `select` eksplisit `list-deployments`, `get-deployment`
-  sudah membalas row penuh).
-- **`deployment:created`** (event baru `LogsServerEvents`, dipancarkan `DeploymentEventsService.emitCreated()`/`onCreated()`): `DeploymentRunnerService.start()` —
-  satu-satunya titik yang dipanggil oleh **semua** jalur pembuatan deployment (build/webhook/auto-update lewat `queue()`, rollback/config lewat `start()` langsung) —
-  memancarkannya sekali per row, sehingga tidak perlu duplikasi di tiap caller. `LogsGateway` meneruskannya ke room `app:<applicationId>` (`server.to(room).emit(...)`,
-  `@WebSocketServer()`), bukan ke satu socket yang sedang subscribe — jadi tab yang sedang terbuka tahu ada deploy baru (webhook, auto-update, user lain) tanpa
-  refresh manual. Payload `{id, trigger, commitSha, commitMessage, triggeredBy}`.
-- **Health check & zero-downtime** (`Application.healthcheckPath`, mis. `/health`; `healthcheck.ts`): container dibuat dengan Docker `HEALTHCHECK` (`CMD-SHELL` yang mencoba
-  `wget` → `curl` → `node -e fetch` → `python3` ke `127.0.0.1:<containerPort><path>`, interval 3 s, 30 retry; exit 127 = tidak ada satu pun → pesan error menyebutkannya).
-  `replaceContainer` menunggu `State.Health.Status === 'healthy'` (`waitHealthy`, poll `healthPollMs`) sebelum deployment dianggap sukses. Untuk app yang dirutekan lewat
-  domain **tanpa port host** (dan bukan preview) dilakukan **blue/green**: container baru bernama `<name>-next` dengan label Traefik yang sama — provider docker Traefik
-  mengabaikan container yang belum `healthy`, lalu me-load-balance keduanya — setelah sehat tunggu `proxySettleMs` (3 s, agar Traefik sempat menambah server), hapus yang lama,
-  `renameContainer` `-next` → nama asli (diuji: 80/80 request 200 selama swap). Gagal/timeout → `-next` dihapus, container lama tetap melayani, deployment `failed`.
-  Dengan port host (dua container tak bisa bind port yang sama) atau preview: replace biasa, health check tetap menentukan sukses/gagal. `-next` sisa deploy yang crash dihapus dulu.
-  Efek samping yang disengaja: container yang kemudian jadi `unhealthy` dilepas Traefik (404) — itulah gunanya health check.
-- Rollback: `rollback-application/` (`POST /applications/:id/rollback {deploymentId}`) membuat Deployment `kind: 'rollback'` yang memakai `imageRef` lama
-  (`ensureImage` → `replaceContainer`), tanpa build/push. Hanya target `success` yang boleh.
-- `Application.ignoreErrorLogs` (default `false`, diset lewat `update-application`): melewatkan app dari `app-error-watcher.service.ts` (lihat bagian
-  Notifikasi → "Error aplikasi dari log") — untuk app yang output normalnya memang berisik terlihat seperti error. Ikut diekspor/impor lewat `project-transfer`.
-- Environment: `Project.env` (bersama) + `Application.env`, keduanya teks `KEY=VALUE`; digabung oleh `env-resolver.service.ts` **saat container dibuat**
-  (`replaceContainer`, bukan saat build — jadi password DB baru/rotasi terpakai di deploy berikutnya tanpa rebuild), app menang bila key sama.
-  Nilai boleh merujuk `${{project.KEY}}` dan `${{database.<slug>.url|host|port|username|password|database}}` — database dicari **hanya di project yang sama**
-  (slug global, jadi tanpa filter ini app bisa membaca password project lain). Referensi tak dikenal → `EnvReferenceError`: 400 saat `update-application`
-  (divalidasi di sana), atau deployment `failed` bila baru salah saat deploy. Password DB yang ter-resolve didaftarkan ke `DeploymentLog.redact`.
-  `Application.buildArgs` (`KEY=VALUE`) → `buildargs` JSON di `POST /build` — literal, tanpa referensi, karena ikut tersimpan di image yang di-push.
-- **Nixpacks** (`Application.buildType` `dockerfile`|`nixpacks`, `nixpacks-builder.service.ts`): repo tanpa Dockerfile. Tanpa binary di host/image API:
-  (1) helper image `aoox-nixpacks:<versi>` (debian + git + CLI nixpacks dari GitHub release, `HELPER_DOCKERFILE`) dibangun sekali lewat `POST /build`
-  dengan konteks tar satu file (`tarSingleFile`, ustar minimal); (2) container helper sekali-jalan `git clone --depth 1` (URL berkredensial tidak pernah keluar dari
-  helper; `GIT_TERMINAL_PROMPT=0`) lalu `nixpacks build /src --out /src --no-cache --env K=V` — hanya menulis `.nixpacks/Dockerfile`, tanpa docker; `tar` seluruh
-  source → `readFileFromContainer` (archive API) → (3) `buildFromTar` (`POST /build` body `application/x-tar`, `dockerfile=.nixpacks/Dockerfile`, builder klasik).
-  `--no-cache` **wajib**: cache mount nixpacks adalah sintaks BuildKit (`RUN --mount`), dan `POST /build?version=2` butuh sesi gRPC BuildKit yang tidak dimiliki klien
-  buatan sendiri (diuji: tanpa flag build menggantung). Konsekuensi: tidak ada cache dependensi antar build, build pertama lambat (base `ghcr.io/railwayapp/nixpacks:ubuntu-*`
-  ±350 MB + `nix-env`), konteks tar ditahan di memori (source tree saja, `.git` dihapus). `buildArgs` → `--env` nixpacks (mis. `NIXPACKS_NODE_VERSION`) dan `buildargs` Docker.
-  Versi nixpacks dipin `NIXPACKS_VERSION`; naikkan = helper image baru otomatis. `aoox.component=build` untuk helper (diabaikan monitoring/container-down karena bukan app/db).
-- **Mounts** (`mount.entity.ts`, tabel `mounts`, unik per `application_id`+`container_path`): `volume` (volume Docker `aoox_app_<appName>_<name>`, data bertahan antar deploy),
-  `bind` (path host — **hanya owner/admin**, `BIND_MOUNT_ROLES`, karena setara akses filesystem host), `file` (isi di kolom `content`, selalu read-only). `mounts.ts`:
-  `bindsFor()` (pure, di-unit-test) → `HostConfig.Binds`; `prepareMounts()` membuat volume dan menulis semua `file` ke volume `aoox_app_<appName>_files` lewat
-  helper busybox yang **tidak dijalankan** (`putArchive` ke container stopped), lalu file di-bind dari `inspectVolume().Mountpoint` — API v1.44 belum punya volume subpath,
-  jadi trik yang sama dengan compose runner. Flow `add/list/update/delete-mount` (`/applications/:id/mounts[/:mountId]`, `?purge=true` menghapus volume) semuanya
-  memanggil `applyRuntimeConfig` (recreate container tanpa build). Preview PR **tidak** mendapat mount (jangan berbagi volume prod dengan branch sembarang).
-  Blue/green: dua container sementara memakai volume yang sama — konsekuensi yang diterima.
-  **Mount database**: `Mount.databaseId` (nullable; unik per `database_id`+`container_path`), helper `mounts.ts` menerima `MountOwner` (`{appName}` → `aoox_app_…`,
-  `{slug}` → `aoox_db_…`). `ManagedDatabaseService.provision()` menambahkan `bindsFor()` dari mount DB (repo `Mount` di-`forFeature` di module DB juga — ApplicationModule tidak bisa
-  di-import ke sana, siklus). Flow di `src/modules/database-mount/` (`/databases/:id/mounts[...]`, memakai `mountFields()` dari add-mount app) — tiap perubahan `provision()` ulang
-  (restart singkat; data di volume; DB `stopped` dihentikan lagi).
-  **Mount compose** (`Mount.composeAppId` + `Mount.service` — satu stack = N service, jadi mount butuh tahu service mana; unik per `compose_app_id`+`service`+`container_path`;
-  FK ke `compose_apps` lewat SQL migrasi murni, **bukan** relasi TypeORM, karena ComposeModule sudah meng-import ApplicationModule — relasi baliknya akan jadi siklus).
-  `MountOwner` (`mounts.ts`) jadi tiga arah: `{appName}` → `aoox_app_…`, `{slug,engine}` → `aoox_db_…` (dibedakan dari compose lewat kolom `engine` yang cuma
-  dimiliki `ManagedDatabase` — `ComposeApp` juga punya `.slug` tapi tanpa `engine`, jadi tidak bisa tertukar tanpa impor entity yang bikin siklus), `{slug}` → `aoox_compose_…_<service>_…`
-  (nama volume **disertakan service**, supaya dua service boleh punya mount bernama sama tanpa tabrakan). Flow `src/modules/compose-mount/` (`/compose-apps/:id/mounts[...]`,
-  `AddComposeMountDto extends AddMountDto` mewajibkan `service`) — **tidak** memanggil apa pun sinkron (beda dari app/db): compose bukan satu container yang bisa di-patch,
-  jadi mount baru hanya berlaku di deploy berikutnya, sama seperti `serviceDomains`/`serviceResources`.
-  Dirender ke override (`renderOverride` di `compose-runner.service.ts`) sebagai `volumes:` bentuk panjang (`{type,source,target,read_only}` — **bukan** string pendek `a:b:ro`,
-  karena path daemon-side bisa mengandung karakter yang bentrok dengan pemisah `:`) plus deklarasi top-level `external: true` untuk volume bernama (sudah dibuat sendiri oleh
-  `prepareMounts()`, jadi compose tidak boleh mencoba membuatnya lagi) — key deklarasi top-level itu **disertakan service** juga (`<service>_<name>`), bukan cuma nama mount,
-  supaya dua service dengan mount bernama sama tidak saling menimpa entri `external`. Mount `file` memakai trik yang sama dengan app/db (bind dari `inspectVolume().Mountpoint`
-  files volume) tapi subpath-nya `<service>/<name>` di dalam volume files yang sama (satu volume `_files` untuk seluruh stack).
-  **Jebakan yang ditemukan**: `docker compose up -d` idempoten berdasar diff **konfigurasi YAML**, bukan isi file — mengubah `content` mount `file` tidak mengubah override
-  (path bind-nya sama), jadi compose menganggap tidak ada perubahan dan **tidak** me-recreate container; container yang sudah jalan tetap terikat ke inode lama (bind mount
-  per-file, bukan per-direktori) dan tidak pernah melihat isi baru sampai direstart. Karena itu deploy menambahkan `--force-recreate` ke `up` **hanya** saat stack punya mount
-  `file` (mount volume/bind tidak kena masalah ini — path yang dideklarasikan itu sendiri yang berubah, jadi compose sudah otomatis mendeteksinya). Diuji nyata: edit isi file
-  mount lalu redeploy tanpa flag ini → isi lama tetap tersaji; dengan flag → "Recreated" di log dan isi baru terlihat. `renderOverride` juga diuji: volume mount tanpa
-  domain/port sama sekali (early-return lama hanya mengecek domains/ports, sekarang mounts & resources ikut dicek — kalau lupa, stack dengan mount saja tidak pernah dapat override).
-- **Situs statis** (`Application.buildType = 'static'`, `static-site-builder.service.ts`): `renderStaticDockerfile()` (pure, di-unit-test) = stage `node:22-alpine` opsional
-  (`staticBuildCommand`, null = file sudah ada) → `nginx:1.27-alpine` menyalin `staticOutputDir` (`dist`/`build`/`out`/`.`) ke `/usr/share/nginx/html`; `renderNginxConf(spa)` =
-  gzip, cache aset 7 hari, `try_files … /index.html` bila `staticSpa`. Pipeline = jalur nixpacks tanpa planner: helper `aoox-nixpacks` meng-clone, Dockerfile & nginx.conf
-  dimasukkan lewat env (`printf` ke `.aoox/`), tar → `buildFromTar` (`dockerfile=.aoox/Dockerfile`, builder klasik — tanpa cache mount). Port container = 80.
-  Diuji: repo HTML polos dan build stage + fallback SPA. Mode non-SPA menyajikan `404.html` milik repo untuk path yang tidak ada (`error_page 404`; tanpa file itu = halaman 404 bawaan nginx). Diuji ulang lewat halaman create baru + deploy nyata: `/` & `/about.html` 200, path tak dikenal 404 dengan halaman kustom. Belum: pnpm/yarn workspace butuh perintah build eksplisit (tidak ada deteksi otomatis).
-- **Sumber image** (`Application.sourceType = 'image'`, `image_ref`, `image_registry_id` FK registries SET NULL; `git_url` nullable): runner melewati build/push —
-  `pullSourceImage()` selalu `pullImage(ref, auth?)` (tag bergerak ikut terbarui; `X-Registry-Auth` dari kredensial registry eksternal untuk image privat, password di-redact dari log)
-  lalu `replaceContainer`. Tidak butuh registry lokal. Pull gagal → deployment `failed`, container lama tetap jalan. Rollback tetap memakai `imageRef` deployment lama; webhook untuk app
-  image mengabaikan cek branch (CI bisa memanggilnya setelah `docker push`); preview PR tidak berlaku. DTO: `gitUrl` wajib hanya bila `sourceType !== 'image'` (`ValidateIf`),
-  `imageRef` wajib bila `image`. Web: select **Sumber** di form (git/image), field image + kredensial registry.
-  **Jebakan yang ditemukan** (`create-application.dto.ts` **dan** `update-application.dto.ts` — keduanya kena, ditemukan terpisah sehari berbeda karena form yang sama
-  dipakai untuk create dan update): field milik sumber/cara build yang tidak dipakai (mis. `imageRef` untuk app git, atau `dockerfilePath` untuk `buildType` selain
-  `dockerfile`) dikirim web sebagai `""`, bukan `undefined`/`null` — bagian Image/Git/Dockerfile/Static di form React di-mount kondisional per `sourceType`/`buildType`,
-  jadi field yang tidak relevan lenyap dari `FormData` dan action mengembalikannya sebagai string kosong. `@IsOptional()` **hanya** melewatkan `null`/`undefined`, bukan
-  `""`, sehingga `@Matches(...)` tetap jalan dan menolak string kosong dengan pesan regex-nya (mis. `dockerfilePath must match /^[\w./-]{1,200}$/ regular expression`) —
-  user tidak bisa membuat/menyimpan Pengaturan sama sekali untuk cara build yang field-nya sendiri tidak mereka sentuh. Field bertipe string dengan pola serupa (`imageRef`,
-  `gitUrl`, `gitBranch`, `dockerfilePath`, `staticOutputDir`, `staticBuildCommand`, `healthcheckPath`, `previewDomain`) butuh `@ValidateIf((_, v) => v !== '')` tambahan
-  (di samping `v !== null` untuk yang nullable) supaya `""` dilewatkan seperti `null`/`undefined`, di **kedua** DTO; field UUID nullable (`gitCredentialId`,
-  `imageRegistryId`, `swarmNodeId`, `serverId`) aman karena `application.schema.ts` di web sudah men-transform `""` → `null` sebelum dikirim, jadi `ValidateIf(v !== null)`
-  yang ada di sana sudah cukup — hanya field string yang divalidasi `@Matches`/regex tanpa transform serupa yang rawan. Service create juga sempat menyimpan `gitUrl`/
-  `staticBuildCommand` sebagai `""` alih-alih `null` (pola `?.trim() ?? null` tidak menangkap `""`, beda dari `?.trim() || null` yang dipakai field lain) — disamakan.
-  Diaudit juga `compose-app.dto.ts`/`create-compose-app.dto.ts` (pola serupa lain) dan `add-mount.dto.ts`: **tidak** kena — form compose memakai skema zod terpisah per
-  `source` (git vs template) yang menghilangkan field tak relevan sepenuhnya (bukan mengirim `""`), dan dialog mount membangun body request sebagai objek JS dengan
-  spread kondisional, jadi tidak pernah mengirim field yang bagiannya sendiri tidak dirender.
-- **Update otomatis image** (`Application.autoUpdate`, `autoUpdateIntervalMinutes` 5–1440 default 60, `imageDigest`, `imageCheckedAt`; hanya `sourceType='image'`):
-  `image-reference.ts` `parseImageRef()` (pure, di-unit-test; Docker Hub → `registry-1.docker.io` + `library/`), `registry/remote-digest.ts` `fetchRemoteDigest()` =
-  `HEAD /v2/<repo>/manifests/<tag>` dengan Accept manifest list/OCI index (digest yang sama dengan `docker pull`/`buildx imagetools`), token flow Docker Hub/GHCR
-  (401 + `WWW-Authenticate: Bearer` → realm+service+scope, `parseBearerChallenge` di-unit-test) atau Basic (registry self-hosted; base URL & kredensial dari `Registry` bila `imageRegistryId`).
-  `ImageDigestService.remoteDigest(app)` dipakai **runner setelah pull** (baseline = digest registri, bukan `RepoDigests` lokal — beda representasi bisa memicu loop redeploy) dan
-  `ImageUpdateWatcherService` (`@Cron` tiap menit: app image + `autoUpdate` + `running` yang intervalnya lewat → `check(app, true)`: baseline bila belum ada, `changed` →
-  `DeployApplicationService.queue(app, 'auto-update')` (`DeploymentKind` baru; Conflict = ada deployment lain, dilewati); gagal registri tetap menstempel `imageCheckedAt`).
-  `POST /applications/:id/check-image {deploy?}` (`check-image-update/`, throttle 30/menit) = cek manual. Ganti `imageRef` di update → `imageDigest` di-null-kan. Referensi `@sha256:` = tidak pernah berubah.
-  Diuji: Docker Hub, GHCR, registry lokal (dengan/tanpa kredensial), deploy via cek manual dan via cron. Web: switch + interval di form (bagian image), tombol "Cek update image" di panel deploy, ikon ⟳ di riwayat.
-- **Railpack** (`Application.buildType = 'railpack'`, `railpack-builder.service.ts`): builder ketiga dari Railway. Berbeda dari nixpacks, plan-nya **bukan Dockerfile** melainkan JSON untuk
-  BuildKit, jadi tidak bisa lewat `POST /build` klien sendiri → dijalankan penuh di dalam helper: image `aoox-railpack:<RAILPACK_VERSION>` (`docker:29-cli` + git + binary railpack,
-  dibangun sekali lewat `POST /build` + `tarSingleFile` seperti helper nixpacks) yang meng-clone repo lalu `railpack build /src --name <imageRef> --cache-key <projectId>/<appName> --progress plain --env K=V`
-  (`railpackScript()` pure & di-unit-test) dengan socket daemon host di-mount dan `BUILDKIT_HOST=docker-container://aoox-buildkit`. Log helper di-stream (`followContainerLogs`) ke deployment.
-  **Cache bertahan antar deploy** — itu alasan utamanya: BuildKit berjalan sebagai container jangka panjang `aoox-buildkit` (`moby/buildkit:<BUILDKIT_VERSION>`, privileged,
-  `restart: unless-stopped`, volume `aoox_buildkit`, label `aoox.component=build` sehingga diabaikan monitoring & notifikasi container-mati), dinyalakan otomatis saat build pertama
-  (`ensureBuildkit`). Diuji nyata: build dingin 284 s, build kedua 54 s, redeploy lewat API 8,3 s (semua layer `CACHED`) — deployment penuh 43 s termasuk push & start.
-  Image hasil di-load ke daemon lalu mengikuti jalur push/replaceContainer yang sama. **Hanya host** (`serverId` + railpack → error jelas; BuildKit per server di luar cakupan).
-  Runtime: image railpack mendengarkan `$PORT` (konvensi Railway, default 80) → runner menambahkan `PORT=<containerPort>` ke env container bila app tidak menyetelnya sendiri.
-  Cache BuildKit tidak terlihat `POST /build/prune` daemon, jadi `MaintenanceService.cleanup()` memanggil `railpack.pruneCache(BUILDKIT_CACHE_KEEP_GB × 1 GB, default 10)`
-  (`buildctl prune --keep-storage` lewat exec) dan melaporkannya sebagai `buildkitCache` di `CleanupReport` (tampil di kartu Disk). Catatan: batasan "tanpa cache dependensi" di paragraf
-  nixpacks hanya berlaku untuk nixpacks/static, bukan railpack.
-- **Root directory / monorepo** (`Application.rootDirectory` nullable + `watchRootOnly` bool, migrasi `ApplicationRootDirectory`; `root-directory.ts`): membangun **subfolder** repo untuk
-  SEMUA build type git, termasuk preview PR (yang lewat `buildImage` yang sama). Null/kosong = root repo (perilaku lama). **Mekanisme per jalur**: Dockerfile →
-  `POST /build?remote=<git>#<branch>:<dir>` (`gitContextRef()`; sintaks git context + subdirektori Engine API — konteks build = `<dir>`, jadi `dockerfilePath` relatif terhadapnya; `:` aman
-  karena git melarangnya di nama branch); nixpacks/railpack/static → helper tetap `git clone` ke `/src` lalu membangun dari `$APP` = `/src/<dir>` (`appDirPrologue()`: nixpacks `build "$APP" --out "$APP"`
-  dan `tar -C "$APP"`, railpack `build "$APP"`, static menulis `.aoox/` di `$APP`, tar `$APP`, jadi `staticOutputDir` relatif terhadap folder itu tanpa kode khusus). **Keamanan path**:
-  `isValidRootDirectory()` (segmen `[A-Za-z0-9._-]` dipisah `/`, tanpa awalan/akhiran `/`, tanpa segmen titik-saja atau `.git`, maks 200) dipakai **dua kali** — validator DTO create & update
-  (`IsRootDirectoryConstraint`, plus `@ValidateIf(v !== '')` untuk `""` dari web) dan lagi `assertValidRootDirectory()` tepat sebelum dipakai (`gitContextRef`, `rootDirectoryEnv`). Nilainya **tidak pernah**
-  diinterpolasi ke skrip shell: dikirim sebagai env `AOOX_ROOT` ke helper dan prologue shell hanya merujuk `"$AOOX_ROOT"`; prologue juga menolak (exit 3) folder yang tidak ada **dan** symlink yang
-  resolve ke luar `/src` (`pwd -P`). Service menyimpan `null`, bukan `""` (`normalizeRootDirectory`). Folder yang tidak ada → deployment `failed` dengan `Root directory "x" was not found in the
-  repository`: helper exit 3 → `rootDirectoryError`, dan untuk jalur Dockerfile error `stat <tmp>/<dir>: no such file or directory` dari daemon diterjemahkan ke pesan yang sama; container lama tidak
-  tersentuh (build gagal sebelum replace). Baris log `Building …` menyebut `(root directory: apps/web)`. **Batasan**: file di luar folder tidak ada di konteks build (Dockerfile di `apps/web` tidak bisa
-  `COPY ../packages/x`). **Webhook** (`watchRootOnly`, default false): `pushTouchesRoot()` (pure, di-unit-test) membaca `commits[].added/modified/removed` (GitHub & GitLab) dan membalas `ignored`
-  (`no changes under <dir>`) hanya bila setiap commit terbukti di luar folder; **fail-open** (deploy) bila tanpa root, tanpa/kosong `commits`, satu commit tanpa daftar file (merge commit GitHub), ≥ 20 commit
-  (batas payload), `total_commits_count` > yang dimuat (GitLab), `forced`, atau `created`. Event PR/preview tidak difilter. Ekspor/impor project membawa kedua field (opsional di file lama; nilai tidak valid saat
-  impor → `null` + warning). Diuji nyata (git daemon lokal, repo `apps/web`+`apps/site`+`services/api`): Dockerfile root `apps/web` dan `dockerfilePath` relatif, statis root `apps/site` (SPA on/off, output
-  relatif), root salah (Dockerfile & static) gagal jelas dengan container lama tetap jalan, root kosong = lama, path berbahaya 400 (create & update), symlink keluar ditolak, webhook ignored/queued, preview PR
-  membangun dari subfolder. **Belum diuji penuh**: nixpacks dan railpack (TLS intercept AV mencegat unduhan di dalam container) — hanya perakitan skrip/env (unit test); contoh di `dummy-apps/monorepo-sample`.
-- Prasyarat deploy dari git: registry lokal sudah di-provision. Belum: buildpacks lain, notifikasi khusus "image diperbarui" (memakai notifikasi deployment biasa).
+- `src/modules/application/` — entity `Application` (under `Project`, unique `app_name` slug → container name `aoox-app-<appName>`,
+  source: `git_url`+`git_branch`+`dockerfile_path`, `container_port`, `host_port` nullable, `env` text `KEY=VALUE`) and `Deployment`
+  (`status` queued→building→pushing→starting→success|failed, `image_ref`, `logs` text, `error_message`, `finished_at`).
+- Ownership goes through the project: `ApplicationService.findOwnedOrFail(id, ownerId)` joins `project.ownerId`.
+- Flow: `create/list/get/update/delete-application`, `deploy-application` (202, rejects with 409 if a deployment is still active),
+  `list-deployments` (without logs), `get-deployment` (with logs, polled by the web), `stop/start-application`, `application-logs` (container logs).
+  `list-applications` (`GET /applications?projectId=`) returns the apps + `domains: [{host, https}]` (one `IN (...)` query for the whole list, not per app) so the
+  project detail page cards can link to running apps; compose (`serviceDomains`/`servicePorts`) and database (`hostPort`) already exist in each list row.
+- **Host port collision check** when `create`/`update-application` sets `hostPort` (also `create-database` and companions — databases always run on the host daemon, so they are checked against `DockerService`; `update-database` has no
+  `hostPort`; **project import** has its own table check that only looks at apps/databases/stacks and drops colliding ports with a warning — it does not see companions or running containers):
+  `HostPortService` (`src/modules/host-port/`, only imports the entities
+  `Application`/`ManagedDatabase`/`ComposeApp`/`DatabaseCompanion` directly — not their modules — so it can be used by `ApplicationModule`, `ComposeModule`, `ManagedDatabaseModule` and companions without a cycle,
+  because `ComposeModule` already imports `ApplicationModule`). The logic is the same as `ComposeService.assertHostPortsFree()` (see the Compose section): other `applications.host_port`,
+  `managed_databases.host_port`, compose `service_ports`, and ports bound by containers on the daemon. Apps on a remote server (`Application.serverId`) check
+  containers via `RemoteDockerService.forServer(serverId)`, not the local daemon — the table check stays global. On `update`, the app's own containers (`aoox-app-<appName>`,
+  the `-next` blue/green one, or swarm tasks labeled `aoox.application`) and the app's own row are excluded; the check only runs if `hostPort` or `serverId` changes.
+  Previously, an app created without a domain **and** without a host port could be assigned an already-used port and would silently fail when its container was created — now it returns 400 up front.
+- **Changing the host port of a running app takes effect immediately** (`update-application.service.ts`): the port only lives in the container's `HostConfig.PortBindings`, so previously a PATCH only saved
+  the DB row and the new port only opened after the next deploy/rollback. Now, when `hostPort` changes (null→number, number→number, number→null) + `currentImage` + `status==='running'` →
+  `runner.applyRuntimeConfig` (container mode: synchronous, recreate from `currentImage`, no build; with a host port there is **no blue/green** because two containers cannot bind the same port
+  → brief downtime; remote servers go through `RemoteDockerService.forServer` inside `replaceContainer`) or `queueRuntimeConfig` (service mode — rolling update). **A `stopped` app is not started**:
+  it is only saved, and `start-application` compares the stopped container's `HostConfig.PortBindings[<containerPort>/tcp]` with `app.hostPort` (`publishedPort()`) — if different →
+  run `assertFree` and then `applyRuntimeConfig` (recreate + start) instead of `startContainer` (a stopped container still carries its old port). Service mode scaled to 0 does not have this path yet
+  (applies on the next deploy/config). **Active deployment → 409** (instead of "let the deployment read it"): the runner holds a copy of the `Application` entity from when it was queued, so it would
+  create the container with the old port **and** the `repo.save(app)` at the end would write the old port back, silently discarding the user's change (TypeORM diffs against the DB). **Apply failure**:
+  `replaceContainer` removes the old container *before* creating the new one (same port), so if create/start fails (the port was grabbed by another process after `assertFree`) no container is left;
+  `applyHostPort()` then restores the old `hostPort` in the DB **and** recreates the container with the old port, and replies 409 "…the previous port was restored" (if the restore also fails →
+  status `error` + "redeploy" message). Tested for real with `nginx:alpine` (image source): adding/changing/removing a port applies without a new deployment, a collision with another container gives 400 and the container
+  stays intact, stopped stays stopped and start uses the new port, active deployment gives 409. **Not yet tested for real**: the restore path on failure (Docker Desktop does not reject the bind even when Windows holds the
+  port or the port is excluded — unit tests only), remote servers, swarm.
+- `deployment-runner.service.ts` runs **detached** from the request: `POST /build?remote=<git>#<branch>` (the daemon clones by itself — no git/tar needed in the API)
+  → `POST /images/{name}/push` with `X-Registry-Auth` (base64url **with padding**, like Go) to the local registry
+  → remove the old container → create+start the new container (label `aoox.application`). Image ref: `<registry.url>/<project-slug>/<appName>:<12 char id of deployment>`.
+  Always ends as `success`/`failed`; a failed build/push does not touch the running container and does not change the app's `status`.
+  **PATCH during a running deploy**: the runner holds a copy of `Application` from when it was queued (a build can take minutes), and `repo.save(app)` diffs that stale copy against the row
+  → silently reverts whatever the PATCH changed in between. Therefore the runner **never** `save`s the whole entity: `persistOutcome()` only writes its own columns via
+  `repo.update(id, …)` — `status` + `currentImage` (success/rollback/config, and `status` on failure after the container was replaced) and, for image sources, the `imageDigest`/`imageCheckedAt` baseline
+  (guarded by `WHERE image_ref = <the one that was pulled>` so it does not overwrite a digest that a PATCH of `imageRef` reset). Other background writers (`ImageUpdateWatcherService`, webhook/secret) already
+  use `update`. Other fields (name, env, domains, limits, healthcheck, previews, …) changed during a deploy **survive**, but the deployment's container was built from the values at queue time —
+  they apply on the next deploy. 409 is still only for `hostPort` and secret source (a stale copy would create the container with the old port/secret, and `applyHostPort` would race).
+  The other direction: `UpdateApplicationService` re-reads `status/currentImage/imageDigest/imageCheckedAt` right before `save` (`refreshRunnerColumns`) so that a deploy that finishes in the
+  middle of a request is not cancelled. `stop/start-application` still `save` the whole entity (a very narrow window, not changed yet).
+- Realtime logs: `logs.gateway.ts` (Socket.IO namespace `/logs`, 60-second ticket from `create-log-ticket/` = `POST /applications/:id/log-ticket`, scope `logs`, bound to one app).
+  Client events `subscribe:deployment(id)` / `subscribe:container(tail)` / `unsubscribe`; server `deployment:log` (`snapshot: true` = full text, otherwise append),
+  `deployment:status`, `container:log`, `container:end`. The runner emits chunks through `DeploymentEventsService` (in-process EventEmitter + live text per deployment
+  for synchronous snapshots without duplication); the DB is still flushed about every ~1 second as storage. Container logs via `followContainerLogs` (`GET /containers/{id}/logs?follow=1`, `StreamDemuxer`).
+  Only one API instance — if scaled out, replace the emitter with Redis pub/sub.
+  Besides per-deployment subscriptions, each socket also `join()`s the room `app:<applicationId>` at handshake (in `handleConnection`, from the ticket's `applicationId`) — used by the
+  `deployment:created` event (below) that must reach **all** sockets connected to that app, not just the ones subscribed to one particular deployment.
+- **Source of a deployment trigger** (`Deployment.trigger`: `manual`|`webhook`|`auto-update`, separate from `kind`, which selects the build/rollback/config path — `rollback`/`config`
+  are always `trigger: 'manual'`, and `triggeredBy` tells them apart from a normal manual deploy) + `commitSha`/`commitMessage` (cut to the first line, 200 chars) +
+  `triggeredBy` (the actor's email for manual/rollback/config — from `@CurrentUser()`, the same for sessions and API tokens; the pusher's name for webhooks). Filled in at the point
+  the row is created: `DeployApplicationService.queue(app, kind, info?)` (manual & auto-update via `execute()`/`ImageUpdateWatcherService`, default trigger from `kind`),
+  `WebhookDeployService` (from `parsePushCommit()` — GitHub `after`/`head_commit.message`/`pusher.name`, GitLab `checkout_sha`/last `commits[].message`/`user_name`),
+  `RollbackApplicationService`, `DeploymentRunnerService.queueRuntimeConfig()`. The first line of the deployment log also mentions it (`triggerSummary()`, pure & unit-tested,
+  e.g. `==> Triggered by webhook (a1b2c3d "fix x" by octocat)`) via `DeploymentLog.note()` (like `step()` but without changing the status) — token/password redaction still applies
+  because it goes through the same `append()`. Exposed in `list-deployments`/`get-deployment` (new fields added to the explicit `select` of `list-deployments`; `get-deployment`
+  already returns the full row).
+- **`deployment:created`** (new event of `LogsServerEvents`, emitted by `DeploymentEventsService.emitCreated()`/`onCreated()`): `DeploymentRunnerService.start()` is the
+  single point called by **all** deployment-creation paths (build/webhook/auto-update via `queue()`, rollback/config via `start()` directly) —
+  it emits once per row, so no duplication is needed in each caller. `LogsGateway` forwards it to the room `app:<applicationId>` (`server.to(room).emit(...)`,
+  `@WebSocketServer()`), not to a single subscribed socket — so an open tab learns about a new deploy (webhook, auto-update, another user) without a manual refresh.
+  Payload `{id, trigger, commitSha, commitMessage, triggeredBy}`.
+- **Health check & zero-downtime** (`Application.healthcheckPath`, e.g. `/health`; `healthcheck.ts`): the container is created with a Docker `HEALTHCHECK` (`CMD-SHELL` that tries
+  `wget` → `curl` → `node -e fetch` → `python3` against `127.0.0.1:<containerPort><path>`, interval 3 s, 30 retries; exit 127 = none of them exist → the error message says so).
+  `replaceContainer` waits for `State.Health.Status === 'healthy'` (`waitHealthy`, polls every `healthPollMs`) before the deployment counts as successful. For an app routed through a
+  domain **without a host port** (and not a preview), **blue/green** is used: the new container is named `<name>-next` with the same Traefik labels — Traefik's docker provider
+  ignores containers that are not yet `healthy`, then load-balances across both — once healthy, wait `proxySettleMs` (3 s, so Traefik has time to add the server), remove the old one,
+  `renameContainer` `-next` → the real name (tested: 80/80 requests 200 during the swap). On failure/timeout → `-next` is removed, the old container keeps serving, and the deployment is `failed`.
+  With a host port (two containers cannot bind the same port) or for previews: a plain replace, the health check still decides success/failure. A leftover `-next` from a crashed deploy is removed first.
+  Intentional side effect: a container that later becomes `unhealthy` is dropped by Traefik (404) — that is the point of the health check.
+- Rollback: `rollback-application/` (`POST /applications/:id/rollback {deploymentId}`) creates a Deployment `kind: 'rollback'` that uses the old `imageRef`
+  (`ensureImage` → `replaceContainer`), with no build/push. Only a `success` target is allowed.
+- `Application.ignoreErrorLogs` (default `false`, set via `update-application`): skips the app in `app-error-watcher.service.ts` (see the
+  Notifications section → "App errors from logs") — for apps whose normal output is noisy and looks like errors. Exported/imported via `project-transfer`.
+- Environment: `Project.env` (shared) + `Application.env`, both text `KEY=VALUE`; merged by `env-resolver.service.ts` **when the container is created**
+  (`replaceContainer`, not at build time — so a new/rotated DB password is used by the next deploy without a rebuild); the app wins on the same key.
+  Values may reference `${{project.KEY}}` and `${{database.<slug>.url|host|port|username|password|database}}` — the database is looked up **only in the same project**
+  (slugs are global, so without this filter an app could read another project's password). Unknown reference → `EnvReferenceError`: 400 during `update-application`
+  (validated there), or a `failed` deployment if it only goes wrong during deploy. Resolved DB passwords are registered with `DeploymentLog.redact`.
+  `Application.buildArgs` (`KEY=VALUE`) → `buildargs` JSON in `POST /build` — literal, no references, because it is stored in the pushed image.
+- **Nixpacks** (`Application.buildType` `dockerfile`|`nixpacks`, `nixpacks-builder.service.ts`): a repo without a Dockerfile. No binary on the host/API image:
+  (1) a helper image `aoox-nixpacks:<version>` (debian + git + nixpacks CLI from the GitHub release, `HELPER_DOCKERFILE`) is built once via `POST /build`
+  with a single-file tar context (`tarSingleFile`, minimal ustar); (2) a one-shot helper container runs `git clone --depth 1` (the credentialed URL never leaves the
+  helper; `GIT_TERMINAL_PROMPT=0`) and then `nixpacks build /src --out /src --no-cache --env K=V` — it only writes `.nixpacks/Dockerfile`, no docker; the whole
+  source is `tar`red → `readFileFromContainer` (archive API) → (3) `buildFromTar` (`POST /build` with body `application/x-tar`, `dockerfile=.nixpacks/Dockerfile`, classic builder).
+  `--no-cache` is **required**: nixpacks' cache mounts are BuildKit syntax (`RUN --mount`), and `POST /build?version=2` needs a BuildKit gRPC session that our hand-written client does not have
+  (tested: without the flag the build hangs). Consequences: no dependency cache between builds, the first build is slow (base `ghcr.io/railwayapp/nixpacks:ubuntu-*`
+  ~350 MB + `nix-env`), the tar context is held in memory (source tree only, `.git` removed). `buildArgs` → nixpacks `--env` (e.g. `NIXPACKS_NODE_VERSION`) and Docker `buildargs`.
+  The nixpacks version is pinned in `NIXPACKS_VERSION`; bumping it = a new helper image automatically. `aoox.component=build` for the helper (ignored by monitoring/container-down because it is neither an app nor a DB).
+- **Mounts** (`mount.entity.ts`, table `mounts`, unique per `application_id`+`container_path`): `volume` (Docker volume `aoox_app_<appName>_<name>`, data survives between deploys),
+  `bind` (host path — **owner/admin only**, `BIND_MOUNT_ROLES`, because it is equivalent to filesystem access on the host), `file` (contents in the `content` column, always read-only). `mounts.ts`:
+  `bindsFor()` (pure, unit-tested) → `HostConfig.Binds`; `prepareMounts()` creates the volume and writes all `file`s into the volume `aoox_app_<appName>_files` via a
+  busybox helper that is **not run** (`putArchive` into a stopped container), then the files are bound from `inspectVolume().Mountpoint` — API v1.44 has no volume subpath,
+  so the same trick as the compose runner is used. The flow `add/list/update/delete-mount` (`/applications/:id/mounts[/:mountId]`, `?purge=true` deletes the volume) all
+  call `applyRuntimeConfig` (recreate the container without a build). Preview PRs do **not** get mounts (do not share prod volumes with arbitrary branches).
+  Blue/green: two containers briefly use the same volume — an accepted consequence.
+  **Database mounts**: `Mount.databaseId` (nullable; unique per `database_id`+`container_path`), the `mounts.ts` helpers accept a `MountOwner` (`{appName}` → `aoox_app_…`,
+  `{slug}` → `aoox_db_…`). `ManagedDatabaseService.provision()` adds `bindsFor()` from the DB mounts (the `Mount` repo is also `forFeature`d in the DB module — the ApplicationModule cannot be imported there, cycle). The flow lives in `src/modules/database-mount/` (`/databases/:id/mounts[...]`, uses `mountFields()` from the app's add-mount) — every change re-runs `provision()`
+  (brief restart; data is in the volume; a `stopped` DB is stopped again).
+  **Compose mounts** (`Mount.composeAppId` + `Mount.service` — one stack = N services, so a mount must know which service; unique per `compose_app_id`+`service`+`container_path`;
+  FK to `compose_apps` through a plain SQL migration, **not** a TypeORM relation, because ComposeModule already imports ApplicationModule — the reverse relation would be a cycle).
+  `MountOwner` (`mounts.ts`) has three directions: `{appName}` → `aoox_app_…`, `{slug,engine}` → `aoox_db_…` (told apart from compose by the `engine` column, which only `ManagedDatabase` has — `ComposeApp` also has `.slug` but no `engine`, so they cannot be confused without importing entities, which would create a cycle), `{slug}` → `aoox_compose_…_<service>_…`
+  (the volume name **includes the service**, so two services may have mounts with the same name without colliding). Flow `src/modules/compose-mount/` (`/compose-apps/:id/mounts[...]`,
+  `AddComposeMountDto extends AddMountDto` requires `service`) — it calls **nothing** synchronously (unlike app/db): compose is not a single container that can be patched,
+  so a new mount only applies on the next deploy, like `serviceDomains`/`serviceResources`.
+  It is rendered into the override (`renderOverride` in `compose-runner.service.ts`) as long-form `volumes:` (`{type,source,target,read_only}` — **not** the short `a:b:ro` string,
+  because daemon-side paths can contain characters that clash with the `:` separator), plus top-level `external: true` declarations for named volumes (already created by
+  `prepareMounts()`, so compose must not try to create them again) — that top-level declaration key **also includes the service** (`<service>_<name>`), not just the mount name,
+  so two services with identically named mounts do not overwrite each other's `external` entries. `file` mounts use the same trick as app/db (bind from `inspectVolume().Mountpoint`
+  of the files volume) but the subpath is `<service>/<name>` inside the same files volume (one `_files` volume for the whole stack).
+  **Pitfall found**: `docker compose up -d` is idempotent based on the diff of the **YAML configuration**, not on file contents — changing the `content` of a `file` mount does not change the override
+  (the bind path is the same), so compose sees no change and does **not** recreate the container; a running container stays bound to the old inode (per-file bind mounts, not per-directory) and never sees the new contents until restarted. Therefore a deploy adds `--force-recreate` to `up` **only** when the stack has a `file`
+  mount (volume/bind mounts do not have this problem — the declared path itself changes, so compose detects it automatically). Tested for real: edit the contents of a
+  mount file and redeploy without this flag → the old contents are still served; with the flag → "Recreated" in the log and the new contents are visible. `renderOverride` is also tested: a volume mount with no
+  domain/port at all (the old early-return only checked domains/ports; mounts and resources are now checked too — otherwise a stack with only a mount would never get an override).
+- **Static sites** (`Application.buildType = 'static'`, `static-site-builder.service.ts`): `renderStaticDockerfile()` (pure, unit-tested) = an optional `node:22-alpine` stage
+  (`staticBuildCommand`, null = files already exist) → `nginx:1.27-alpine` copies `staticOutputDir` (`dist`/`build`/`out`/`.`) into `/usr/share/nginx/html`; `renderNginxConf(spa)` =
+  gzip, 7-day cache for assets, `try_files … /index.html` when `staticSpa`. The pipeline is the nixpacks path without the planner: the helper `aoox-nixpacks` clones, the Dockerfile & nginx.conf
+  are passed through env (`printf` into `.aoox/`), tar → `buildFromTar` (`dockerfile=.aoox/Dockerfile`, classic builder — no cache mounts). Container port = 80.
+  Tested: a plain HTML repo, and a build stage + SPA fallback. Non-SPA mode serves the repo's own `404.html` for unknown paths (`error_page 404`; without that file = nginx's default 404 page). Re-tested via the new create page + a real deploy: `/` & `/about.html` 200, unknown path 404 with the custom page. Not yet: pnpm/yarn workspaces need an explicit build command (no automatic detection).
+- **Image source** (`Application.sourceType = 'image'`, `image_ref`, `image_registry_id` FK registries SET NULL; `git_url` nullable): the runner skips build/push —
+  `pullSourceImage()` always does `pullImage(ref, auth?)` (moving tags get updated; `X-Registry-Auth` from external registry credentials for private images, the password is redacted from logs)
+  and then `replaceContainer`. No local registry needed. Pull failure → `failed` deployment, the old container keeps running. Rollback still uses the old deployment's `imageRef`; the webhook for image apps
+  ignores the branch check (CI can call it after `docker push`); preview PRs do not apply. DTO: `gitUrl` is required only when `sourceType !== 'image'` (`ValidateIf`),
+  `imageRef` is required when `image`. Web: a **Source** select in the form (git/image), image field + registry credentials.
+  **Pitfall found** (`create-application.dto.ts` **and** `update-application.dto.ts` — both affected, found separately a day apart because the same form is used for create and update): fields belonging to a source/build method that is not in use (e.g. `imageRef` for a git app, or `dockerfilePath` for a `buildType` other than
+  `dockerfile`) are sent by the web as `""`, not `undefined`/`null` — the Image/Git/Dockerfile/Static sections of the React form are mounted conditionally per `sourceType`/`buildType`,
+  so irrelevant fields disappear from `FormData` and the action turns them into empty strings. `@IsOptional()` **only** skips `null`/`undefined`, not
+  `""`, so `@Matches(...)` still runs and rejects the empty string with its regex message (e.g. `dockerfilePath must match /^[\w./-]{1,200}$/ regular expression`) —
+  a user could not create/save Settings at all for a build method whose own fields they had not touched. String fields with similar patterns (`imageRef`,
+  `gitUrl`, `gitBranch`, `dockerfilePath`, `staticOutputDir`, `staticBuildCommand`, `healthcheckPath`, `previewDomain`) need an extra `@ValidateIf((_, v) => v !== '')` (on top of `v !== null` for the nullable ones) so that `""` is skipped like `null`/`undefined`, in **both** DTOs; nullable UUID fields (`gitCredentialId`,
+  `imageRegistryId`, `swarmNodeId`, `serverId`) are safe because `application.schema.ts` in the web already transforms `""` → `null` before sending, so the existing `ValidateIf(v !== null)`
+  there is enough — only string fields validated by `@Matches`/regex without a similar transform are at risk. The create service also once stored `gitUrl`/
+  `staticBuildCommand` as `""` instead of `null` (the `?.trim() ?? null` pattern does not catch `""`, unlike the `?.trim() || null` used by other fields) — made consistent.
+  Also audited: `compose-app.dto.ts`/`create-compose-app.dto.ts` (similar pattern) and `add-mount.dto.ts`: **not** affected — the compose form uses a separate zod schema per
+  `source` (git vs template) that removes irrelevant fields entirely (instead of sending `""`), and the mount dialog builds the request body as a JS object with
+  conditional spreads, so it never sends fields for a section that was not rendered.
+- **Automatic image updates** (`Application.autoUpdate`, `autoUpdateIntervalMinutes` 5–1440 default 60, `imageDigest`, `imageCheckedAt`; only for `sourceType='image'`):
+  `image-reference.ts` `parseImageRef()` (pure, unit-tested; Docker Hub → `registry-1.docker.io` + `library/`), `registry/remote-digest.ts` `fetchRemoteDigest()` =
+  `HEAD /v2/<repo>/manifests/<tag>` with Accept for manifest list/OCI index (the same digest as `docker pull`/`buildx imagetools`), token flow for Docker Hub/GHCR
+  (401 + `WWW-Authenticate: Bearer` → realm+service+scope, `parseBearerChallenge` unit-tested) or Basic (self-hosted registry; base URL & credentials from `Registry` when `imageRegistryId` is set).
+  `ImageDigestService.remoteDigest(app)` is used by the **runner after a pull** (baseline = the registry digest, not the local `RepoDigests` — a difference in representation can cause a redeploy loop) and by
+  `ImageUpdateWatcherService` (`@Cron` every minute: image app + `autoUpdate` + `running` whose interval has elapsed → `check(app, true)`: sets the baseline if none, `changed` →
+  `DeployApplicationService.queue(app, 'auto-update')` (new `DeploymentKind`; Conflict = another deployment is active, skipped); a registry failure still stamps `imageCheckedAt`).
+  `POST /applications/:id/check-image {deploy?}` (`check-image-update/`, throttle 30/min) = manual check. Changing `imageRef` in an update → `imageDigest` is set to null. A `@sha256:` reference never changes.
+  Tested: Docker Hub, GHCR, a local registry (with/without credentials), deploy via manual check and via cron. Web: switch + interval in the form (image section), a "Check image update" button in the deploy panel, a ⟳ icon in the history.
+- **Railpack** (`Application.buildType = 'railpack'`, `railpack-builder.service.ts`): Railway's third builder. Unlike nixpacks, its plan is **not a Dockerfile** but JSON for
+  BuildKit, so it cannot go through the client's own `POST /build` → it runs entirely inside a helper: the image `aoox-railpack:<RAILPACK_VERSION>` (`docker:29-cli` + git + the railpack binary,
+  built once via `POST /build` + `tarSingleFile` like the nixpacks helper), which clones the repo and runs `railpack build /src --name <imageRef> --cache-key <projectId>/<appName> --progress plain --env K=V`
+  (`railpackScript()` pure & unit-tested) with the host daemon socket mounted and `BUILDKIT_HOST=docker-container://aoox-buildkit`. The helper's logs are streamed (`followContainerLogs`) into the deployment.
+  **Cache persists across deploys** — that is the main reason: BuildKit runs as a long-lived container `aoox-buildkit` (`moby/buildkit:<BUILDKIT_VERSION>`, privileged,
+  `restart: unless-stopped`, volume `aoox_buildkit`, label `aoox.component=build` so monitoring & container-down notifications ignore it), started automatically on the first build
+  (`ensureBuildkit`). Tested for real: cold build 284 s, second build 54 s, redeploy via the API 8.3 s (all layers `CACHED`) — full deployment 43 s including push & start.
+  The resulting image is loaded into the daemon and then follows the same push/replaceContainer path. **Host only** (`serverId` + railpack → a clear error; BuildKit per server is out of scope).
+  Runtime: the railpack image listens on `$PORT` (Railway convention, default 80) → the runner adds `PORT=<containerPort>` to the container env unless the app sets it itself.
+  The BuildKit cache is not visible to the daemon's `POST /build/prune`, so `MaintenanceService.cleanup()` calls `railpack.pruneCache(BUILDKIT_CACHE_KEEP_GB × 1 GB, default 10)`
+  (`buildctl prune --keep-storage` via exec) and reports it as `buildkitCache` in `CleanupReport` (shown in the Disk card). Note: the "no dependency cache" limitation in the nixpacks paragraph
+  applies only to nixpacks/static, not to railpack.
+- **Root directory / monorepo** (`Application.rootDirectory` nullable + `watchRootOnly` bool, migration `ApplicationRootDirectory`; `root-directory.ts`): builds a **subfolder** of the repo for
+  ALL git build types, including PR previews (which go through the same `buildImage`). Null/empty = repo root (old behavior). **Mechanism per path**: Dockerfile →
+  `POST /build?remote=<git>#<branch>:<dir>` (`gitContextRef()`; Engine API git context + subdirectory syntax — the build context = `<dir>`, so `dockerfilePath` is relative to it; `:` is safe
+  because git forbids it in branch names); nixpacks/railpack/static → the helper still `git clone`s to `/src` and builds from `$APP` = `/src/<dir>` (`appDirPrologue()`: nixpacks `build "$APP" --out "$APP"`
+  and `tar -C "$APP"`, railpack `build "$APP"`, static writes `.aoox/` in `$APP`, tars `$APP`, so `staticOutputDir` is relative to that folder with no special code). **Path safety**:
+  `isValidRootDirectory()` (segments `[A-Za-z0-9._-]` separated by `/`, no leading/trailing `/`, no dot-only segments or `.git`, max 200) is applied **twice** — the create & update DTO validators
+  (`IsRootDirectoryConstraint`, plus `@ValidateIf(v !== '')` for `""` from the web) and again with `assertValidRootDirectory()` right before use (`gitContextRef`, `rootDirectoryEnv`). The value is **never**
+  interpolated into a shell script: it is passed as the env `AOOX_ROOT` to the helper, and the shell prologue only references `"$AOOX_ROOT"`; the prologue also rejects (exit 3) a folder that does not exist **and** a symlink that resolves outside `/src` (`pwd -P`). The service stores `null`, not `""` (`normalizeRootDirectory`). A missing folder → a `failed` deployment with `Root directory "x" was not found in the
+  repository`: helper exit 3 → `rootDirectoryError`, and for the Dockerfile path the daemon's `stat <tmp>/<dir>: no such file or directory` error is translated to the same message; the old container is untouched (the build fails before the replace). The `Building …` log line mentions `(root directory: apps/web)`. **Limitation**: files outside the folder are not in the build context (a Dockerfile in `apps/web` cannot `COPY ../packages/x`). **Webhook** (`watchRootOnly`, default false): `pushTouchesRoot()` (pure, unit-tested) reads `commits[].added/modified/removed` (GitHub & GitLab) and replies `ignored`
+  (`no changes under <dir>`) only when every commit is proven to be outside the folder; **fail-open** (deploy) when there is no root, no/empty `commits`, a commit without a file list (GitHub merge commits), ≥ 20 commits
+  (payload limit), `total_commits_count` greater than what was loaded (GitLab), `forced`, or `created`. PR/preview events are not filtered. Project export/import carries both fields (optional in old files; an invalid value on import → `null` + warning). Tested for real (local git daemon, repo `apps/web`+`apps/site`+`services/api`): Dockerfile with root `apps/web` and a relative `dockerfilePath`, static with root `apps/site` (SPA on/off, relative output), wrong root (Dockerfile & static) fails clearly while the old container keeps running, empty root = old behavior, dangerous paths 400 (create & update), symlink escape rejected, webhook ignored/queued, PR preview builds from the subfolder. **Not yet fully tested**: nixpacks and railpack (TLS-intercepting antivirus blocks downloads inside the container) — only script/env assembly (unit tests); example in `dummy-apps/monorepo-sample`.
+- Prerequisite for deploys from git: the local registry is already provisioned. Not yet: other buildpacks, a dedicated "image updated" notification (uses the regular deployment notifications).
 
-## Sumber secret eksternal (Infisical)
+## External secret source (Infisical)
 
-- `src/modules/secret-source/` — aoox hanya menjadi **klien API** ke Infisical milik user (Cloud atau self-hosted); **bukan** template Infisical (itu ditolak user). Entity `SecretConnection`
-  (`secret_connections`: `name` unik, `provider` `infisical`, `url` nullable = `https://app.infisical.com`, `client_id`, `client_secret_encrypted` `select:false`, AES lewat `secret.util` + `ENCRYPTION_KEY`).
-  Flow: `POST /secret-connections` (owner/admin; url http(s) tanpa kredensial/query, nama unik 409), `GET` (semua anggota, DTO tanpa secret — untuk dropdown), `DELETE /:id` (owner/admin; FK
-  `applications.secret_connection_id` `ON DELETE SET NULL`, SQL migrasi `SecretSource`, tanpa relasi TypeORM supaya modul ini tidak meng-import application), `POST /:id/test` (login Universal Auth saja,
-  throttle 20/menit, `{ok, message}`). `SecretSourceModule` di-import `ApplicationModule` dan `ProjectTransferModule`, tidak pernah sebaliknya.
-- **Klien** (`infisical.client.ts`, `fetch` + `AbortSignal.timeout(10 s)`, tanpa SDK): `POST /api/v1/auth/universal-auth/login {clientId, clientSecret}` → `accessToken`; lalu
-  `GET /api/v4/secrets?projectId&environment&secretPath&recursive=false&includeImports=true&expandSecretReferences=true` (Bearer). Diverifikasi ke dokumentasi resmi (infisical.com/docs/api-reference).
-  Bila v4 menjawab **404** dicoba `GET /api/v3/secrets/raw?workspaceId&…&include_imports=true` (instalasi self-hosted lama) — endpoint v3 ini **tidak** terverifikasi dari dokumentasi (halamannya
-  tidak ada), hanya dari pengetahuan sebelumnya; 404 di keduanya = galat nyata. Hasil: key → value (import dulu, secret folder sendiri menang; `secretValueHidden` dilewati). Galat = `SecretSourceError`
-  dengan pesan pendek dari status HTTP + field `message` Infisical (dipotong 160), timeout `no answer within 10s`, `could not reach the server (ECONNREFUSED)` — **tidak pernah** memuat client secret,
-  token, URL berkredensial, atau nilai secret. Token login hanya hidup di dalam satu panggilan `fetchSecrets`; **tidak ada cache lintas panggilan** (tiap resolve = login + list baru).
-- **Aplikasi** (kolom `secret_connection_id`, `secret_project_id`, `secret_environment`, `secret_path` default `/`, `secret_sync` default false): `PUT /applications/:id/secret-source
-  {connectionId|null, projectId, environment, path, sync}` (developer+: PUT = tulis, viewer 403 lewat `assertAccess`; **409 selama ada deployment aktif** karena runner menyimpan salinan entity dan
-  menimpa perubahan, sama dengan host port). `connectionId` `null`/`""` = lepas sumber: field lain diterima tapi diabaikan (web mengirimnya), disimpan `null`/`'/'`/`false`. Validasi
-  (`secret-selection.ts`): `projectId` `[A-Za-z0-9_-]{1,100}`, `environment` `[A-Za-z0-9_-]{1,64}`, `path` `/` atau `/seg/seg` (`[A-Za-z0-9._-]`, tanpa `..`, tanpa `/` akhir), `path` kosong → `/`.
-  `POST /applications/:id/secret-source/preview` → `{keys: string[]}` **nama saja**, terurut (POST ⇒ viewer 403, throttle 20/menit, memakai konfigurasi tersimpan; galat sumber → 400 dengan pesan pendek).
-  `get-application` menambah `secretSource: {connectionId, connectionName, projectId, environment, path, sync} | null`.
-- **Resolver** (`EnvResolverService.resolve(app, {secretSource?, lenient?})`): prioritas **env project < secret Infisical (hanya bila `secretSync`) < env aplikasi**; `${{secret.KEY}}` didukung di env
-  project dan aplikasi. Secret baru diambil bila `secretSync` atau ada referensi; key yang bukan nama env valid (`[A-Za-z_][A-Za-z0-9_]*`) dilewati; **nilai dari sumber literal** (`${{…}}` di dalamnya
-  tidak diperluas). Key tak dikenal → `EnvReferenceError` (400 saat `update-application` memvalidasi env, atau deployment `failed`). Fetch gagal saat container dibuat (deploy, `applyRuntimeConfig`, rollback,
-  job `run`) → deployment `failed` dengan pesan ringkas; env di-resolve **sebelum** container lama disentuh, jadi container lama tetap jalan (diuji nyata). Validasi simpan-env memakai `lenient`: sumber tak
-  terjangkau bukan galat dan referensi `secret.*` tidak dicek (sumber yang flaky tidak boleh memblokir edit). Semua nilai yang diambil (≥ 6 karakter, supaya log biasa tidak rusak) masuk `secrets`
-  → `DeploymentLog.redact`, redaksi `app-error-watcher` (bila sumber tak terbaca saat notifikasi, contoh log **tidak dikirim**) dan keluaran job `run`. Env yang ada di `docker inspect` container
-  tentu terlihat oleh siapa pun yang punya akses Docker host — sama dengan password database.
-- **Preview PR tidak mewarisi sumber** (`replaceContainer` memanggil resolver dengan `secretSource: !override`): branch PR = kode arbitrer, aturan yang sama dengan mount. Env aplikasi yang memakai
-  `${{secret.KEY}}` membuat preview-nya gagal dengan pesan "not available in pull-request previews" (bukan nilai kosong diam-diam). Stack compose tidak punya sumber (referensi `secret.*` = galat jelas).
-- Ekspor/impor project: `applications[].secretSource {connection (NAMA), projectId, environment, path, sync}`, **tanpa kredensial**; impor mencocokkan nama, koneksi tak ada atau lokasi tidak valid →
-  sumber kosong + warning.
-- **Belum diuji nyata terhadap Infisical sungguhan** (user akan menguji): semua diuji lewat server tiruan lokal yang memeriksa path/parameter persis dari dokumentasi (login 401, v4 200, folder 404,
-  server mati) dan tes unit dengan `fetch` palsu. Tidak terverifikasi: perilaku `imports` (urutan prioritas antar import), jalur fallback v3, `viewSecretValue`/`secretValueHidden` pada identitas tanpa izin baca nilai,
-  organisasi dengan banyak sub-organisasi (`organizationSlug` tidak dikirim), dan TLS self-hosted dengan CA privat (fetch Node memakai trust store default).
+- `src/modules/secret-source/` — aoox is only an **API client** of the user's own Infisical (Cloud or self-hosted); it is **not** an Infisical template (the user rejected that). Entity `SecretConnection`
+  (`secret_connections`: `name` unique, `provider` `infisical`, `url` nullable = `https://app.infisical.com`, `client_id`, `client_secret_encrypted` `select:false`, AES via `secret.util` + `ENCRYPTION_KEY`).
+  Flow: `POST /secret-connections` (owner/admin; url must be http(s) without credentials/query, duplicate name 409), `GET` (all members, DTO without secret — for the dropdown), `DELETE /:id` (owner/admin; FK
+  `applications.secret_connection_id` `ON DELETE SET NULL`, SQL migration `SecretSource`, no TypeORM relation so this module does not import application), `POST /:id/test` (Universal Auth login only,
+  throttle 20/min, `{ok, message}`). `SecretSourceModule` is imported by `ApplicationModule` and `ProjectTransferModule`, never the other way around.
+- **Client** (`infisical.client.ts`, `fetch` + `AbortSignal.timeout(10 s)`, no SDK): `POST /api/v1/auth/universal-auth/login {clientId, clientSecret}` → `accessToken`; then
+  `GET /api/v4/secrets?projectId&environment&secretPath&recursive=false&includeImports=true&expandSecretReferences=true` (Bearer). Verified against the official documentation (infisical.com/docs/api-reference).
+  If v4 answers **404**, `GET /api/v3/secrets/raw?workspaceId&…&include_imports=true` is tried (older self-hosted installations) — this v3 endpoint is **not** verified against documentation (the page
+  does not exist), only from prior knowledge; a 404 on both = a real error. Result: key → value (imports first, the folder's own secrets win; `secretValueHidden` is skipped). Errors = `SecretSourceError`
+  with a short message from the HTTP status + Infisical's `message` field (cut to 160), timeout `no answer within 10s`, `could not reach the server (ECONNREFUSED)` — it **never** contains the client secret,
+  token, credentialed URL, or secret value. The login token only lives within a single `fetchSecrets` call; **there is no cache across calls** (every resolve = a new login + list).
+- **Application** (columns `secret_connection_id`, `secret_project_id`, `secret_environment`, `secret_path` default `/`, `secret_sync` default false): `PUT /applications/:id/secret-source
+  {connectionId|null, projectId, environment, path, sync}` (developer+: PUT = write, viewer 403 via `assertAccess`; **409 while a deployment is active** because the runner keeps a copy of the entity and
+  would overwrite changes, same as host port). `connectionId` `null`/`""` = detach the source: other fields are accepted but ignored (the web sends them), stored as `null`/`'/'`/`false`. Validation
+  (`secret-selection.ts`): `projectId` `[A-Za-z0-9_-]{1,100}`, `environment` `[A-Za-z0-9_-]{1,64}`, `path` `/` or `/seg/seg` (`[A-Za-z0-9._-]`, no `..`, no trailing `/`), empty `path` → `/`.
+  `POST /applications/:id/secret-source/preview` → `{keys: string[]}` **names only**, sorted (POST ⇒ viewer 403, throttle 20/min, uses the saved configuration; source errors → 400 with a short message).
+  `get-application` adds `secretSource: {connectionId, connectionName, projectId, environment, path, sync} | null`.
+- **Resolver** (`EnvResolverService.resolve(app, {secretSource?, lenient?})`): priority **project env < Infisical secrets (only when `secretSync`) < app env**; `${{secret.KEY}}` is supported in both the project env and the app env.
+  New secrets are fetched when `secretSync` is on or a reference exists; keys that are not valid env names (`[A-Za-z_][A-Za-z0-9_]*`) are skipped; **values from the source are literal** (`${{…}}` inside them is not expanded).
+  Unknown key → `EnvReferenceError` (400 during `update-application` env validation, or a `failed` deployment). A fetch failure while creating a container (deploy, `applyRuntimeConfig`, rollback,
+  `run` job) → a `failed` deployment with a short message; the env is resolved **before** the old container is touched, so the old container keeps running (tested for real). Validation on saving env uses `lenient`: an unreachable source is not an error and `secret.*` references are not checked (a flaky source must not block editing). All fetched values (≥ 6 characters, so that ordinary log text is not broken) go into `secrets`
+  → `DeploymentLog.redact`, the `app-error-watcher` redaction (if the source cannot be read at notification time, the sample log is **not sent**), and the output of `run` jobs. Env values visible in `docker inspect` of a container are of course visible to anyone with access to the Docker host — same as the database password.
+- **PR previews do not inherit the source** (`replaceContainer` calls the resolver with `secretSource: !override`): PR branches are arbitrary code, the same rule as mounts. An app env that uses `${{secret.KEY}}` makes its preview fail with the message "not available in pull-request previews" (not a silent empty value). Compose stacks have no source (a `secret.*` reference = a clear error).
+- Project export/import: `applications[].secretSource {connection (NAME), projectId, environment, path, sync}`, **without credentials**; on import the name is matched; a missing connection or an invalid location → empty source + warning.
+- **Not yet tested against a real Infisical** (the user will test it): everything was tested against a local fake server that checks the exact paths/parameters from the documentation (login 401, v4 200, folder 404,
+  server down) and unit tests with a fake `fetch`. Not verified: the behavior of `imports` (priority between imports), the v3 fallback path, `viewSecretValue`/`secretValueHidden` for identities without value-read permission,
+  organizations with many sub-organizations (`organizationSlug` is not sent), and self-hosted TLS with a private CA (Node's fetch uses the default trust store).
 
 ## Git credential & Webhook
 
-- `src/modules/git-credential/` — entity `GitCredential` (`github`|`gitlab`|`generic`, `token_encrypted` `select: false`, dienkripsi `src/modules/docker/secret.util.ts`
-  dengan `ENCRYPTION_KEY` — util yang sama dipakai registry). Flow `create/list/delete-git-credential` (owner/admin). Hapus → `applications.git_credential_id` SET NULL.
-- Repo privat: `Application.gitCredentialId`; runner membangun `https://user:token@host/repo` (`GitCredentialService.authenticateUrl`) hanya sebagai variabel lokal
-  untuk `POST /build?remote=` (daemon meneruskan userinfo — diverifikasi; daemon juga tidak menampilkannya di pesan error). `DeploymentLog.redact(token)` menyensor
-  token (mentah & URL-encoded) di log dan `errorMessage`. DTO menolak `gitUrl` yang mengandung `@`.
-- Webhook: `Application.webhookToken` (32 byte random, `select: false`, unik) → `POST /webhooks/:token` (`webhook-deploy/`, **tanpa JwtAuthGuard**, throttle 30/menit,
-  `timingSafeEqual`). Push ke `refs/heads/<gitBranch>` → `DeployApplicationService.queue(app, 'build', {trigger:'webhook', ...})`, commit & pusher dari `parsePushCommit()`
-  (`webhook-deploy.service.ts`, pure & di-unit-test: GitHub `after`/`head_commit.message`/`pusher.name`, GitLab `checkout_sha`/commit terakhir di `commits[]`/`user_name`
-  — lihat bagian Application & Deploy soal `Deployment.trigger`); branch lain / event non-push / branch dihapus → 200 `ignored`;
-  deployment sedang berjalan → 200 `busy` (tidak antre). `get-webhook/` (URL dari `PUBLIC_API_URL`) dan `regenerate-webhook/`. Pengiriman dari provider sungguhan belum diuji (localhost).
-  **Jebakan yang ditemukan**: `PUBLIC_API_URL` dibaca oleh **container `api` sendiri** (`ConfigService.get`, di sini dan di `compose-webhook.service.ts` +
-  `panel-domain.service.ts` untuk `applied.publicApiUrl`) — bukan cuma dipakai `web` untuk terminal socket seperti terlihat dari namanya. `docker-compose.dist.yml`
-  sekarang meneruskan var ini ke **kedua** service (`api` dan `web`); sebelumnya hanya `web` yang mendeklarasikannya, jadi API selalu jatuh ke fallback
-  `http://localhost:3001` walau domain API sudah diset lewat panel-domain (yang menulis `PUBLIC_API_URL` ke `.env.dist` tapi tidak ada gunanya kalau service api
-  tidak membacanya) — webhook URL di dashboard dan status "Saat ini terpasang" di kartu Domain panel ikut menampilkan `localhost` yang salah. Aturan umum: kalau
-  menambah `config.get<...>('X')` baru di kode API, cek juga apakah `X` perlu ditambahkan ke blok `environment:` service **api** (bukan cuma web) di
-  `docker-compose.dist.yml` — lihat bagian Docker/distribusi soal menyalin ulang ke `aoox-cli/assets/install/`.
-- **Secret webhook** (`Application.webhookSecretEncrypted`, nullable `select:false`, AES via `secret.util` seperti secret lain — token URL tetap plaintext karena jadi kunci lookup; `webhook-secret/`: `PUT /applications/:id/webhook/secret` buat/rotasi, `DELETE` nonaktif; nilainya ikut di `get-webhook`
-  agar bisa disalin ke provider). Bila diset, `webhook-deploy` menuntut bukti: GitHub `X-Hub-Signature-256` = `sha256=HMAC-SHA256(secret, raw body)` atau GitLab `X-Gitlab-Token` = secret
-  (`webhook-signature.ts` `verifyWebhookSignature`, `timingSafeEqual`) → selain itu **401** (sengaja bukan 200 seperti event tak relevan: docs GitHub menetapkan 401 untuk signature salah, throttle membatasi brute force). Butuh **`rawBody: true`** di `NestFactory.create` + `@Req() RawBodyRequest` (docs NestJS "Raw body"),
-  karena HMAC dihitung atas byte persis, bukan JSON hasil parse. Tanpa secret = perilaku lama (token URL saja).
-- Verifikasi IP request masuk (GitHub, opsional): lihat bagian "Webhook masuk (keamanan tambahan)" di bawah — HMAC webhook keluar (notifikasi) sudah ada, lihat bagian Notifikasi.
+- `src/modules/git-credential/` — entity `GitCredential` (`github`|`gitlab`|`generic`, `token_encrypted` `select: false`, encrypted with `src/modules/docker/secret.util.ts`
+  using `ENCRYPTION_KEY` — the same util the registry uses). Flow `create/list/delete-git-credential` (owner/admin). Deleting → `applications.git_credential_id` SET NULL.
+- Private repos: `Application.gitCredentialId`; the runner builds `https://user:token@host/repo` (`GitCredentialService.authenticateUrl`) only as a local variable
+  for `POST /build?remote=` (the daemon forwards the userinfo — verified; the daemon also does not show it in error messages). `DeploymentLog.redact(token)` masks the
+  token (raw & URL-encoded) in logs and `errorMessage`. The DTO rejects a `gitUrl` that contains `@`.
+- Webhook: `Application.webhookToken` (32 random bytes, `select: false`, unique) → `POST /webhooks/:token` (`webhook-deploy/`, **without JwtAuthGuard**, throttle 30/min,
+  `timingSafeEqual`). A push to `refs/heads/<gitBranch>` → `DeployApplicationService.queue(app, 'build', {trigger:'webhook', ...})`, commit & pusher from `parsePushCommit()`
+  (`webhook-deploy.service.ts`, pure & unit-tested: GitHub `after`/`head_commit.message`/`pusher.name`, GitLab `checkout_sha`/last commit in `commits[]`/`user_name`
+  — see the Application & Deploy section on `Deployment.trigger`); another branch / non-push event / deleted branch → 200 `ignored`;
+  a deployment already running → 200 `busy` (not queued). `get-webhook/` (URL from `PUBLIC_API_URL`) and `regenerate-webhook/`. Deliveries from real providers are not yet tested (localhost only).
+  **Pitfall found**: `PUBLIC_API_URL` is read by the **`api` container itself** (`ConfigService.get`, here and in `compose-webhook.service.ts` +
+  `panel-domain.service.ts` for `applied.publicApiUrl`) — not only used by `web` for the terminal socket as its name suggests. `docker-compose.dist.yml`
+  now passes this var to **both** services (`api` and `web`); previously only `web` declared it, so the API always fell back to
+  `http://localhost:3001` even when the API domain was set through panel-domain (which writes `PUBLIC_API_URL` to `.env.dist` but that is useless if the api service
+  does not read it) — the webhook URL on the dashboard and the "Currently applied" status in the panel's Domain card showed the wrong `localhost`. General rule: when adding a new `config.get<...>('X')` in the API code, also check whether `X` must be added to the **api** service's `environment:` block (not just web) in
+  `docker-compose.dist.yml` — see the Docker/distribution section about copying to `aoox-cli/assets/install/`.
+- **Webhook secret** (`Application.webhookSecretEncrypted`, nullable `select:false`, AES via `secret.util` like other secrets — the URL token stays plaintext because it is the lookup key; `webhook-secret/`: `PUT /applications/:id/webhook/secret` creates/rotates, `DELETE` disables; its value is included in `get-webhook`
+  so it can be copied to the provider). When set, `webhook-deploy` requires proof: GitHub `X-Hub-Signature-256` = `sha256=HMAC-SHA256(secret, raw body)` or GitLab `X-Gitlab-Token` = the secret
+  (`webhook-signature.ts` `verifyWebhookSignature`, `timingSafeEqual`) → otherwise **401** (deliberately not 200 like irrelevant events: the GitHub docs define 401 for a wrong signature, and the throttle limits brute force). It needs **`rawBody: true`** in `NestFactory.create` + `@Req() RawBodyRequest` (NestJS "Raw body" docs),
+  because the HMAC is computed over the exact bytes, not the parsed JSON. Without a secret = the old behavior (URL token only).
+- Verifying incoming request IPs (GitHub, optional): see the "Incoming webhooks (additional security)" section below — outgoing HMAC webhooks (notifications) already exist, see the Notifications section.
 
-## Preview deployments (pull request)
+## Preview deployments (pull requests)
 
-- Entity `PreviewDeployment` (`preview_deployments`, unik per `application_id`+`pr_number`; branch head PR, sha, host, status building→running|failed, logs).
-  Bukan `Deployment`: satu PR = container sendiri `aoox-app-<appName>-pr<N>` + router Traefik `<appName>-pr<N>` + host `<appName>-pr<N>.<previewDomain>`
-  (`Application.previewDomain` atau env `PREVIEW_DOMAIN`; butuh DNS wildcard; sertifikat ACME per host saat pertama diakses; server remote = tanpa host).
-- **Opt-in** `Application.previewsEnabled` (default false — branch PR adalah kode arbitrer); PR dari **fork selalu diabaikan**; maks `PREVIEW_MAX` (5) preview terbuka per app.
-- `preview.service.ts`: `upsert(app, pr)` (buat/segarkan row lalu build detached), `destroy`, `hostFor`; membangun lewat `DeploymentRunnerService.buildTargets` +
-  **`buildImage(app, branch, {tag, suffix:'-preview', log})`** (dipisah dari `run()` agar deployment & preview berbagi build/push/redaction/nixpacks/server remote) dan
-  `replaceContainer(app, imageRef, log, override)` (nama/router/hosts/label sendiri, tanpa port host). `PreviewLog` = `BuildLog` berbasis row. Setelah build dan setelah start
-  dicek row masih ada (PR ditutup saat build → container tidak ditinggal). TypeORM `remove()` mengosongkan `id` entity — simpan id sebelum destroy bila perlu dikembalikan.
+- Entity `PreviewDeployment` (`preview_deployments`, unique per `application_id`+`pr_number`; PR head branch, sha, host, status building→running|failed, logs).
+  Not a `Deployment`: one PR = its own container `aoox-app-<appName>-pr<N>` + Traefik router `<appName>-pr<N>` + host `<appName>-pr<N>.<previewDomain>`
+  (`Application.previewDomain` or the env `PREVIEW_DOMAIN`; needs a wildcard DNS record; a per-host ACME certificate on first access; remote servers = no host).
+- **Opt-in** `Application.previewsEnabled` (default false — PR branches are arbitrary code); PRs from **forks are always ignored**; at most `PREVIEW_MAX` (5) open previews per app.
+- `preview.service.ts`: `upsert(app, pr)` (create/refresh the row, then build detached), `destroy`, `hostFor`; it builds via `DeploymentRunnerService.buildTargets` +
+  **`buildImage(app, branch, {tag, suffix:'-preview', log})`** (split out of `run()` so that deployments & previews share build/push/redaction/nixpacks/remote server) and
+  `replaceContainer(app, imageRef, log, override)` (its own name/router/hosts/labels, no host port). `PreviewLog` = a row-based `BuildLog`. After the build and after start it checks the row still exists
+  (if the PR was closed during the build, the container is not left behind). A TypeORM `remove()` clears the entity's `id` — save the id before destroying if it needs to be returned.
 - Webhook (`webhook-deploy.service.ts`, `parsePullRequest`): GitHub `X-GitHub-Event: pull_request` (`opened|synchronize|reopened` → upsert, `closed` → destroy; fork = `head.repo.full_name
-  ≠ base.repo.full_name`) dan GitLab `merge_request` (`open|update|reopen` / `close|merge`, `source_project_id ≠ target_project_id`). Balasan 200 `result: preview|preview-closed|ignored`.
-  Endpoint: `GET /applications/:id/previews`, `DELETE /previews/:id`. Pengiriman dari provider sungguhan belum diuji (disimulasikan dengan curl).
-- **Hapus aplikasi** (`DeleteApplicationService`) memanggil `PreviewService.destroyAll(app)` sebelum container/row app dihapus: tiap preview dihancurkan di daemon app (`forServer(app.serverId)`, juga server remote) lewat `destroy()`; gagal satu preview hanya di-log warning, hapus app tetap lanjut. Cascade FK saja tidak cukup karena hanya menghapus row, bukan container. Build yang masih jalan melihat row hilang (cek `exists` setelah build & setelah start) lalu membuang containernya sendiri.
+  ≠ base.repo.full_name`) and GitLab `merge_request` (`open|update|reopen` / `close|merge`, `source_project_id ≠ target_project_id`). Replies 200 `result: preview|preview-closed|ignored`.
+  Endpoints: `GET /applications/:id/previews`, `DELETE /previews/:id`. Deliveries from real providers are not yet tested (simulated with curl).
+- **Deleting an app** (`DeleteApplicationService`) calls `PreviewService.destroyAll(app)` before the app's container/row is deleted: each preview is destroyed on the app's daemon (`forServer(app.serverId)`, including remote servers) via `destroy()`; if one preview fails it is only logged as a warning and the app deletion continues. FK cascade alone is not enough because it only deletes rows, not containers. A build still running sees its row disappear (checks `exists` after the build & after start) and then removes its own container.
 
 ## Proxy & Domain
 
-- `src/modules/proxy/` — `proxy.service.ts` menjalankan **Traefik v3** (`aoox-proxy`, network bridge `aoox`, volume `aoox_proxy_acme`)
-  dengan docker provider (`exposedbydefault=false`), entrypoint `web`/`websecure`, dan resolver ACME `le` (HTTP-01) bila `PROXY_ACME_EMAIL` di-set.
-  Flow: `proxy-status/`, `provision-proxy/`, `remove-proxy/` (owner). Port host: `PROXY_HTTP_PORT`/`PROXY_HTTPS_PORT` (dev: 8088/8443 karena 80 dipakai).
-- Entity `Domain` (`domains`, `host` unik, `https`) di application module; flow `add-domain/`, `list-domains/`, `delete-domain/`. `add-domain/` sekarang meniru
-  `PanelDomainService`: sebelum `applyRuntimeConfig` (label Traefik useless tanpa yang listen), cek `ProxyService.statusOn()` pada daemon yang tepat (lokal, atau
-  `RemoteDockerService.forServer(app.serverId)` + `proxySettingsOf(server)` untuk app di server remote) dan `provisionOn()` otomatis kalau belum `running` —
-  proxy yang sudah jalan tidak disentuh. Respons `AddDomainResult { domain, proxyAutoProvisioned }` (bukan `Domain` polos lagi) supaya web bisa menampilkan
-  peringatan yang sama dengan panel-domain (DNS/firewall/tunggu ACME) saat menambah domain pertama untuk sebuah app. Tanpa `PROXY_ACME_EMAIL` di host/server,
-  proxy tetap jalan tapi tanpa ACME — domain `https` yang diminta baru benar-benar dapat sertifikat setelah `acmeEmail` diisi (lewat panel-domain untuk host,
-  atau pengaturan server untuk server remote).
-- Label Traefik dibuat `proxy.labelsFor(appName, port, domains)` (instance; memakai `httpsPort` + ada/tidaknya ACME) → `ProxyService.buildLabels(..., {httpsPort, acme})` (static, di-unit-test)
-  dan dipasang di `replaceContainer`; semua container app join network `aoox` (`HostConfig.NetworkMode`).
-  Router per app: `<name>` (web, host non-https), `<name>-secure` (websecure + certresolver `le`), dan **`<name>-redirect`** (web, host https → 301 https via middleware
-  `redirectscheme`, `port` = `PROXY_HTTPS_PORT`) — redirect hanya dibuat bila ACME aktif, supaya tanpa `PROXY_ACME_EMAIL` (dev) host https tetap bisa diakses http, bukan
-  diarahkan ke sertifikat self-signed Traefik. Ubah domain → `DeploymentRunnerService.applyRuntimeConfig(app)` (recreate container dengan `currentImage`, tanpa build);
-  container lama baru mendapat label baru setelah redeploy/ubah domain.
-- Domain untuk panel sendiri, dua jalur: (1) **manual** — override `docker-compose.domain.yml` (`-f docker-compose.dist.yml -f docker-compose.domain.yml`) memasang label yang sama ke
-  service `web`/`api` (`WEB_DOMAIN`/`API_DOMAIN` wajib, butuh `PROXY_ACME_EMAIL`; `WEB_ORIGIN`/`PUBLIC_API_URL` harus diganti ke https); (2) **dari dashboard** —
-  `src/modules/panel-domain/` (`GET`/`PATCH /instance/domain`, owner saja): `PanelDomainSettings` (row tunggal `panel_domain_settings`) menyimpan `webHost`/`apiHost`/`acmeEmail`;
-  `PATCH` men-throttle 5/menit, butuh env `INSTALL_DIR` (path absolut folder `docker-compose.dist.yml` di host — belum ada default, harus diisi manual di `.env.dist`) lalu
-  `apply()` di-jadwalkan `setTimeout` 1,5 detik (agar response HTTP sempat terkirim sebelum container ini sendiri di-recreate): sebelum apa pun, kalau `ProxyService.status()`
-  bilang proxy belum `running`, **provision otomatis** (`ProxyService.provisionOn` dengan `acmeEmail` dari setting yang baru disimpan) — tanpa ini label Traefik terpasang tapi
-  tidak ada yang listen di port 80/443, domain jadi "unable to connect" tanpa error yang jelas (ditemukan lewat test VPS sungguhan). Proxy yang **sudah** `running` tidak disentuh
-  (tidak di-recreate ulang tiap kali domain disimpan, supaya ACME state & routing app lain tidak terganggu). Lalu helper `docker:29-cli` (pola sama dengan
-  `compose-runner`) mem-bind `INSTALL_DIR` host langsung (bukan volume) ke path yang sama di helper, `putArchive` menulis `docker-compose.override.yml` (nama **berbeda** dari
-  `docker-compose.domain.yml` manual). **Jebakan yang ditemukan**: Compose hanya otomatis meng-include `docker-compose.override.yml` kalau file utamanya bernama persis
-  `docker-compose.yml` (default lookup tanpa `-f`) — begitu `-f docker-compose.dist.yml` disebut eksplisit (seperti di sini), override **tidak** ikut ter-load kecuali disebut
-  eksplisit juga; salah asumsi ini bikin label Traefik ditulis ke disk tapi tidak pernah benar-benar dipasang ke container. Karena itu skrip selalu `-f docker-compose.dist.yml -f
-  docker-compose.override.yml` (jalur ini menulis file itu sendiri lebih dulu, jadi selalu ada) — `instance-update` (di bawah) mengecek dulu file itu ada sebelum menyebutnya, karena
-  di sana filenya mungkin belum pernah ditulis sama sekali. Lalu skrip `sed`/`grep` meng-upsert `WEB_DOMAIN`/`API_DOMAIN`/`PROXY_ACME_EMAIL`/`WEB_ORIGIN`/`PUBLIC_API_URL`/`COOKIE_SECURE`
-  di `.env.dist` sebelum `docker compose up -d`.
-  Label Traefik dari `renderPanelOverride()` (`panel-domain.util.ts`, pure & di-unit-test) memakai ulang `ProxyService.buildLabels` langsung untuk router `aoox-web`/`aoox-api`
-  (port 3000/3001) — bukan template YAML terpisah seperti jalur manual. `docker-compose.dist.yml` mendeklarasikan network `aoox` (`name:` eksplisit) dan memasukkan `web`/`api`
-  ke sana selain `default`, sehingga Traefik bisa menjangkaunya. Port 3000/3001 tetap dipublikasikan untuk akses via IP di kedua jalur. `aoox-cli`: `aoox domain set --web --api
-  [--acme-email]` memanggil endpoint yang sama (butuh `aoox login` dulu). Belum: validasi DNS sebelum apply (beda dari domain aplikasi yang punya `check-domain-dns`), rollback
-  otomatis kalau `docker compose up` gagal setelah domain diganti (container lama sudah kadung diganti argumennya, bukan blue/green seperti app).
-- **Cek DNS** (`check-domain-dns/`, `GET /applications/:id/domains/:domainId/dns`, throttle 30/menit, tidak disimpan): `dns.promises` resolve4/6 (+CNAME untuk tampilan)
-  dibandingkan dengan IP yang diharapkan: app di server remote → `Server.host` (literal IP atau di-resolve), selain itu `PUBLIC_IP` env, atau auto-deteksi via `https://api.ipify.org`
-  (cache 10 menit; gagal → status `unknown`, bukan error). Status `ok|mismatch|unresolved|unknown` (`evaluate()` pure, di-unit-test) + `message`. Tidak memblokir `add-domain` —
-  DNS boleh diatur belakangan.
-  **Cek berkala** (`dns-watcher.service.ts`, application module — bukan notification module, karena butuh `Domain` repo + `CheckDomainDnsService`, dan `ApplicationModule`
-  sudah meng-import `NotificationModule`, arah sebaliknya jadi siklus): tiap 15 menit menjalankan ulang `execute()` yang sama untuk **setiap** domain terdaftar (https maupun
-  tidak — DNS salah merusak routing apa pun, bukan cuma ACME) dan mengirim notifikasi `dnsIssue` (toggle `on_dns_issue`, default aktif) kalau `mismatch`/`unresolved` bertahan
-  **dua** pemeriksaan berturut-turut (`badSince` Map, pola sama dengan `service-health-watcher.service.ts`; meredam wobble DNS transien dari host ini), lalu maks 1×/hari/domain
-  selama tetap rusak (`notified` Map, cooldown sama dengan `certificate-watcher`). `unknown` (tanpa IP pembanding) tidak pernah mengirim. Domain yang sehat lagi atau sudah
-  dihapus mereset/membuang entrinya (dibersihkan tiap tick lewat daftar domain yang masih ada, supaya tidak bocor memori). Diuji nyata: `one.one.one.one` (resolve publik ke
-  1.1.1.1, sengaja bukan IP host ini) → dua tick manual mengirim webhook `dns.issue` persis sekali dengan `status:"mismatch"`; tick pertama tidak mengirim apa pun. Menangkap
-  penyebabnya lebih awal daripada `certificate-watcher` (yang baru tahu setelah Traefik gagal ACME), dan berlaku juga untuk domain http-only yang tidak pernah menyentuh ACME.
+- `src/modules/proxy/` — `proxy.service.ts` runs **Traefik v3** (`aoox-proxy`, bridge network `aoox`, volume `aoox_proxy_acme`)
+  with the docker provider (`exposedbydefault=false`), entrypoints `web`/`websecure`, and the ACME resolver `le` (HTTP-01) when `PROXY_ACME_EMAIL` is set.
+  Flow: `proxy-status/`, `provision-proxy/`, `remove-proxy/` (owner). Host ports: `PROXY_HTTP_PORT`/`PROXY_HTTPS_PORT` (dev: 8088/8443 because 80 is in use).
+- Entity `Domain` (`domains`, `host` unique, `https`) in the application module; flow `add-domain/`, `list-domains/`, `delete-domain/`. `add-domain/` now mirrors
+  `PanelDomainService`: before `applyRuntimeConfig` (Traefik labels are useless without something listening), it checks `ProxyService.statusOn()` on the right daemon (local, or
+  `RemoteDockerService.forServer(app.serverId)` + `proxySettingsOf(server)` for apps on remote servers) and calls `provisionOn()` automatically if not `running` —
+  a proxy that is already running is left alone. The response `AddDomainResult { domain, proxyAutoProvisioned }` (no longer a plain `Domain`) so the web can show the same
+  warning as panel-domain (DNS/firewall/wait for ACME) when adding the first domain for an app. Without `PROXY_ACME_EMAIL` on the host/server,
+  the proxy still runs but without ACME — a requested `https` domain only gets a certificate once `acmeEmail` is set (via panel-domain for the host,
+  or the server settings for remote servers).
+- Traefik labels are built by `proxy.labelsFor(appName, port, domains)` (instance method; uses `httpsPort` + whether ACME is present) → `ProxyService.buildLabels(..., {httpsPort, acme})` (static, unit-tested)
+  and applied in `replaceContainer`; all app containers join the `aoox` network (`HostConfig.NetworkMode`).
+  Routers per app: `<name>` (web, non-https host), `<name>-secure` (websecure + certresolver `le`), and **`<name>-redirect`** (web, https host → 301 to https via the middleware
+  `redirectscheme`, `port` = `PROXY_HTTPS_PORT`) — the redirect is only created when ACME is active, so without `PROXY_ACME_EMAIL` (dev) https hosts remain reachable over http, instead of
+  being redirected to Traefik's self-signed certificate. Changing a domain → `DeploymentRunnerService.applyRuntimeConfig(app)` (recreate the container with `currentImage`, no build);
+  the old container only gets the new labels after a redeploy/domain change.
+- Domains for the panel itself, two paths: (1) **manual** — the `docker-compose.domain.yml` override (`-f docker-compose.dist.yml -f docker-compose.domain.yml`) applies the same labels to the
+  `web`/`api` services (`WEB_DOMAIN`/`API_DOMAIN` required, needs `PROXY_ACME_EMAIL`; `WEB_ORIGIN`/`PUBLIC_API_URL` must be switched to https); (2) **from the dashboard** —
+  `src/modules/panel-domain/` (`GET`/`PATCH /instance/domain`, owner only): `PanelDomainSettings` (single row `panel_domain_settings`) stores `webHost`/`apiHost`/`acmeEmail`;
+  `PATCH` is throttled 5/min, needs the env `INSTALL_DIR` (absolute path of the `docker-compose.dist.yml` folder on the host — no default yet, must be set manually in `.env.dist`), then
+  `apply()` is scheduled with `setTimeout` for 1.5 seconds (so the HTTP response can be sent before this container itself is recreated): first, if `ProxyService.status()`
+  says the proxy is not `running`, it is **provisioned automatically** (`ProxyService.provisionOn` with the `acmeEmail` from the just-saved settings) — without this the Traefik labels were applied but nothing listened on ports 80/443, and the domain showed "unable to connect" with no clear error (found through a real VPS test). A proxy that is **already** `running` is not touched
+  (not recreated each time a domain is saved, so ACME state and other apps' routing are not disrupted). Then a `docker:29-cli` helper (same pattern as
+  `compose-runner`) bind-mounts the host's `INSTALL_DIR` directly (not a volume) at the same path inside the helper, and `putArchive` writes `docker-compose.override.yml` (a **different** name from the manual `docker-compose.domain.yml`).
+  **Pitfall found**: Compose only auto-includes `docker-compose.override.yml` when the main file is named exactly `docker-compose.yml` (the default lookup without `-f`) — once `-f docker-compose.dist.yml` is given explicitly (as here), the override is **not** loaded unless it is also given explicitly; this wrong assumption caused the Traefik labels to be written to disk but never actually applied to the container. So the script always uses `-f docker-compose.dist.yml -f
+  docker-compose.override.yml` (this path writes that file itself first, so it always exists) — `instance-update` (below) first checks that the file exists before referencing it, because there the file may never have been written. Then a `sed`/`grep` script upserts `WEB_DOMAIN`/`API_DOMAIN`/`PROXY_ACME_EMAIL`/`WEB_ORIGIN`/`PUBLIC_API_URL`/`COOKIE_SECURE`
+  in `.env.dist` before `docker compose up -d`.
+  The Traefik labels from `renderPanelOverride()` (`panel-domain.util.ts`, pure & unit-tested) reuse `ProxyService.buildLabels` directly for the `aoox-web`/`aoox-api` routers
+  (ports 3000/3001) — not a separate YAML template like the manual path. `docker-compose.dist.yml` declares the network `aoox` (explicit `name:`) and puts `web`/`api`
+  on it in addition to `default`, so Traefik can reach them. Ports 3000/3001 remain published for access via IP in both paths. `aoox-cli`: `aoox domain set --web --api
+  [--acme-email]` calls the same endpoint (requires `aoox login` first). Not yet: DNS validation before applying (unlike app domains, which have `check-domain-dns`), and automatic rollback
+  if `docker compose up` fails after the domain is changed (the old container has already been replaced by its arguments, not blue/green like apps).
+- **DNS check** (`check-domain-dns/`, `GET /applications/:id/domains/:domainId/dns`, throttle 30/min, not stored): `dns.promises` resolve4/6 (+CNAME for display)
+  compared with the expected IP: an app on a remote server → `Server.host` (a literal IP or resolved), otherwise the `PUBLIC_IP` env, or auto-detection via `https://api.ipify.org`
+  (cached 10 minutes; failure → status `unknown`, not an error). Status `ok|mismatch|unresolved|unknown` (`evaluate()` pure, unit-tested) + `message`. It does not block `add-domain` —
+  DNS may be configured later.
+  **Periodic check** (`dns-watcher.service.ts`, application module — not the notification module, because it needs the `Domain` repo + `CheckDomainDnsService`, and `ApplicationModule`
+  already imports `NotificationModule`, so the other direction would be a cycle): every 15 minutes it re-runs the same `execute()` for **every** registered domain (https or not — a wrong DNS breaks routing whatever the protocol, not just ACME) and sends a `dnsIssue` notification (toggle `on_dns_issue`, default on) if `mismatch`/`unresolved` persists for **two** consecutive checks (`badSince` Map, same pattern as `service-health-watcher.service.ts`; it dampens transient DNS wobble seen from this host), then at most 1×/day/domain
+  while it stays broken (`notified` Map, same cooldown as `certificate-watcher`). `unknown` (no comparison IP) never sends. A domain that becomes healthy again or is deleted resets/drops its entry
+  (cleaned on every tick against the list of existing domains, so memory does not leak). Tested for real: `one.one.one.one` (publicly resolves to
+  1.1.1.1, deliberately not this host's IP) → two manual ticks sent the `dns.issue` webhook exactly once with `status:"mismatch"`; the first tick sent nothing. It catches the cause earlier than `certificate-watcher` (which only learns after Traefik fails ACME), and also applies to http-only domains that never touch ACME.
 
-## Sertifikat SSL kustom
+## Custom SSL certificates
 
-- `src/modules/certificate/` — sertifikat TLS yang diunggah operator (CA perusahaan, wildcard beli, Cloudflare Origin CA, jaringan tanpa akses Let's Encrypt) untuk **domain aplikasi**.
-  Tanpa ini TLS hanya dari ACME. Entity `CustomCertificate` (`custom_certificates`: `name` unik, `certificate_pem` = bundel ter-normalisasi leaf dulu lalu chain (publik), `private_key_encrypted`
-  `select:false` AES lewat `secret.util` + `ENCRYPTION_KEY`, `common_name`, `domains` jsonb, `issuer`, `not_before`/`not_after`, `fingerprint` SHA-256 gaya openssl). Platform-level: satu sertifikat
-  (wildcard) boleh dipakai banyak domain. `Domain.certificate_id` nullable, FK **ON DELETE RESTRICT** (migrasi SQL tulis tangan `CustomCertificates`, additive). `CertificateModule` hanya membaca entity
-  `Domain` dan di-import `ApplicationModule`, tidak pernah sebaliknya.
-- **Validasi** (`certificate-material.ts` `parseCertificateMaterial`, pure, jam sebagai parameter, di-unit-test dengan fixture openssl di `certificate.fixtures.ts`): `node:crypto` saja
-  (`X509Certificate`, `createPrivateKey`, `checkPrivateKey`). PEM saja (DER/PFX → 400 dengan petunjuk), maks 64 KB per field dan 10 sertifikat per bundel, tiap blok harus X.509 valid; kunci harus PEM **tidak
-  terenkripsi** (header `ENCRYPTED PRIVATE KEY`/`Proc-Type: 4,ENCRYPTED` → 400 dengan perintah openssl untuk melepas passphrase); kunci harus cocok dengan sertifikat **pertama** (pesan menyebut urutan bila
-  chain ditaruh duluan); belum kedaluwarsa (yang belum berlaku boleh). Teks di sekitar blok PEM dibuang; kunci disimpan PKCS#8. `domains` = DNS SAN, atau CN **hanya bila tidak ada SAN DNS** (klien modern
-  dan Go mengabaikan CN bila ada SAN, jadi mengikuti desain awal "SAN + CN" akan mengizinkan host yang ditolak browser — penyimpangan yang disengaja); tanpa nama sama sekali → 400.
-  `domain-matches.ts` `domainMatches(host, names)` (pure): wildcard hanya `*.example.com` = tepat satu label (`a.example.com` ya, `a.b.example.com` dan apex tidak), tanpa wildcard di TLD atau selain paling kiri.
-- **API** (`/certificates`; kunci tak pernah dikembalikan oleh endpoint mana pun, DTO tanpa PEM juga): `POST` {name, certificate, privateKey} → 201 `CertificateDto {id, name, commonName, domains, issuer,
-  notBefore, notAfter, fingerprint, usedBy, createdAt}` (400 PEM/kunci/kedaluwarsa, 409 nama ganda termasuk balapan lewat unique index), `GET` (semua anggota, untuk dropdown tab Domain) dan `GET /:id`,
-  `PUT /:id` {certificate, privateKey} (ganti isi saat perpanjangan, nama tetap; **semua domain yang memakainya harus tetap tercakup**, kalau tidak 400 menyebut host-nya; lalu sync ke tiap daemon yang
-  memakainya; sync gagal = 502 "tersimpan tapi belum tertulis ke proxy, simpan ulang"), `DELETE /:id` → 204 atau 409 menyebut jumlah dan host. POST/PUT/DELETE `@Roles('owner','admin')`. Audit log:
-  key `privateKey` sudah di-redact oleh regex `privatekey` dan PEM publik terpotong 200 karakter (diuji).
-  Domain: `GET/POST /applications/:id/domains` dan hasil add-domain kini memakai `DomainDto` (`certificateId`, `certificateName` ditambahkan; `AddDomainResult {domain, proxyAutoProvisioned}` tetap);
-  `POST` menerima `certificateId?` (`""`/null = otomatis; hanya dengan `https: true`; harus mencakup host → 400, divalidasi **sebelum** apa pun disimpan); baru `PATCH /applications/:id/domains/:domainId`
-  {certificateId: uuid|null} (wajib ada key-nya; null = kembali ke ACME) = developer+ (PATCH = tulis, viewer 403 lewat `assertAccess`), memanggil `applyRuntimeConfig` seperti add-domain.
-- **Traefik**: `ProxyService.provisionOn` kini selalu menambah `--providers.file.directory=/etc/traefik/dynamic --providers.file.watch=true` dan volume bernama **`aoox_proxy_certs`** (`certs-config.ts`;
-  bertahan antar recreate proxy seperti volume ACME; terdaftar di `orphan-volumes.ts` sebagai volume tetap supaya tak dilaporkan yatim). Label (`buildLabels`, domain `{host, https, customCert?}`): host https
-  dengan sertifikat kustom dapat router `<name>-secure-custom` (websecure, `tls=true`, **tanpa certresolver** — tidak pernah diminta ke ACME) dan **selalu** dialihkan http→https lewat router
-  `<name>-redirect` walau ACME mati (host itu pasti https); host tanpa sertifikat kustom: perilaku lama persis. Runner memetakan `Domain.certificateId` → `customCert` (`replaceContainer`).
-  Sertifikat kedaluwarsa **tidak** jatuh ke ACME: Traefik tetap menyajikan berkas yang ada.
-- **Sinkron per daemon** (`certificate-sync.service.ts` `sync(handle, settings, serverId)` / `syncServer(serverId)` / `syncForCertificate(id)`): set sertifikat = distinct `certificate_id` dari domain aplikasi
-  di daemon itu (`server_id IS NULL` = host, atau `RemoteDockerService.forServer(serverId)` untuk server remote). Menulis ke volume lewat helper busybox yang tidak dijalankan + `putArchive` (pola `mounts.ts`):
-  `<id>-<8 hex pertama fingerprint>.crt` 0644, `.key` **0600** (`certFileNames(id, fingerprint)`; nama hanya dari uuid baris + hex, **nama unik per isi**: mengganti sertifikat menghasilkan pasangan berkas baru di samping yang lama,
-  jadi Traefik — yang memuat ulang di tiap tulis — tidak pernah memasangkan `.crt` baru dengan `.key` lama; dulu nama tetap `<id>.crt/.key` dan log Traefik sempat berisi "private key does not match public key"),
-  `tarFiles` kini menerima mode opsional (diverifikasi dengan `tar` sungguhan), **`certs.yml` terakhir** (`renderCertsYml`, pure) supaya
-  Traefik tak pernah melihat config yang menunjuk berkas yang belum ada; lalu helper sekali-jalan menghapus `*.crt`/`*.key` yang tak dipakai lagi **setelah jeda 5 detik** (hanya bila ada yang usang; supaya Traefik sempat
-  membaca `certs.yml` baru sebelum berkas lama hilang; daftar simpan dan jeda lewat env, tidak diinterpolasi; gagal = warning).
-  Sync gagal di add-domain → baris domain baru dihapus + 502; di PATCH → penugasan lama dikembalikan + 502 (jangan tinggalkan router `-secure-custom` yang menunjuk berkas yang tidak ada; Traefik akan
-  menyajikan sertifikat bawaan self-signed). Restore instance (snapshot DB) **tidak** me-resync volume sertifikat; simpan ulang sertifikatnya (PUT) bila volume hilang.
-  Satu sync sekaligus per daemon (antrian promise). Dipanggil setelah: add-domain dengan sertifikat, PATCH domain (assign/unassign), PUT sertifikat, hapus domain (best effort), hapus aplikasi (best effort), dan **pindah server**
-  (`PATCH /applications/:id` yang mengubah `serverId`, hanya bila ada domain aplikasi itu dengan `certificateId`): `UpdateApplicationService.moveCertificates` memanggil `syncServer(serverBaru)` (null = host) **lebih dulu**, lalu
-  `syncServer(serverLama)` supaya berkas yang tak dipakai lagi di daemon asal disapu — keduanya lewat antrean per daemon yang sama, tanpa jalur tulis baru. Sinkron TUJUAN gagal tidak membatalkan pindah (konsisten dengan
-  pindah yang tidak me-recreate container): warning di log dan field aditif `certificateSyncError: string` pada respons PATCH **hanya bila gagal** (pesan menyarankan menyimpan ulang domain/sertifikat; sapuan asal tetap dicoba);
-  sinkron ASAL gagal = warning saja. Tanpa perubahan `serverId` atau tanpa domain bersertifikat tidak ada panggilan sinkron. Sinkron ke daemon tujuan bisa memicu `upgradeToCustomCerts` (proxy lama tanpa provider file
-  dibuat ulang sekali, perilaku sertifikat yang sudah ada) — tanpa persetujuan terpisah di jalur ini. Diuji unit (urutan tujuan→asal, host↔remote, remote↔remote, tanpa sertifikat, tanpa perubahan, kegagalan tujuan/asal,
-  berdampingan dengan `droppedMiddlewares`); **belum diuji nyata** (server remote tidak tersedia).
-  **Provision proxy tidak memanggil sync**: volume tetap ada antar provision dan sync menulis ke volume walau proxy belum ada, jadi proxy yang di-provision belakangan langsung memuatnya (penyimpangan dari
-  "dipanggil saat provision proxy": `ProxyModule` tidak boleh meng-import `CertificateModule`, siklus). Kunci plaintext hanya ada di volume (0600) dan kolom terenkripsi.
-- **Proxy lama**: `ProxyStatus.customCerts` (`GET /proxy`, `GET /servers/:id/proxy`) = container punya provider file **dan** volume (`ProxyService.supportsCustomCerts`, dari `inspectContainer`).
-  Saat sync menemukan sertifikat dipakai tetapi proxy yang **running** belum mendukung, `upgradeToCustomCerts` me-recreate **sekali** dengan pengaturan yang sedang dijalankannya (`settingsOf`: port dan
-  email/staging ACME dibaca balik dari Cmd/PortBindings container, **bukan** env — panel-domain bisa memprovision dengan email lain), volume ACME dipakai ulang jadi sertifikat Let's Encrypt dan route lain
-  utuh; downtime beberapa detik; dilaporkan lewat log (`SyncResult.proxyRecreated`) dan **tidak** lewat respons add-domain (kontraknya tetap). Proxy yang berhenti atau belum ada tidak disentuh
-  (add-domain/PATCH meng-provision yang tidak running seperti biasa). Mengganti isi sertifikat tidak me-recreate proxy ataupun kontainer aplikasi (Traefik memantau direktori).
-- **Kedaluwarsa** (`certificate-expiry-watcher.service.ts` di `CertificateModule`, `@Cron('7 */6 * * *')`): sertifikat **yang dipakai ≥1 domain** dengan sisa ≤ 14 hari atau sudah lewat → notifikasi
-  `certificateFailure` (toggle `on_certificate_failure` yang ada) berisi nama, domain, tanggal, dan petunjuk unggah perpanjangan; maks 1×/24 jam per sertifikat **dan** keadaan (`expiring` → `expired`
-  langsung memberi peringatan lagi); sertifikat tak terpakai tidak diperingatkan (berisik). Cooldown in-memory (restart API bisa mengulang satu peringatan). Tidak ada fallback otomatis ke ACME.
-- Ekspor/impor project **tidak** membawa sertifikat maupun penugasannya (domain ter-impor memakai ACME).
-- **Diuji**: unit (validasi/bundel/kunci terenkripsi/tidak cocok/kedaluwarsa, `domainMatches`, renderer, label, sync dengan handle palsu lokal dan remote, proxy lama, watcher + cooldown, 409 hapus, akses
-  viewer/PATCH, redaksi audit, DTO `""`/null). **Belum diuji nyata** (Docker mati saat dikerjakan): migrasi di Postgres sungguhan, Traefik yang benar-benar menyajikan sertifikat (SNI, wildcard, issuer),
-  Traefik dengan direktori dinamis kosong saat start, pemuatan ulang saat berkas diganti di volume, recreate proxy lama, server remote lewat SSH. Lakukan smoke test dengan sertifikat self-signed sebelum rilis.
+- `src/modules/certificate/` — TLS certificates uploaded by the operator (a company CA, a purchased wildcard, a Cloudflare Origin CA, networks without access to Let's Encrypt) for **application domains**.
+  Without this, TLS only comes from ACME. Entity `CustomCertificate` (`custom_certificates`: `name` unique, `certificate_pem` = the bundle normalized with the leaf first and then the chain (public), `private_key_encrypted`
+  `select:false` AES via `secret.util` + `ENCRYPTION_KEY`, `common_name`, `domains` jsonb, `issuer`, `not_before`/`not_after`, `fingerprint` SHA-256 in openssl style). Platform-level: one certificate
+  (e.g. a wildcard) may be used by many domains. `Domain.certificate_id` nullable, FK **ON DELETE RESTRICT** (hand-written migration `CustomCertificates`, additive). `CertificateModule` only reads the
+  `Domain` entity and is imported by `ApplicationModule`, never the other way around.
+- **Validation** (`certificate-material.ts` `parseCertificateMaterial`, pure, time passed as a parameter, unit-tested with openssl fixtures in `certificate.fixtures.ts`): `node:crypto` only
+  (`X509Certificate`, `createPrivateKey`, `checkPrivateKey`). PEM only (DER/PFX → 400 with guidance), max 64 KB per field and 10 certificates per bundle, every block must be a valid X.509; the key must be an **unencrypted** PEM
+  (header `ENCRYPTED PRIVATE KEY`/`Proc-Type: 4,ENCRYPTED` → 400 with the openssl command to strip the passphrase); the key must match the **first** certificate (the message mentions the order if the chain was placed first);
+  not expired (not-yet-valid is allowed). Text around the PEM blocks is discarded; the key is stored as PKCS#8. `domains` = DNS SANs, or the CN **only when there is no DNS SAN** (modern clients and Go ignore the CN when SANs exist, so following the original "SAN + CN" design would allow hosts that browsers reject — a deliberate deviation); with no names at all → 400.
+  `domain-matches.ts` `domainMatches(host, names)` (pure): a wildcard only as `*.example.com` = exactly one label (`a.example.com` yes, `a.b.example.com` and the apex no), no wildcard in the TLD or anywhere other than the leftmost label.
+- **API** (`/certificates`; the key is never returned by any endpoint, and the DTO has no PEM either): `POST` {name, certificate, privateKey} → 201 `CertificateDto {id, name, commonName, domains, issuer,
+  notBefore, notAfter, fingerprint, usedBy, createdAt}` (400 for PEM/key/expired, 409 for a duplicate name including races via the unique index), `GET` (all members, for the Domain tab dropdown) and `GET /:id`,
+  `PUT /:id` {certificate, privateKey} (replace the contents at renewal, name stays; **every domain using it must still be covered**, otherwise 400 naming the host; then sync to every daemon that uses it;
+  sync failure = 502 "saved but not yet written to the proxy, save again"), `DELETE /:id` → 204 or 409 naming the count and hosts. POST/PUT/DELETE `@Roles('owner','admin')`. Audit log:
+  the `privateKey` key is already redacted by the `privatekey` regex, and the public PEM is cut to 200 characters (tested).
+  Domains: `GET/POST /applications/:id/domains` and the add-domain result now use `DomainDto` (`certificateId`, `certificateName` added; `AddDomainResult {domain, proxyAutoProvisioned}` unchanged);
+  `POST` accepts `certificateId?` (`""`/null = automatic; only with `https: true`; must cover the host → 400, validated **before** anything is saved); new `PATCH /applications/:id/domains/:domainId`
+  {certificateId: uuid|null} (the key must be present; null = back to ACME) = developer+ (PATCH = write, viewer 403 via `assertAccess`), calls `applyRuntimeConfig` like add-domain.
+- **Traefik**: `ProxyService.provisionOn` now always adds `--providers.file.directory=/etc/traefik/dynamic --providers.file.watch=true` and a named volume **`aoox_proxy_certs`** (`certs-config.ts`;
+  survives proxy recreates like the ACME volume; registered in `orphan-volumes.ts` as a fixed volume so it is not reported as orphaned). Labels (`buildLabels`, domain `{host, https, customCert?}`): an https host
+  with a custom certificate gets a router `<name>-secure-custom` (websecure, `tls=true`, **no certresolver** — it is never requested from ACME) and is **always** redirected http→https via the router
+  `<name>-redirect` even when ACME is off (that host is certainly https); a host without a custom certificate: exactly the old behavior. The runner maps `Domain.certificateId` → `customCert` (`replaceContainer`).
+  An expired certificate does **not** fall back to ACME: Traefik keeps serving the existing files.
+- **Per-daemon sync** (`certificate-sync.service.ts` `sync(handle, settings, serverId)` / `syncServer(serverId)` / `syncForCertificate(id)`): the certificate set = the distinct `certificate_id`s of application domains
+  on that daemon (`server_id IS NULL` = host, or `RemoteDockerService.forServer(serverId)` for a remote server). It writes to the volume via a busybox helper that is not run + `putArchive` (the `mounts.ts` pattern):
+  `<id>-<first 8 hex chars of the fingerprint>.crt` 0644, `.key` **0600** (`certFileNames(id, fingerprint)`; the name comes only from the row's uuid + hex, **unique per content**: replacing a certificate creates a new file pair next to the old one,
+  so Traefik — which reloads on every write — never pairs a new `.crt` with an old `.key`; previously the names were fixed `<id>.crt/.key` and Traefik's log briefly said "private key does not match public key"),
+  `tarFiles` now accepts an optional mode (verified with a real `tar`), and **`certs.yml` last** (`renderCertsYml`, pure) so that
+  Traefik never sees a config that points to a file that does not exist yet; then a one-shot helper deletes the `*.crt`/`*.key` that are no longer used **after a 5-second pause** (only if there are stale ones; so Traefik has time to
+  read the new `certs.yml` before old files disappear; the keep list and the pause are set via env, not interpolated; failure = warning).
+  A sync failure in add-domain → the new domain row is deleted + 502; in PATCH → the old assignment is restored + 502 (do not leave a `-secure-custom` router pointing at a missing file; Traefik would
+  serve its self-signed default certificate). Restoring an instance (DB snapshot) does **not** re-sync the certificate volume; re-save the certificate (PUT) if the volume is gone.
+  One sync at a time per daemon (promise queue). Called after: add-domain with a certificate, PATCH of a domain (assign/unassign), PUT of a certificate, deleting a domain (best effort), deleting an app (best effort), and **moving servers**
+  (`PATCH /applications/:id` that changes `serverId`, only if the app has domains with a `certificateId`): `UpdateApplicationService.moveCertificates` calls `syncServer(newServer)` (null = host) **first**, then
+  `syncServer(oldServer)` so files no longer used on the source daemon get swept — both through the same per-daemon queue, with no new write path. A failed sync to the DESTINATION does not cancel the move (consistent with
+  a move that does not recreate the container): a warning in the log and an additive field `certificateSyncError: string` on the PATCH response **only on failure** (the message suggests re-saving the domains/certificate; the source sweep is still attempted);
+  a failed sync from the SOURCE is only a warning. With no `serverId` change or no certificate-bearing domains there are no sync calls. A sync to the destination daemon may trigger `upgradeToCustomCerts` (an old proxy without the file provider
+  is recreated once, behavior of existing certificates) — no separate approval on this path. Unit-tested (destination→source order, host↔remote, remote↔remote, no certificates, no change, destination/source failures,
+  alongside `droppedMiddlewares`); **not yet tested for real** (no remote server available).
+  **Provisioning the proxy does not call sync**: the volume persists across provisions and sync writes to the volume even when the proxy does not exist yet, so a proxy provisioned later loads it straight away (a deviation from
+  "called when the proxy is provisioned": `ProxyModule` must not import `CertificateModule`, cycle). The plaintext key only exists in the volume (0600) and the encrypted column.
+- **Old proxies**: `ProxyStatus.customCerts` (`GET /proxy`, `GET /servers/:id/proxy`) = the container has the file provider **and** the volume (`ProxyService.supportsCustomCerts`, from `inspectContainer`).
+  When a sync finds certificates in use but the **running** proxy does not support them, `upgradeToCustomCerts` recreates it **once** with the settings it is currently running with (`settingsOf`: ports and the
+  ACME email/staging are read back from the container's Cmd/PortBindings, **not** the env — panel-domain may have provisioned with a different email), the ACME volume is reused so Let's Encrypt certificates and other routes stay intact; a downtime of a few seconds; reported in the log (`SyncResult.proxyRecreated`) and **not** through the add-domain response (its contract is unchanged). A stopped proxy or one that does not exist is not touched
+  (add-domain/PATCH provision a non-running one as usual). Changing the contents of a certificate recreates neither the proxy nor the app containers (Traefik watches the directory).
+- **Expiry** (`certificate-expiry-watcher.service.ts` in `CertificateModule`, `@Cron('7 */6 * * *')`): certificates **in use by ≥1 domain** with ≤ 14 days left or already expired → a `certificateFailure` notification
+  (the existing toggle `on_certificate_failure`) with the name, domains, dates, and renewal-upload instructions; at most 1×/24 hours per certificate **and** state (`expiring` → `expired`
+  notifies again straight away); unused certificates are not warned about (too noisy). In-memory cooldown (an API restart may repeat one warning). No automatic fallback to ACME.
+- Project export/import does **not** carry certificates or their assignments (imported domains use ACME).
+- **Tested**: unit (validation/bundle/encrypted key/mismatch/expiry, `domainMatches`, renderer, labels, sync with fake local and remote handles, old proxy, watcher + cooldown, 409 on delete, viewer/PATCH access, audit redaction, DTO `""`/null). **Not yet tested for real** (Docker was down while working on it): migrations on a real Postgres, Traefik actually serving the certificate (SNI, wildcard, issuer),
+  Traefik with an empty dynamic directory at start, reloading when a file is replaced in the volume, recreating an old proxy, remote servers over SSH. Do a smoke test with a self-signed certificate before release.
 
-## Konfigurasi dinamis Traefik (editor di dashboard)
+## Dynamic Traefik configuration (dashboard editor)
 
-- `src/modules/proxy-config/` — berkas konfigurasi **dinamis** Traefik (file provider) tulisan operator, per proxy (host atau server remote). Entity `ProxyConfigFile`
-  (`proxy_config_files`: `name` slug `[a-z0-9-]{1,40}` unik per `server_id` (dua indeks unik parsial; `server_id` null = host, FK `servers` ON DELETE CASCADE), `content` YAML, `enabled`,
-  timestamptz; migrasi `ProxyConfigFiles`). **DB = sumber kebenaran**: volume bisa ditulis ulang kapan pun (`POST /proxy/config/sync`) — restore instance memulihkan baris tetapi
-  **tidak** menulis volume (sama seperti sertifikat), jadi web punya tombol "Terapkan ulang". `ProxyConfigModule` hanya membaca entity `Domain` (referensi middleware) dan di-import
-  `ApplicationModule`, tidak pernah sebaliknya; controller statis (`presets`, `sync`, `status`) didaftarkan **sebelum** yang ber-`:id`.
-- **Penulisan** (`proxy-config-sync.service.ts`): ke volume `aoox_proxy_certs` (dipasang `/etc/traefik/dynamic` di proxy, `/dynamic` di helper) lewat busybox + `putArchive` — pola
-  `CertificateSyncService`, antrian satu-sinkron-per-daemon sendiri (kedua modul menulis berkas berbeda di volume yang sama, jadi tidak perlu berbagi antrian). Nama berkas **selalu**
-  `user-<name>.yml` (`userFileName`), jadi sapuan `*.crt`/`*.key` dan penulisan ulang `certs.yml` milik modul sertifikat tidak pernah menyentuhnya, dan sinkron ini **tidak pernah**
-  menulis `certs.yml`/crt/key; penyapuan hanya mencocokkan `user-*.yml` yang tak ada di daftar simpan (tanpa jeda 5 detik seperti sertifikat — berkas saling merujuk lewat `nama@file`,
-  bukan path, jadi tak ada risiko urutan). Berkas dinonaktifkan = dihapus dari volume tetapi tetap di DB. Proxy lama tanpa provider file dibuat ulang **sekali**
-  (`ProxyService.upgradeToCustomCerts`, sama dengan sertifikat) dan karena itu API meminta persetujuan: `409 {code: 'proxy-restart-required'}` kecuali `acceptProxyRestart: true`
-  (create/update body, sync query); `GET /proxy/config/status` → `{proxy, fileProvider, needsRecreate}` supaya web bertanya sebelum menyimpan; respons sync membawa `notice` bila terjadi.
-- **Validasi** (`proxy-config-schema.ts`, pure): `js-yaml` `load` (**dependensi langsung**, v4 CJS + `@types/js-yaml` dev — sebelumnya hanya transitif lewat eslint/nest-cli; jangan ganti ke
-  paket ESM-only, memecahkan Jest), maks 64 KB (byte), hanya kunci top-level `http` dengan `middlewares|routers|services|serversTransports`; `tls`/`tcp`/`udp` ditolak dengan alasan,
-  kunci lain ditolak; nama elemen `[a-z0-9-]{1,63}`; nama harus unik per proxy lintas berkas aktif (400). Validasi struktur saja — opsi tiap middleware divalidasi Traefik sendiri.
-- **Verifikasi & pemulihan**: setelah tulis (dan proxy `running`), tunggu `verifyWaitMs` 4 dtk, baca `containerLogsSince` log `aoox-proxy`, `errorsAbout()` (`traefik-log.ts`, pure) mengambil
-  baris error yang menyebut nama berkas **atau** elemen `nama@file` dari berkas itu (galat berkas lain tidak dituduhkan; warna ANSI/timestamp dibuang, ulangan dilipat). Ada galat →
-  baris DB dikembalikan (hapus baris baru / isi lama), sinkron ulang tanpa verifikasi, balas 400 dengan kutipan Traefik. Daemon tak terjangkau → juga dikembalikan + 502. Proxy mati/tak ada
-  → hanya `warning` (berkas tersimpan). Format galat Traefik nyata (diuji): `ERR Error occurred during watcher callback error="collecting file configs: /etc/traefik/dynamic/user-x.yml: field
-  not found, node: opsi"` (opsi tak dikenal/tipe salah), `ERR error="middleware \"x@file\" does not exist" routerName=r@file`, `ERR error="error while parsing rule …"`.
-  **Batas**: nilai keliru yang tidak dicatat Traefik di level INFO (mis. URL service `://nope`) lolos; konfigurasi valid tetap bisa menimpa perutean domain lain — itu sebabnya tulis = owner saja.
-- **API** (`@Roles('owner','admin')` baca, `@Roles('owner')` tulis, throttle 20/menit): `GET /proxy/config?serverId=` (tanpa isi; `usedByDomains`), `GET /proxy/config/:id`, `POST` `{name, content,
+- `src/modules/proxy-config/` — **dynamic** Traefik configuration files (file provider) written by the operator, per proxy (host or remote server). Entity `ProxyConfigFile`
+  (`proxy_config_files`: `name` slug `[a-z0-9-]{1,40}` unique per `server_id` (two partial unique indexes; `server_id` null = host, FK `servers` ON DELETE CASCADE), `content` YAML, `enabled`,
+  timestamptz; migration `ProxyConfigFiles`). **The DB is the source of truth**: the volume can be rewritten at any time (`POST /proxy/config/sync`) — restoring an instance recovers the rows but does **not**
+  write the volume (same as certificates), so the web has a "Re-apply" button. `ProxyConfigModule` only reads the `Domain` entity (middleware references) and is imported by
+  `ApplicationModule`, never the other way around; static controllers (`presets`, `sync`, `status`) are registered **before** the `:id` ones.
+- **Writing** (`proxy-config-sync.service.ts`): to the volume `aoox_proxy_certs` (mounted at `/etc/traefik/dynamic` in the proxy, `/dynamic` in the helper) via busybox + `putArchive` — the
+  `CertificateSyncService` pattern, with its own one-sync-at-a-time per-daemon queue (the two modules write different files to the same volume, so they do not need to share a queue). File names are **always**
+  `user-<name>.yml` (`userFileName`), so the `*.crt`/`*.key` sweep and the rewrite of `certs.yml` owned by the certificate module never touch them, and this sync **never**
+  writes `certs.yml`/crt/key; the sweep only matches `user-*.yml` that are not in the keep list (no 5-second pause like certificates — the files reference each other via `name@file`,
+  not paths, so there is no ordering risk). A disabled file = removed from the volume but kept in the DB. An old proxy without the file provider is recreated **once**
+  (`ProxyService.upgradeToCustomCerts`, same as certificates) and therefore the API asks for approval: `409 {code: 'proxy-restart-required'}` unless `acceptProxyRestart: true`
+  (in the create/update body, or the sync query); `GET /proxy/config/status` → `{proxy, fileProvider, needsRecreate}` so the web asks before saving; the sync response carries a `notice` when this happens.
+- **Validation** (`proxy-config-schema.ts`, pure): `js-yaml` `load` (a **direct dependency**, v4 CJS + `@types/js-yaml` dev — previously only transitive via eslint/nest-cli; do not replace it with an ESM-only package, which breaks Jest), max 64 KB (bytes), only the top-level key `http` with `middlewares|routers|services|serversTransports`; `tls`/`tcp`/`udp` are rejected with a reason,
+  other keys are rejected; element names `[a-z0-9-]{1,63}`; names must be unique per proxy across all active files (400). Structural validation only — each middleware's options are validated by Traefik itself.
+- **Verification & recovery**: after a write (and with the proxy `running`), wait `verifyWaitMs` 4 s, read the `aoox-proxy` log with `containerLogsSince`, and `errorsAbout()` (`traefik-log.ts`, pure) picks the error lines that mention the file's name **or** an element `name@file` from that file (errors of other files are not blamed; ANSI colors/timestamps are stripped, repeats are folded). If there is an error →
+  the DB row is restored (delete the new row / restore the old content), re-sync without verification, and reply 400 with the Traefik quote. An unreachable daemon → also restored + 502. A stopped/missing proxy
+  → only a `warning` (the file is saved). Real Traefik error formats (tested): `ERR Error occurred during watcher callback error="collecting file configs: /etc/traefik/dynamic/user-x.yml: field
+  not found, node: opsi"` (unknown option/wrong type), `ERR error="middleware \"x@file\" does not exist" routerName=r@file`, `ERR error="error while parsing rule …"`.
+  **Limit**: a wrong value that Traefik does not log at INFO level (e.g. a service URL `://nope`) gets through; a valid config can still override routing for other domains — which is why writing is owner-only.
+- **API** (`@Roles('owner','admin')` read, `@Roles('owner')` write, throttle 20/min): `GET /proxy/config?serverId=` (no content; `usedByDomains`), `GET /proxy/config/:id`, `POST` `{name, content,
   enabled?, serverId?, acceptProxyRestart?}`, `PUT /:id` `{content?, enabled?, acceptProxyRestart?}`, `DELETE /:id`, `POST /proxy/config/sync`, `GET /proxy/config/presets`, `POST
-  /proxy/config/presets/:preset {params}` (hanya membangun YAML, tidak menyimpan; owner). Audit log: key `content` dan `password` sudah di-redact. Hash basic auth disimpan di YAML sebagai
-  `user:$2y$…` (bcryptjs `$2b$` ditulis ulang jadi `$2y$`, algoritma sama; diuji nyata dengan Traefik: 401 tanpa/salah kredensial, 200 dengan).
-- **Preset** (`proxy-config-presets.ts`, pure + bcrypt): `basic-auth`, `security-headers`, `rate-limit`, `ip-allowlist`, `redirect-www`; hanya pembuat YAML (hasilnya berkas biasa yang bisa diedit).
-  `redirect-www` memakai `redirectRegex` tanpa look-ahead (RE2) — harus dipasang hanya ke host yang diarahkan.
-- **Middleware per domain** (`Domain.middlewares` jsonb `string[]` default `[]`, migrasi `DomainMiddlewares`): `PATCH /applications/:id/domains/:domainId` kini menerima `certificateId?` **dan/atau**
-  `middlewares?` (minimal satu, 400 bila kosong; developer+, viewer 403 lewat aturan tulis; `applyRuntimeConfig`). Nama `name@file` (`MIDDLEWARE_REF`, `proxy/middleware-ref.ts`) harus ada di berkas
-  **aktif** pada proxy yang melayani aplikasi (`ProxyConfigService.assertMiddlewaresExist(app.serverId, …)` → 400). `GET /applications/:id/domain-middlewares` (semua anggota project) → `[{ref, file}]`.
-  Menonaktifkan/menghapus/menulis ulang berkas sehingga middleware yang dipakai domain di proxy itu hilang = **409** menyebut domain (dan nama middleware); sifat ini sengaja ketat, bukan peringatan.
-  `ProxyService.buildLabels`: `RoutedDomain.middlewares`; **satu router per daftar middleware berbeda** (Traefik memasang middleware per router, satu router melayani banyak host) — grup tanpa
-  middleware memakai nama router lama persis (label domain tanpa middleware tidak berubah, diuji sama persis), grup lain `-m<sha1 8 hex dari daftar>` (stabil, tidak bergantung domain lain), untuk router
-  `-secure`, `-secure-custom`, dan router http polos (host yang dilayani lewat http; tanpa ACME host https dilayani di keduanya dan keduanya membawa middleware). Router `-redirect` **tidak** membawa
-  middleware (hanya mengalihkan, middleware `-https@docker`-nya tetap). Entri yang bukan `name@file` dibuang sebelum menjadi nilai label (tanpa injeksi). **Pindah server**: `PATCH /applications/:id`
-  yang mengubah `serverId` (host↔remote, remote↔remote) memanggil `UpdateApplicationService.pruneDomainMiddlewares()` tepat setelah app disimpan dan **sebelum** jalur mana pun yang menghitung ulang label:
-  tiap domain hanya mempertahankan middleware yang NAMANYA didefinisikan berkas **aktif** di proxy tujuan (`ProxyConfigService.availableMiddlewares(app.serverId)`, null = host), sisanya dibuang,
-  warning log per domain, dan respons PATCH (entity `Application`) mendapat field aditif `droppedMiddlewares: [{domain, names[]}]` **hanya bila ada yang dibuang** (bentuk respons lain tidak berubah).
-  Tanpa perubahan `serverId` atau tanpa domain bermiddleware, tidak ada query ke proxy. Pindah server tidak memindahkan berkas konfigurasi dinamis, tetapi **sertifikat kustom ikut ditangani** (lihat bagian Sertifikat SSL kustom: `UpdateApplicationService.moveCertificates`, tepat setelah `pruneDomainMiddlewares`,
-  memakai daftar domain yang sama — satu query). Ekspor/impor project tidak membawa berkas
-  maupun middleware domain (impor tetap berhasil bila file sumbernya membawa field itu — diabaikan, diuji).
-- **Belum / di luar cakupan**: konfigurasi **statis** Traefik (level log, access log, IP tepercaya — butuh recreate proxy), editor visual middleware, TCP/UDP, validasi opsi per middleware di sisi aoox.
-  **Diuji nyata** (Traefik milik dev, hanya lewat berkas `user-test-*`): berkas dimuat/ditolak/dipulihkan, nonaktif→404, basic auth, header, middleware per domain (header, basic auth, keduanya
-  berurutan), 409/400; UI. **Belum diuji**: server remote sungguhan (SSH), Swarm, domain HTTPS dengan sertifikat kustom + middleware (hanya unit test label), proxy lama yang dibuat ulang.
+  /proxy/config/presets/:preset {params}` (only builds the YAML, does not save; owner). Audit log: the `content` and `password` keys are redacted. Basic-auth hashes are stored in the YAML as
+  `user:$2y$…` (bcryptjs `$2b$` is rewritten to `$2y$`, same algorithm; tested for real with Traefik: 401 without/with wrong credentials, 200 with the right ones).
+- **Presets** (`proxy-config-presets.ts`, pure + bcrypt): `basic-auth`, `security-headers`, `rate-limit`, `ip-allowlist`, `redirect-www`; they only build YAML (the result is a normal file that can be edited).
+  `redirect-www` uses `redirectRegex` without look-ahead (RE2) — it must only be attached to hosts that are redirected.
+- **Per-domain middlewares** (`Domain.middlewares` jsonb `string[]` default `[]`, migration `DomainMiddlewares`): `PATCH /applications/:id/domains/:domainId` now accepts `certificateId?` **and/or**
+  `middlewares?` (at least one, 400 if empty; developer+, viewer 403 via the write rule; `applyRuntimeConfig`). A `name@file` name (`MIDDLEWARE_REF`, `proxy/middleware-ref.ts`) must exist in an **active** file on the proxy that serves the app (`ProxyConfigService.assertMiddlewaresExist(app.serverId, …)` → 400). `GET /applications/:id/domain-middlewares` (all project members) → `[{ref, file}]`.
+  Disabling/deleting/rewriting a file so that a middleware used by a domain on that proxy disappears = **409** naming the domain (and the middleware name); this strictness is deliberate, not a warning.
+  `ProxyService.buildLabels`: `RoutedDomain.middlewares`; **one router per distinct middleware list** (Traefik attaches middlewares per router, and one router serves many hosts) — the group without middlewares keeps the exact old router names (domain labels without middlewares do not change, tested identically), other groups use `-m<sha1 8 hex of the list>` (stable, does not depend on other domains), for the
+  `-secure`, `-secure-custom`, and plain http routers (hosts served over http; without ACME, https hosts are served on both and both carry the middlewares). The `-redirect` router does **not** carry
+  middlewares (it only redirects; its `-https@docker` middleware stays). Entries that are not `name@file` are dropped before becoming a label value (no injection). **Moving servers**: a `PATCH /applications/:id`
+  that changes `serverId` (host↔remote, remote↔remote) calls `UpdateApplicationService.pruneDomainMiddlewares()` right after the app is saved and **before** any path that recomputes labels:
+  each domain only keeps the middlewares whose NAMES are defined in an **active** file on the destination proxy (`ProxyConfigService.availableMiddlewares(app.serverId)`, null = host), the rest are dropped,
+  a log warning per domain, and the PATCH response (the `Application` entity) gets an additive field `droppedMiddlewares: [{domain, names[]}]` **only when something was dropped** (other response shapes are unchanged).
+  With no `serverId` change or no domains with middlewares there is no query to the proxy. Moving servers does not move the dynamic config files, but **custom certificates are handled** (see the Custom SSL certificates section: `UpdateApplicationService.moveCertificates`, right after `pruneDomainMiddlewares`,
+  using the same domain list — one query). Project export/import carries neither the files
+  nor the domain middlewares (import still succeeds if the source file contains that field — it is ignored, tested).
+- **Not yet / out of scope**: Traefik **static** configuration (log levels, access log, trusted IPs — needs a proxy recreate), a visual middleware editor, TCP/UDP, validation of per-middleware options on the aoox side.
+  **Tested for real** (the developer's own Traefik, only via `user-test-*` files): files loaded/rejected/recovered, disabled→404, basic auth, headers, per-domain middlewares (header, basic auth, both in sequence), 409/400; UI. **Not yet tested**: real remote servers (SSH), Swarm, HTTPS domains with a custom certificate + middlewares (only label unit tests), an old proxy being recreated.
 
-## Notifikasi
+## Notifications
 
 - `src/modules/notification/` — entity `Notification` (`notifications`: `type` `telegram`|`slack`|`discord`|`webhook`|`email`, `config_encrypted` JSON AES via `ENCRYPTION_KEY`,
-  `select:false`; toggle `on_deployment_success`/`on_deployment_failure`/`on_backup_failure`/`on_container_down`). Platform-wide, `@Roles('owner','admin')`.
-  Flow: `create/list/delete-notification`, `test-notification` (`POST /notifications/:id/test` mengirim pesan contoh). DTO tidak pernah memuat token/URL/password SMTP — hanya `targetHint`.
-- `notification-sender.ts` — `requestFor(config, message)` (pure, di-unit-test) → payload per platform (Telegram `sendMessage` HTML, Slack attachments, Discord embeds, webhook JSON datar);
-  `sendNotification` pakai `fetch` global + `AbortSignal.timeout(10s)`. Email lewat **nodemailer** (`sendEmail`, SMTP per channel: host/port/secure/user/password/from/to — bukan env),
-  `emailContent()` = subject/text/html. Webhook generik = SSRF by design; owner/admin sudah punya shell host, jadi bukan eskalasi.
-  `broadcast(event, message)` memfilter channel lewat `EVENT_TOGGLE` (event → kolom toggle).
-- Event lain: **backup gagal** — `DatabaseBackupService.backup()` memanggil `broadcast('backupFailure')` (manual & terjadwal) fire-and-forget; **job gagal/timeout** — `jobFailure` (`on_job_failure`).
-  **Container mati** — `docker-events.service.ts` (docker module) menjaga satu stream `GET /events` (`type=container`, `event=die`, `label=aoox.component` —
-  hanya **key**: beberapa nilai `label` di satu filter Docker di-AND, bukan OR) dengan reconnect backoff + `OnApplicationShutdown`;
-  `container-down-notifier.service.ts` (application module) menunggu `GRACE_MS` 5 detik lalu memutuskan: container sudah tidak ada (di-replace deploy / dihapus), row app/db `stopped`
-  (stop flow menulis status *setelah* stop → karena itu grace), atau running lagi dengan exit code 0 (restart bersih) = diabaikan; selain itu kirim, maks 1×/container/10 menit (`COOLDOWN_MS`).
-- **Watcher** (`src/modules/notification/watchers/`, cron di `NotificationModule` yang kini meng-import `ScheduleModule`+`DockerModule`): `disk-watcher.service.ts` — 07:00 harian,
-  busybox `df -Pk` dengan `/var/lib/docker` di-bind `:ro` (`docker system df` tidak tahu sisa ruang; di Docker Desktop yang diukur = disk VM) → `parseDf()` (pure) → di atas
-  `DISK_ALERT_PERCENT` (default 90) kirim `diskLow` maks 1×/24 jam. `certificate-watcher.service.ts` — tiap 10 menit membaca 400 baris log `aoox-proxy`, `parseAcmeFailures()`
-  (pure; format console & JSON Traefik, ANSI dibersihkan) → `certificateFailure` per domain maks 1×/24 jam. Toggle kolom `on_disk_low`, `on_certificate_failure`.
-  **DNS domain** — `dnsIssue`/`on_dns_issue`: lihat `dns-watcher.service.ts` di bagian Proxy & Domain → Cek DNS (bukan di sini, karena butuh `Domain` repo).
-- **Webhook keluar bertanda tangan**: config webhook punya `secret` opsional; `webhookHeaders()` (pure, di-unit-test) menambahkan `X-Aoox-Event`, `X-Aoox-Delivery`
-  (= `body.id`, UUID per kiriman) dan `X-Aoox-Signature: sha256=HMAC-SHA256(secret, raw body)` — dihitung atas byte persis yang dikirim (`raw` di `sendNotification`), skema GitHub.
-  Body webhook kini selalu memuat `id` dan `timestamp`.
-- Pengirimannya di application module: `deployment-notifier.service.ts` subscribe `DeploymentEventsService.onStatus` (emit **sinkron** dari dalam runner → listener hanya menjadwalkan,
-  tidak pernah throw), hanya `success`/`failed`, lalu **membaca ulang row Deployment** (error sudah di-redact oleh `DeploymentLog`) dan `NotificationService.broadcast(event, message)`;
-  kegagalan per channel hanya di-log. Link ke `${WEB_ORIGIN}/applications/<id>` bila `WEB_ORIGIN` di-set. `ApplicationModule` meng-import `NotificationModule` (bukan sebaliknya).
-- **Deploy dimulai** (`on_deployment_started`, **default `false`** — beda dari toggle lain yang default `true`, karena event ini bisa sering terjadi lewat webhook/
-  auto-update dan channel yang sudah ada belum tentu mau tahu setiap kali): `deployment-notifier.service.ts` juga subscribe `DeploymentEventsService.onCreated`
-  (`emitCreated`, ditambahkan `DeploymentRunnerService.start()` — titik cekik tunggal yang dipanggil **setiap** jalur pembuatan deployment: build/webhook/
-  auto-update/rollback/config, jadi `deployment:created` selalu tepat sekali per deployment apa pun pemicunya). Handler membaca ulang row lalu **melewati**
-  `kind: 'config'` (deployment tanpa build — cuma re-apply mode/replika/limit swarm pada image yang sama; bukan "deploy baru" yang layak ditunggu, dan bisa
-  sering terjadi untuk penyesuaian rutin — mengirim untuk ini akan lebih berisik daripada berguna). Pesan: nama app, project, dan field **Trigger** dari
-  `trigger-summary.ts` `triggerSummary()` (helper murni yang sudah dipakai baris pertama log deployment — commit pendek + pesan commit + pengirim untuk webhook,
-  "Triggered by auto-update" untuk auto-update, "Triggered manually" selainnya), `level: 'info'`.
-- **Error aplikasi dari log** (`on_app_error`, **default `false`** untuk semua channel — deteksi dari teks log rawan salah tebak, jadi opt-in murni, beda dari toggle
-  lama yang defaultnya `true`): `app-error-watcher.service.ts` (application module, `@Cron` tiap menit, pola sama dengan `dns-watcher.service.ts`) memindai log tiap
-  aplikasi `running` dengan `Application.ignoreErrorLogs = false` (switch per app, default `false`, untuk app yang normal outputnya memang berisik seperti error).
-  **Bukan** stream `follow` permanen per container — `DockerEngineClient.containerLogsSince(id, sinceUnixSeconds)` (`GET /containers/{id}/logs?since=`) dipanggil
-  tiap tick dengan kursor in-memory per container id (bukan per app, karena mode `service` punya banyak task container); container yang baru pertama terlihat
-  cuma di-baseline (kursor = sekarang) tanpa memindai log lama, supaya app yang baru deploy/restart tidak langsung memicu notifikasi dari log historisnya sendiri.
-  App di server remote → `RemoteDockerService.forServer(app.serverId)`; mode `service` → `SwarmDeployService.taskContainers(app)` (selalu daemon lokal, swarm
-  memang host-only). **Stack compose dan preview PR di luar cakupan** (lihat bagian masing-masing).
-  Detektor murni `log-error-detector.ts` `detectLogErrors()` (di-unit-test luas): pola awal event `Traceback (most recent call last)`, `^panic:`,
-  `Unhandled(Promise)?Rejection`, `\w*(Error|Exception)\b[:\s]` (butuh huruf besar "Error"/"Exception" persis, jadi "retrying after error: x" berhuruf kecil
-  tidak kepicu), `level[=:]"?(error|fatal)"?`, `\bFATAL\b`, `\[ERROR\]`, atau baris JSON dengan field `level`/`severity` bernilai `error`/`fatal` (string) atau
-  `50`/`60` (angka, level pino) — dicek lebih dulu terhadap daftar **false positive** eksplisit (`0 errors`, `errors: 0`, `no error`, `error_count=0`, case-insensitive)
-  supaya tidak kepicu. Baris lanjutan (indentasi, `at …`, `File "…`) digabung ke event yang sama, dibatasi 20 baris total; baris pertama yang tidak diindentasi
-  mengakhiri penggabungan (kadang bikin baris ringkasan exception Python — yang memang tidak diindentasi — terdeteksi sebagai event terpisah dari Traceback-nya;
-  disengaja, tetap lebih baik daripada tidak terdeteksi sama sekali). Fingerprint = baris pertama yang dinormalisasi (`normalizeFingerprint()`: UUID/hex/timestamp/
-  durasi/angka polos → placeholder) supaya kejadian error yang sama bentuknya (beda id request) tidak dianggap error baru terus-menerus.
-  Kirim **satu notifikasi per app per tick** (bukan per baris): jumlah error, maksimal 3 contoh (fingerprint berbeda, dipotong 300 karakter), link
-  `${WEB_ORIGIN}/applications/<id>`, `level: 'failure'` (tidak ada level `'warning'` di `NotificationMessage`). **Cooldown** 15 menit per app — **kecuali** ada
-  fingerprint yang belum pernah terlihat sejak boot untuk app itu (`seenFingerprints` in-memory per app id), yang selalu tetap dikirim biar error baru tidak
-  ketahan cooldown punya error lama. Peta in-memory (`cursorSeconds` per container, `seenFingerprints`/`lastNotified` per app) dibersihkan tiap tick untuk
-  container/app yang sudah tidak aktif — app yang hilang lalu muncul lagi dianggap baru (di-baseline ulang, bukan melanjutkan cooldown lama).
-  **Redaksi**: nilai env mentah yang key-nya mengandung `PASSWORD`/`SECRET`/`TOKEN`/`KEY`, plus password database ter-resolve dari `EnvResolverService.resolve()`
-  (set yang sama yang didaftarkan `DeploymentLog.redact` saat deploy) — keduanya diganti `***` di teks contoh sebelum dikirim; referensi `${{...}}` yang rusak
-  hanya membuat redaksi database itu dilewati (tidak menggagalkan notifikasi). `EVENT_TOGGLE`/`CreateNotificationDto`/`notification.entity.ts` menambah
-  `onAppError` mengikuti pola `onDeploymentStarted`.
-- **Toggle baru harus ada di SEMUA titik** (pelajaran `onDnsIssue`/`onServerDown`/`onHttpDown`): kolom entity `on_*`, `NotificationEvent` + `EVENT_TOGGLE` (diekspor), `NotificationDto`/`toDto()`,
-  `CreateNotificationDto`, `CreateNotificationService.execute()` (`repo.create`), entity web, skema zod + `formData` di `notification.actions.ts`, `EVENT_LABEL` di `notifications-card.tsx`, docs.
-  `notification-toggles.spec.ts` membaca kolom `on_*` dari metadata TypeORM dan memastikan tiap toggle ada di DTO validasi, `EVENT_TOGGLE`, dan benar-benar disimpan/dikembalikan `create` — toggle yang
-  hanya ditambah di entity gagal di sana. `serverDown` (`on_server_down`) dan `httpDown` (`on_http_down`) default **`true`**: keduanya opt-in per server/aplikasi, jadi tidak berisik untuk yang tidak memakainya.
+  `select:false`; toggles `on_deployment_success`/`on_deployment_failure`/`on_backup_failure`/`on_container_down`). Platform-wide, `@Roles('owner','admin')`.
+  Flow: `create/list/delete-notification`, `test-notification` (`POST /notifications/:id/test` sends a sample message). The DTO never contains the token/URL/SMTP password — only `targetHint`.
+- `notification-sender.ts` — `requestFor(config, message)` (pure, unit-tested) → payload per platform (Telegram `sendMessage` HTML, Slack attachments, Discord embeds, flat webhook JSON);
+  `sendNotification` uses the global `fetch` + `AbortSignal.timeout(10s)`. Email goes through **nodemailer** (`sendEmail`, SMTP per channel: host/port/secure/user/password/from/to — not env),
+  `emailContent()` = subject/text/html. Generic webhook = SSRF by design; owner/admin already have a host shell, so this is not an escalation.
+  `broadcast(event, message)` filters channels through `EVENT_TOGGLE` (event → toggle column).
+- Other events: **backup failure** — `DatabaseBackupService.backup()` calls `broadcast('backupFailure')` (manual & scheduled) fire-and-forget; **job failure/timeout** — `jobFailure` (`on_job_failure`).
+  **Container down** — `docker-events.service.ts` (docker module) keeps one `GET /events` stream (`type=container`, `event=die`, `label=aoox.component` —
+  only the **key**: multiple `label` values in one Docker filter are ANDed, not ORed) with reconnect backoff + `OnApplicationShutdown`;
+  `container-down-notifier.service.ts` (application module) waits `GRACE_MS` 5 seconds and then decides: the container no longer exists (replaced by deploy / deleted), the app/db row is `stopped`
+  (the stop flow writes the status *after* stopping → hence the grace), or it is running again with exit code 0 (clean restart) = ignored; otherwise it sends, at most 1×/container/10 minutes (`COOLDOWN_MS`).
+- **Watchers** (`src/modules/notification/watchers/`, cron in `NotificationModule`, which now imports `ScheduleModule`+`DockerModule`): `disk-watcher.service.ts` — daily at 07:00,
+  busybox `df -Pk` with `/var/lib/docker` bind-mounted `:ro` (`docker system df` does not report free space; on Docker Desktop what is measured is the VM disk) → `parseDf()` (pure) → above
+  `DISK_ALERT_PERCENT` (default 90) sends `diskLow` at most 1×/24 hours. `certificate-watcher.service.ts` — every 10 minutes reads 400 lines of the `aoox-proxy` log, `parseAcmeFailures()`
+  (pure; Traefik console & JSON formats, ANSI stripped) → `certificateFailure` per domain at most 1×/24 hours. Toggle columns `on_disk_low`, `on_certificate_failure`.
+  **Domain DNS** — `dnsIssue`/`on_dns_issue`: see `dns-watcher.service.ts` in the Proxy & Domain → DNS check section (not here, because it needs the `Domain` repo).
+- **Signed outgoing webhooks**: the webhook config has an optional `secret`; `webhookHeaders()` (pure, unit-tested) adds `X-Aoox-Event`, `X-Aoox-Delivery`
+  (= `body.id`, a UUID per delivery) and `X-Aoox-Signature: sha256=HMAC-SHA256(secret, raw body)` — computed over the exact bytes sent (`raw` in `sendNotification`), GitHub scheme.
+  The webhook body now always contains `id` and `timestamp`.
+- Sending from the application module: `deployment-notifier.service.ts` subscribes to `DeploymentEventsService.onStatus` (emitted **synchronously** from inside the runner → the listener only schedules work,
+  and never throws), only for `success`/`failed`, then **re-reads the Deployment row** (the error has already been redacted by `DeploymentLog`) and calls `NotificationService.broadcast(event, message)`;
+  failures per channel are only logged. Link to `${WEB_ORIGIN}/applications/<id>` when `WEB_ORIGIN` is set. `ApplicationModule` imports `NotificationModule` (not the other way around).
+- **Deployment started** (`on_deployment_started`, **default `false`** — unlike the other toggles which default to `true`, because this event can happen often via webhook/
+  auto-update and existing channels may not want to hear about every one): `deployment-notifier.service.ts` also subscribes to `DeploymentEventsService.onCreated`
+  (`emitCreated`, added to `DeploymentRunnerService.start()` — the single choke point called for **every** deployment creation path: build/webhook/
+  auto-update/rollback/config, so `deployment:created` is always emitted exactly once per deployment regardless of trigger). The handler re-reads the row and **skips**
+  `kind: 'config'` (a deployment without a build — it only re-applies the swarm mode/replicas/limits on the same image; not a "new deploy" worth waiting for, and it can
+  happen often for routine adjustments — sending for these would be noisier than useful). The message: app name, project, and the **Trigger** field from
+  `triggerSummary()` in `trigger-summary.ts` (the pure helper already used by the first line of the deployment log — short commit + commit message + sender for webhooks,
+  "Triggered by auto-update" for auto-update, "Triggered manually" otherwise), `level: 'info'`.
+- **App errors from logs** (`on_app_error`, **default `false`** for all channels — detecting errors from log text is error-prone, so it is strictly opt-in, unlike the older toggles which default to `true`): `app-error-watcher.service.ts` (application module, `@Cron` every minute, same pattern as `dns-watcher.service.ts`) scans the logs of each
+  `running` app with `Application.ignoreErrorLogs = false` (a per-app switch, default `false`, for apps whose normal output is noisy and looks like errors).
+  **Not** a permanent `follow` stream per container — `DockerEngineClient.containerLogsSince(id, sinceUnixSeconds)` (`GET /containers/{id}/logs?since=`) is called
+  on every tick with an in-memory cursor per container id (per container, not per app, because `service` mode has many task containers); a container seen for the first time
+  is only baselined (cursor = now) without scanning old logs, so that a freshly deployed/restarted app does not immediately trigger notifications from its own historical logs.
+  Apps on a remote server → `RemoteDockerService.forServer(app.serverId)`; `service` mode → `SwarmDeployService.taskContainers(app)` (always the local daemon, since swarm is host-only).
+  **Compose stacks and PR previews are out of scope** (see their own sections).
+  The pure detector `log-error-detector.ts` `detectLogErrors()` (heavily unit-tested): start-of-event patterns `Traceback (most recent call last)`, `^panic:`,
+  `Unhandled(Promise)?Rejection`, `\w*(Error|Exception)\b[:\s]` (requires the capitalized "Error"/"Exception" exactly, so lowercase "retrying after error: x" does not trigger),
+  `level[=:]"?(error|fatal)"?`, `\bFATAL\b`, `\[ERROR\]`, or a JSON line whose `level`/`severity` field is `error`/`fatal` (string) or
+  `50`/`60` (number, pino levels) — checked first against an explicit list of **false positives** (`0 errors`, `errors: 0`, `no error`, `error_count=0`, case-insensitive)
+  so they do not trigger. Continuation lines (indented, `at …`, `File "…`) are merged into the same event, capped at 20 lines total; the first non-indented line
+  ends the merge (this sometimes makes the summary line of a Python exception — which is not indented — appear as a separate event from its Traceback;
+  deliberate, still better than not detecting it at all). The fingerprint = the first line, normalized (`normalizeFingerprint()`: UUIDs/hex/timestamps/
+  durations/plain numbers → placeholders) so that the same kind of error (different request ids) is not treated as a new error over and over.
+  Send **one notification per app per tick** (not per line): the number of errors, at most 3 examples (distinct fingerprints, truncated to 300 characters), a link
+  `${WEB_ORIGIN}/applications/<id>`, `level: 'failure'` (there is no `'warning'` level in `NotificationMessage`). **Cooldown** of 15 minutes per app — **except** when there is a
+  fingerprint never seen since boot for that app (`seenFingerprints` in-memory per app id), which is always sent so that a new error is not held back by the cooldown of an old one. The in-memory maps (`cursorSeconds` per container, `seenFingerprints`/`lastNotified` per app) are cleaned up on each tick for
+  containers/apps that are no longer active — an app that disappears and then reappears is treated as new (re-baselined, not continuing the old cooldown).
+  **Redaction**: raw env values whose key contains `PASSWORD`/`SECRET`/`TOKEN`/`KEY`, plus the database passwords resolved by `EnvResolverService.resolve()`
+  (the same set registered with `DeploymentLog.redact` during deployment) — both are replaced with `***` in the example text before sending; a broken `${{...}}` reference
+  only causes the redaction of that database to be skipped (it does not fail the notification). `EVENT_TOGGLE`/`CreateNotificationDto`/`notification.entity.ts` add
+  `onAppError` following the pattern of `onDeploymentStarted`.
+- **New toggles must exist at ALL points** (lesson from `onDnsIssue`/`onServerDown`/`onHttpDown`): the `on_*` entity column, `NotificationEvent` + `EVENT_TOGGLE` (exported), `NotificationDto`/`toDto()`,
+  `CreateNotificationDto`, `CreateNotificationService.execute()` (`repo.create`), the web entity, the zod schema + `formData` in `notification.actions.ts`, `EVENT_LABEL` in `notifications-card.tsx`, and the docs.
+  `notification-toggles.spec.ts` reads the `on_*` columns from TypeORM metadata and checks that each toggle exists in the validation DTO, in `EVENT_TOGGLE`, and is actually stored and returned by `create` — a toggle that is only added to the entity fails there. `serverDown` (`on_server_down`) and `httpDown` (`on_http_down`) default to **`true`**: both are opt-in per server/application, so they are not noisy for those who do not use them.
 
-## Compose (stack docker-compose)
+## Compose (docker-compose stacks)
 
-- `src/modules/compose/` — entity `ComposeApp` (`compose_apps`, di bawah `Project`; `slug` unik, `git_url`/`git_branch`/`git_credential_id`, `compose_path`, `env`,
-  `status` idle→deploying→running|stopped|error, `logs` = output aksi terakhir, `deployed_at`). Tidak memakai `Application`/`Deployment`: satu stack = N container,
-  jadi `containerNameFor`, port, domain, rollback, riwayat deployment tidak berlaku. Flow `create/list/get/update/delete-compose-app`, `deploy/stop/start-compose-app` (202 + poll `GET /compose-apps/:id`
-  yang juga memuat container stack via label `com.docker.compose.project`).
-- Compose **tidak ada di Engine API** (alat sisi klien). `compose-runner.service.ts` menjalankan `docker compose` di container helper sekali-jalan `docker:29-cli`
-  (docker CLI + plugin compose + git) dengan **socket daemon host** (`DockerService.hostDockerSocket` = `PROXY_DOCKER_SOCKET`, dipakai juga Traefik) dan volume checkout
-  `aoox_compose_<slug>`. Volume itu di-mount **di path mountpoint-nya sendiri** (`inspectVolume().Mountpoint`, `/var/lib/docker/volumes/<nama>/_data`) supaya path relatif
-  yang di-resolve compose di dalam helper (bind mount `./nginx.conf`, build context) juga ada di sisi daemon — dengan mount `/work` biasa, bind mount gagal (`not a directory`).
-  Tanpa `--project-directory`: path relatif dihitung dari folder file compose. `build:` didukung penuh (CLI memakai BuildKit — kebalikan dari batasan nixpacks).
-- Deploy: `git clone --depth 1` (kredensial hanya di helper; token & password DB di-redact dari log), `.aoox.env` (hasil `EnvResolverService`, referensi project/database sama seperti app)
-  diunggah lewat `PUT /containers/{id}/archive` sebelum start dan dipakai `--env-file` → sumber interpolasi `${VAR}` (tidak otomatis masuk ke container). Lalu `config --quiet` + `up -d --build --remove-orphans`.
-  Nama project compose `aoox-<slug>` (grup Docker Desktop sendiri, **bukan** `aoox` — label `com.docker.compose.project` diset CLI dan tidak bisa dua-duanya).
-  Output helper di-stream (`followContainerLogs`) ke kolom `logs` tiap ~1 detik. Gagal deploy → notifikasi `deploymentFailure`. `delete` = `down --volumes --remove-orphans` + hapus volume checkout, sinkron.
-- **Sumber** `ComposeApp.source`: `git` (clone repo) atau `template` (`compose_content` di DB, `git_url` null, `compose_path` selalu `docker-compose.yml` karena `tarFiles` datar);
-  runner mengunggah file compose ke WORK lalu `mv` ke SRC yang baru dibuat — tanpa git. `composeContent` bisa diedit lewat `PATCH` (hanya untuk `template`).
-- **Domain stack** (`service_domains` jsonb: `{service, port, host, https}`): saat deploy runner menulis override **`docker-compose.aoox.yml`** (JSON = YAML valid; `renderOverride`,
-  pure & di-unit-test) di sebelah file compose, berisi label Traefik dari `ProxyService.labelsFor` (router `<slug>-<service>-<port>`) + network `aoox` **dan `default`**
-  (mendeklarasikan `networks:` di service menghapus network default implisit — tanpa `default` layanan stack tidak saling menemukan), lalu `-f compose -f override`.
-  Stop/start/down memakai override yang ada di volume (`[ -f ... ] && OVERRIDE=`), bukan dari row, agar cocok dengan stack yang berjalan. Tanpa domain/port = tanpa override
-  (override lama ikut hilang karena deploy selalu `rm -rf SRC` dulu, jadi stop/start tidak memakai konfigurasi yang sudah dicabut — diuji: port lepas).
-- **Port host** (`service_ports` jsonb `{service, port, hostPort}`, `ServicePortDto`): akses lewat IP tanpa domain/proxy. `renderOverride(domains, ports, …)` menambahkan
-  `ports: ["<hostPort>:<port>"]` ke service (tanpa `networks` bila hanya port); compose **meng-append** `ports` override ke `ports` file compose (diuji `config`), jadi binding
-  yang sudah ada di file tetap. `ComposeService.assertHostPortsFree()` (dipakai `update-compose-app` & `create-from-template`) menolak 400 sebelum deploy: duplikat dalam daftar, lalu delegasi ke
-  `HostPortService` (`src/modules/host-port/`, lihat bagian Application & Deploy) untuk `applications.host_port`, `managed_databases.host_port`, `service_ports` stack lain, dan port yang sedang
-  di-bind container **mana pun** di daemon lokal (`listContainers({status:['running']})`, `ContainerSummary.Ports[].PublicPort`; container project compose stack sendiri dikecualikan karena
-  di-recreate; entri IPv4/IPv6 di-dedupe) — tanpa ini `up` gagal *setelah* container lama di-recreate, service jadi mati. Cek saat simpan, bukan saat deploy — port yang direbut proses lain di
-  antaranya tetap gagal di `up`. `create-from-template` menerima `servicePorts`
-  (divalidasi terhadap `template.services` seperti domain). Ekspor/impor project membawa `servicePorts` (opsional di file lama; `freeHostPort` kini juga memindai
-  `service_ports` stack lain; port yang sudah dipakai dilewati + warning).
-- **Riwayat** (`compose-deployment.entity.ts`, tabel `compose_deployments`: FK cascade ke stack, `action` deploy|stop|start|down, `trigger` manual|webhook, `status` running→success|failed,
-  `logs`, `error_message`, `commit_sha`, `started_at`/`finished_at`): tiap jalannya helper = satu row. Tidak ada image/rollback seperti `Deployment` aplikasi — satu stack = N container,
-  jadi yang disimpan adalah riwayat **aksi**. Runner: `queue(app, action, options)` membuat row lebih dulu (caller dapat id untuk di-poll) lalu `start()`; log live ditulis **hanya** ke row
-  (`ComposeApp.logs` diisi sekali saat selesai, supaya build yang cerewet tidak menggandakan write), dan `get-compose-app` mengembalikan log row yang masih `running` + `deploymentId`.
-  Setelah tiap run `prune` menyisakan `COMPOSE_RUN_KEEP` (20) row terbaru. Flow `list-compose-deployments` (`GET /compose-apps/:id/deployments`, tanpa logs) dan `get-compose-deployment`
-  (`GET /compose-deployments/:id`, dengan logs; akses lewat project stack-nya).
-- **Webhook** (`ComposeApp.webhookToken` unik `select:false` + `webhookSecretEncrypted`, migrasi `ComposeHistoryAndWebhook` mem-backfill token untuk stack lama): publik
-  `POST /webhooks/compose/:token` (`webhook-deploy-compose/`, tanpa JwtAuthGuard, throttle 30/menit, `timingSafeEqual`) — kontrak yang sama dengan aplikasi dan memakai ulang
-  `webhook-signature.ts` (GitHub `X-Hub-Signature-256` / GitLab `X-Gitlab-Token` → salah = **401**). Push ke `refs/heads/<gitBranch>` → `runner.queue(..., {trigger:'webhook', commitSha})`;
-  branch lain / event non-push / **stack template** (compose file ada di DB, tidak ada repo) → 200 `ignored`; run sedang jalan → 200 `busy` (tidak diantre). Flow `compose-webhook/`
-  (`GET /compose-apps/:id/webhook`, `POST …/webhook/regenerate`, `PUT/DELETE …/webhook/secret`) membalas `{url, token, branch, secret, supported}`.
-- **Metrik & container mati**: container stack tetap tanpa label `aoox.component` (label itu milik compose CLI), jadi keduanya mengenali stack dari **nama project compose**
-  `aoox-<slug>` (`COMPOSE_PROJECT_PREFIX`; stack dist sendiri bernama `aoox` tanpa tanda hubung, jadi tidak ikut). `MonitoringService.sampleAll` melakukan **dua** listContainers
-  (beberapa nilai `label` di satu filter di-AND) dan menambahkan container compose yang belum punya `aoox.component`; `GET /compose-apps/:id/metrics` (`compose-metrics/`) membaca cache
-  sampler per service + total. `DockerEventsService` kini menjaga **dua** stream `GET /events` (satu per label) dengan backoff masing-masing; event dari stream compose yang containernya
-  juga ber-`aoox.component` dibuang (container kita punya kedua label lewat `composeLabels()`). `compose-down-notifier.service.ts` (di compose module — ComposeModule sudah meng-import
-  ApplicationModule, arah sebaliknya siklus) mengirim `containerDown` "Stack service went down: <stack> (<service>)"; **diam** selama `runner.isActive(app.id)` (deploy me-recreate semua
-  container dan `up -d --build` bisa bermenit-menit, grace 5 detik tidak cukup), saat row bukan `running`, container sudah hilang, atau restart bersih (exit 0). Cooldown 10 menit/container.
-  Diuji nyata (stack 2 service dari git daemon lokal): deploy manual + lewat webhook bertanda tangan (signature salah 401, branch lain ignored, push kedua busy), **nol** notifikasi selama
-  deploy, `docker kill` satu service → **tepat satu** notifikasi, kill container aplikasi tetap satu notifikasi (bukan dobel dari stream kedua).
-- Batasan: domain/Traefik = label `traefik.*` di file compose sendiri + join network eksternal `aoox`. File compose dari repo bisa minta `privileged`/host mount — owner/admin sudah punya
-  shell host, jadi bukan eskalasi.
-- **Retensi metrik untuk stack** (`renderOverride` di `compose-runner.service.ts`): setiap service yang override-nya sudah menyentuh service itu untuk alasan lain (domain, port, mount,
-  atau resource limit) juga distempel `aoox.component: compose` + `aoox.compose: <id stack>` — cukup untuk `MetricRetentionService.ownersByContainer()` (yang murni baca label
-  container, tanpa query DB) mengenali dan menjumlahkan container itu ke satu baris rollup per stack, **tanpa** perlu MonitoringModule meng-import ComposeModule (jalan pintas ini
-  menghindari siklus MonitoringModule → ComposeModule → ApplicationModule → MonitoringModule yang sebelumnya jadi alasan fitur ini "belum ada"). **Batasan yang disengaja**:
-  `renderOverride` cuma pernah tahu nama service dari empat daftar yang datang dari DB (`serviceDomains`/`servicePorts`/mounts/`serviceResources`) — tidak pernah dari file compose
-  itu sendiri (yang baru ada di dalam helper container saat deploy, bukan di sisi API) — jadi service yang benar-benar tanpa satu pun dari keempatnya (mis. service database internal
-  polos tanpa mount) tidak pernah dapat label, dan tetap live-only (1h) seperti sebelumnya; stack yang seluruh service-nya "telanjang" begitu juga. `GET /compose-apps/:id/metrics?range=`
-  (`compose-metrics.controller.ts`, DTO lokal `ComposeMetricsQueryDto` — bukan meng-impor punya aplikasi, supaya tidak menambah ketergantungan lintas modul) kini punya kontrak yang sama
-  dengan aplikasi/database: `1h` tetap live per-service (`services[]` + `total`) plus `history` gabungan lewat `aggregateMetrics()` yang sama dipakai swarm task; `24h`/`7d`/`30d` membaca
-  `MetricRetentionService.history('compose', ...)` — `services[]` kosong (tidak ada riwayat per-service tersimpan, hanya total stack) tapi `history`/`total` terisi.
-  Nama `service` di mount dan `serviceResources` (juga `serviceDomains`/`servicePorts` yang sudah ada) **tidak divalidasi** terhadap service yang benar-benar ada di file compose
-  (beda dengan `create-from-template` yang mengecek ke `template.services`) — salah ketik nama service menghasilkan override yang menyasar service yang tidak ada; `docker compose config`
-  menerimanya tanpa keluhan dan mount/limit itu diam-diam tidak pernah berlaku, bukan error.
+- `src/modules/compose/` — entity `ComposeApp` (`compose_apps`, under `Project`; `slug` unique, `git_url`/`git_branch`/`git_credential_id`, `compose_path`, `env`,
+  `status` idle→deploying→running|stopped|error, `logs` = output of the last action, `deployed_at`). It does not use `Application`/`Deployment`: one stack = N containers,
+  so `containerNameFor`, ports, domains, rollback, and deployment history do not apply. Flow `create/list/get/update/delete-compose-app`, `deploy/stop/start-compose-app` (202 + poll `GET /compose-apps/:id`,
+  which also returns the stack's containers via the `com.docker.compose.project` label).
+- Compose is **not in the Engine API** (it is a client-side tool). `compose-runner.service.ts` runs `docker compose` in a one-shot helper container `docker:29-cli`
+  (docker CLI + compose plugin + git) with the **host daemon socket** (`DockerService.hostDockerSocket` = `PROXY_DOCKER_SOCKET`, also used by Traefik) and a checkout volume
+  `aoox_compose_<slug>`. That volume is mounted **at its own mountpoint path** (`inspectVolume().Mountpoint`, `/var/lib/docker/volumes/<name>/_data`) so that relative paths resolved by compose inside the helper (bind mount `./nginx.conf`, build context) also exist on the daemon side — with a plain `/work` mount, bind mounts fail (`not a directory`).
+  Without `--project-directory`: relative paths are computed from the folder of the compose file. `build:` is fully supported (the CLI uses BuildKit — the opposite of the nixpacks limitation).
+- Deploy: `git clone --depth 1` (credentials only in the helper; tokens & DB passwords are redacted from the log), `.aoox.env` (the output of `EnvResolverService`, with project/database references as for apps)
+  uploaded via `PUT /containers/{id}/archive` before start and used with `--env-file` → source for `${VAR}` interpolation (it is not automatically injected into the containers). Then `config --quiet` + `up -d --build --remove-orphans`.
+  The compose project name is `aoox-<slug>` (its own group in Docker Desktop, **not** `aoox` — the `com.docker.compose.project` label is set by the CLI and cannot be both).
+  Helper output is streamed (`followContainerLogs`) into the `logs` column about every ~1 second. Deploy failure → `deploymentFailure` notification. `delete` = `down --volumes --remove-orphans` + delete the checkout volume, synchronously.
+- **Source** `ComposeApp.source`: `git` (clone the repo) or `template` (`compose_content` in the DB, `git_url` null, `compose_path` always `docker-compose.yml` because `tarFiles` is flat);
+  the runner uploads the compose file to WORK and then `mv`s it into the newly created SRC — no git. `composeContent` can be edited via `PATCH` (only for `template`).
+- **Stack domains** (`service_domains` jsonb: `{service, port, host, https}`): during deploy the runner writes the override **`docker-compose.aoox.yml`** (JSON = valid YAML; `renderOverride`,
+  pure & unit-tested) next to the compose file, containing the Traefik labels from `ProxyService.labelsFor` (router `<slug>-<service>-<port>`) + the `aoox` **and `default`** networks
+  (declaring `networks:` on a service removes the implicit default network — without `default`, the services of the stack cannot find each other), then `-f compose -f override`.
+  Stop/start/down use the override that exists in the volume (`[ -f ... ] && OVERRIDE=`), not the row, so that they match the running stack. Without domains/ports there is no override
+  (the old override disappears because deploy always does `rm -rf SRC` first, so stop/start do not use a configuration that has been removed — tested: the port is released).
+- **Host ports** (`service_ports` jsonb `{service, port, hostPort}`, `ServicePortDto`): access by IP without a domain/proxy. `renderOverride(domains, ports, …)` adds
+  `ports: ["<hostPort>:<port>"]` to the service (without `networks` if there are only ports); compose **appends** the override `ports` to the `ports` of the compose file (tested with `config`), so existing bindings in the file remain.
+  `ComposeService.assertHostPortsFree()` (used by `update-compose-app` & `create-from-template`) rejects with 400 before deploy: duplicates within the list, then delegates to
+  `HostPortService` (`src/modules/host-port/`, see the Application & Deploy section) for `applications.host_port`, `managed_databases.host_port`, the `service_ports` of other stacks, and the ports currently bound by **any** container on the local daemon (`listContainers({status:['running']})`, `ContainerSummary.Ports[].PublicPort`; the containers of the stack's own compose project are excluded because they are recreated; IPv4/IPv6 entries are deduplicated) — without this, `up` fails *after* the old containers have been recreated, and the service goes down. The check runs at save time, not deploy time — a port taken by another process in between still fails in `up`.
+  `create-from-template` accepts `servicePorts`
+  (validated against `template.services`, as with domains). Project export/import carries `servicePorts` (optional in old files; `freeHostPort` now also scans the `service_ports` of other stacks; ports already in use are skipped + a warning).
+- **History** (`compose-deployment.entity.ts`, table `compose_deployments`: FK cascade to the stack, `action` deploy|stop|start|down, `trigger` manual|webhook, `status` running→success|failed,
+  `logs`, `error_message`, `commit_sha`, `started_at`/`finished_at`): every run of the helper = one row. There is no image/rollback like application `Deployment` — one stack = N containers,
+  so what is stored is the **action** history. Runner: `queue(app, action, options)` creates the row first (the caller gets the id to poll) and then calls `start()`; live logs are written **only** to the row
+  (`ComposeApp.logs` is filled once at the end, so that a chatty build does not duplicate writes), and `get-compose-app` returns the log of a row still `running` + `deploymentId`.
+  After each run, `prune` keeps the `COMPOSE_RUN_KEEP` (20) most recent rows. Flow `list-compose-deployments` (`GET /compose-apps/:id/deployments`, without logs) and `get-compose-deployment`
+  (`GET /compose-deployments/:id`, with logs; access through the project of its stack).
+- **Webhook** (`ComposeApp.webhookToken` unique `select:false` + `webhookSecretEncrypted`, migration `ComposeHistoryAndWebhook` backfills a token for existing stacks): public
+  `POST /webhooks/compose/:token` (`webhook-deploy-compose/`, no JwtAuthGuard, throttle 30/minute, `timingSafeEqual`) — the same contract as applications and reusing
+  `webhook-signature.ts` (GitHub `X-Hub-Signature-256` / GitLab `X-Gitlab-Token` → wrong = **401**). A push to `refs/heads/<gitBranch>` → `runner.queue(..., {trigger:'webhook', commitSha})`;
+  other branches / non-push events / **template stacks** (the compose file is in the DB, there is no repo) → 200 `ignored`; a run already in progress → 200 `busy` (not queued). Flow `compose-webhook/`
+  (`GET /compose-apps/:id/webhook`, `POST …/webhook/regenerate`, `PUT/DELETE …/webhook/secret`) returns `{url, token, branch, secret, supported}`.
+- **Metrics & container down**: stack containers still have no `aoox.component` label (that label belongs to the compose CLI), so both recognize a stack by the **compose project name**
+  `aoox-<slug>` (`COMPOSE_PROJECT_PREFIX`; the dist stack itself is named `aoox` without a hyphen, so it is not included). `MonitoringService.sampleAll` performs **two** listContainers
+  (multiple `label` values in one filter are ANDed) and adds the compose containers that do not yet have `aoox.component`; `GET /compose-apps/:id/metrics` (`compose-metrics/`) reads the sampler cache
+  per service + total. `DockerEventsService` now keeps **two** `GET /events` streams (one per label) with separate backoffs; events from the compose stream whose
+  container also has `aoox.component` are discarded (our containers carry both labels via `composeLabels()`). `compose-down-notifier.service.ts` (in the compose module — ComposeModule already imports
+  ApplicationModule, the other direction would be circular) sends `containerDown` "Stack service went down: <stack> (<service>)"; it is **silent** while `runner.isActive(app.id)` (a deploy recreates all
+  containers and `up -d --build` can take minutes, a 5-second grace period is not enough), when the row is not `running`, when the container no longer exists, or on a clean restart (exit 0). Cooldown 10 minutes/container.
+  Tested for real (a 2-service stack from a local git daemon): manual deploy + via signed webhook (wrong signature 401, other branch ignored, second push busy), **zero** notifications during
+  deploy, `docker kill` of one service → **exactly one** notification, killing an application container still gives one notification (not a duplicate from the second stream).
+- Limitations: domains/Traefik = `traefik.*` labels in the compose file itself + joining the external `aoox` network. A compose file from a repo may request `privileged`/host mounts — owner/admin already have a host shell, so this is not an escalation.
+- **Metric retention for stacks** (`renderOverride` in `compose-runner.service.ts`): every service whose override already touches it for another reason (domain, port, mount,
+  or resource limit) is also stamped with `aoox.component: compose` + `aoox.compose: <stack id>` — enough for `MetricRetentionService.ownersByContainer()` (which purely reads container labels, with no DB query) to recognize those containers and sum them into one rollup row per stack, **without** MonitoringModule needing to import ComposeModule (this shortcut
+  avoids the MonitoringModule → ComposeModule → ApplicationModule → MonitoringModule cycle that was previously the reason this feature was "not yet" available). **Deliberate limitation**:
+  `renderOverride` only ever knows the service names from the four lists that come from the DB (`serviceDomains`/`servicePorts`/mounts/`serviceResources`) — never from the compose file
+  itself (which only exists inside the helper container during deploy, not on the API side) — so a service that has none of the four (e.g. a plain internal database service without mounts) never gets the label and stays live-only (1h) as before; a stack whose services are all "bare" is the same. `GET /compose-apps/:id/metrics?range=`
+  (`compose-metrics.controller.ts`, local DTO `ComposeMetricsQueryDto` — not importing the application one, so that no cross-module dependency is added) now has the same contract
+  as applications/databases: `1h` stays live per service (`services[]` + `total`) plus a combined `history` via `aggregateMetrics()`, the same one used by swarm tasks; `24h`/`7d`/`30d` read
+  `MetricRetentionService.history('compose', ...)` — `services[]` is empty (no per-service history is stored, only the stack total) but `history`/`total` are filled.
+  The `service` names in mounts and `serviceResources` (as well as the existing `serviceDomains`/`servicePorts`) are **not validated** against the services that actually exist in the compose file
+  (unlike `create-from-template`, which checks against `template.services`) — a mistyped service name produces an override that targets a non-existent service; `docker compose config`
+  accepts it without complaint, and the mount/limit silently never applies, rather than raising an error.
 
 ## Monitoring
 
-- `src/modules/monitoring/` — `monitoring.service.ts` men-sampel semua container berlabel `aoox.component` yang running tiap 15 detik (`SAMPLE_INTERVAL_MS`)
-  dan menyimpan riwayat in-memory 240 titik/container (~1 jam; hilang saat restart, satu instance). Tiap sampel = **dua** `GET /containers/{id}/stats?stream=false`
-  berjarak 1 detik, karena dalam mode itu daemon mengisi `precpu_stats` dengan snapshot yang sama (CPU % selalu 0 dari satu panggilan). Rumus di `container-metrics.ts`
-  (`computeMetrics`, pure & di-unit-test): CPU % = Δtotal/Δsystem × online_cpus × 100; memori = `usage − inactive_file` (cgroup v2) / `− cache` (v1), seperti `docker stats`;
-  `memoryLimitBytes` = RAM host bila container tanpa limit. Disk I/O per container tidak tersedia di Docker Desktop (`io_service_bytes_recursive` kosong) → tidak ditampilkan.
-- Endpoint: `GET /applications/:id/metrics` (`application-metrics/`) & `GET /databases/:id/metrics` (`database-metrics/`) hanya membaca cache sampler (`{current, history}`,
-  `current: null` bila belum ada sampel/stop); `GET /monitoring/host` (`host-overview/`, owner/admin) = `GET /info` + `GET /system/df` — disk yang terlihat hanya
-  pemakaian Docker (image/volume/container/build cache), bukan filesystem host.
-- **Retensi metrik** (`metric-sample.entity.ts` `metric_samples`: `owner_kind` application|database + `owner_id` + `resolution` minute|hour + `at`, unik; cpu/mem/limit/net + `containers`):
-  `metric-retention.service.ts` — `@Cron('* * * * *')` mengambil titik 15 detik yang **belum ditulis** per container (kursor `written`), mengelompokkannya per pemilik lewat label
-  `aoox.application`/`.database` (task swarm satu app dijumlahkan), lalu `averageBucket()` (pure, di-unit-test: rata-rata terhadap **waktu**, tetap jumlah antar container —
-  dibagi jumlah titik *per container*) → satu row `minute` (upsert, jadi tick ganda tidak menggandakan). `@Cron('2 * * * *')` merata-ratakan jam yang baru lewat menjadi row `hour`
-  (AVG cpu/mem, MAX limit/net/containers). `@Cron('7 3 * * *')` memangkas: menit > 48 jam, jam > `METRICS_RETENTION_DAYS` (default 30).
-  Endpoint metrik menerima `?range=1h|24h|7d|30d` (`MetricsQueryDto`, dipakai app & database): `1h` = sampler in-memory seperti dulu (15 s), `24h` = row menit, `7d`/`30d` = row jam;
-  respons membawa `range`. Hapus aplikasi → `retention.forget('application', id)` (tabel ini tanpa FK supaya riwayat tidak ikut hilang saat container/row lain dibersihkan).
-  Riwayat kini bertahan restart API. Diuji: row menit muncul tiap menit untuk app & 3 DB, `?range=24h` mengembalikan row menit, rollup jam/prune lewat application context
-  (10/20/30 → 20). Metrik stack compose kini ikut retensi juga (lihat bagian Compose → "Retensi metrik untuk stack") untuk service yang punya domain/port/mount/resource limit.
-  Belum: retensi metrik host (live 5 menit saja).
-- **Host live** (`host-metrics.service.ts` + `host-live/` → `GET /monitoring/host/live`, owner/admin, throttle 120/menit): sampler in-process tiap **2 detik** dari Node `os`
-  (`os.cpus()` delta idle/total = CPU % semua core, `os.totalmem()-freemem()` = RAM, `loadavg()[0]`; di container Docker `/proc/stat` & `/proc/meminfo` adalah milik host,
-  jadi angkanya = host, tanpa panggilan Docker per tick), riwayat 150 titik (5 menit) in-memory. `host-metrics.ts` pure & di-unit-test. Respons juga membawa `managed`
-  (`MonitoringService.managedTotals()` — jumlah CPU%/RAM container aoox dari sampler 15 detik) dan `cpus`. **Storage** = `fs.statfsSync(STORAGE_PATH ?? '/')`
-  (`readDisk`; di container `/` = overlayfs yang melaporkan disk host di balik `/var/lib/docker`; Windows dev = drive cwd; gagal → 0). Dipoll web tiap 2 detik; tanpa Socket.IO.
-- **Limit sumber daya**: `Application` & `ManagedDatabase` punya `cpu_millicores` dan `memory_mb` (nullable = tanpa batas). `docker/resource-limits.ts` `resourceLimits()` (pure, di-unit-test)
-  → `HostConfig.NanoCpus` + `Memory` + `MemorySwap` (= `Memory`, jadi limit keras tanpa swap), dipakai saat create container (runner `replaceContainer`, `provision` DB) dan
-  `DockerEngineClient.updateContainer` (`POST /containers/{id}/update`) untuk menerapkan **langsung tanpa restart** dari `update-application` / `PATCH /databases/:id` (`update-database/`).
-  Catatan Docker: update dengan nilai 0 = "tidak diubah", jadi **mencabut** limit (`limitsRemoved()`) memaksa recreate — app via `applyRuntimeConfig`, DB via `provision` ulang
-  (restart singkat; data di volume). Metrik `memoryLimitBytes` otomatis mengikuti limit. Preview mewarisi limit app-nya lewat `replaceContainer` (bukan celah — sudah beres).
-  **Limit compose**: `ComposeApp.serviceResources` (jsonb `[{service, cpuMillicores, memoryMb}]` — per service, bukan satu angka untuk seluruh stack, sama seperti
-  `serviceDomains`/`servicePorts`) dirender ke override sebagai `deploy.resources.limits.{cpus,memory}` (`cpus` string desimal core, `memory` string `<N>M`). **Dihormati
-  `docker compose up` biasa tanpa swarm** sejak Compose v2 — diverifikasi langsung terhadap image runner sendiri (`docker:29-cli`): container dengan `deploy.resources.limits.memory: 64M`
-  muncul di `docker inspect` sebagai `HostConfig.Memory` 67108864, bukan 0. Tidak ada jalur update langsung seperti `POST /containers/{id}/update` milik app/db — compose selalu
-  redeploy dari override, jadi ubah limit = berlaku di deploy berikutnya.
-- **Resource usage per project** (`src/modules/project/project-resource-usage/`, di dalam `ProjectModule` — modul ini meng-import `DockerModule`+`MonitoringModule` langsung,
-  bukan sebaliknya, jadi tanpa siklus): `GET /projects/:id/resource-usage` (halaman detail, live saja) dan field baru `resourceUsage` di tiap item `GET /projects`
-  (kartu overview, `ProjectResourceUsageSummary | null`) — keduanya CPU%/memori/jaringan saja, **tanpa storage** (sengaja dilewati: `docker system df -v` per volume
-  terlalu berat untuk dipanggil live per kartu/per project, beda dengan `MaintenanceService.usage()` yang sinkron dan dipanggil sekali per halaman Settings, bukan di-poll).
-  Sumber data = cache in-memory `MonitoringService` yang sudah ada (sampler 15 detik) — **tidak ada panggilan Docker baru per request**. `ProjectResourceUsageService.containerProjectMap()`
-  mengelompokkan container yang sudah disampel per project: container application/database langsung membawa label `aoox.project` (diset `deployment-runner.service.ts`/
-  `managed-database.service.ts` saat create), jadi tanpa query DB; stack compose **tidak** punya label project (`compose-runner.service.ts`'s override hanya menaruh
-  `aoox.component`/`aoox.compose`) — juga "bare" stack tanpa override sama sekali (tanpa domain/port/mount/limit, dikenali lewat `com.docker.compose.project` seperti
-  `MonitoringService.sampleAll()`) — keduanya di-resolve lewat **satu** query `compose_apps` (id/slug → project_id) untuk **semua** project sekaligus (bukan N+1 per project/per kartu).
-  `buildProjectUsage()` (`project-resource-usage.util.ts`, murni & di-unit-test) memakai ulang `aggregateMetrics()` (pola sama dengan jumlah task swarm/service compose) untuk
-  menjumlahkan seluruh container sebuah project jadi satu seri, lalu mengubah counter jaringan kumulatif yang sudah dijumlahkan itu jadi **rate** bytes/detik dari dua tick
-  sampler berurutan — angka kumulatif lintas container dengan waktu mulai berbeda tidak berarti apa-apa kalau tidak dikonversi ke rate; container yang keluar dari
-  jumlah di tengah jalan (redeploy/stop) di-clamp ke 0, bukan dilaporkan negatif. **Live saja, tanpa riwayat tersimpan** (`24h`/`7d`/`30d` seperti endpoint metrik lain) —
-  menambah retensi per project adalah pekerjaan terpisah (perlu skema rollup baru, bukan sekadar baca cache) dan belum diminta.
+- `src/modules/monitoring/` — `monitoring.service.ts` samples all running containers labeled `aoox.component` every 15 seconds (`SAMPLE_INTERVAL_MS`)
+  and keeps in-memory history of 240 points/container (~1 hour; lost on restart, single instance). Each sample = **two** `GET /containers/{id}/stats?stream=false`
+  calls 1 second apart, because in that mode the daemon fills `precpu_stats` with the same snapshot (CPU % is always 0 from a single call). The formula is in `container-metrics.ts`
+  (`computeMetrics`, pure & unit-tested): CPU % = Δtotal/Δsystem × online_cpus × 100; memory = `usage − inactive_file` (cgroup v2) / `− cache` (v1), as `docker stats` does;
+  `memoryLimitBytes` = host RAM when the container has no limit. Per-container disk I/O is not available on Docker Desktop (`io_service_bytes_recursive` is empty) → not shown.
+- Endpoints: `GET /applications/:id/metrics` (`application-metrics/`) & `GET /databases/:id/metrics` (`database-metrics/`) only read the sampler cache (`{current, history}`,
+  `current: null` when there is no sample yet / after a stop); `GET /monitoring/host` (`host-overview/`, owner/admin) = `GET /info` + `GET /system/df` — the visible disk is only
+  Docker usage (images/volumes/containers/build cache), not the host filesystem.
+- **Metric retention** (`metric-sample.entity.ts` `metric_samples`: `owner_kind` application|database + `owner_id` + `resolution` minute|hour + `at`, unique; cpu/mem/limit/net + `containers`):
+  `metric-retention.service.ts` — `@Cron('* * * * *')` takes the 15-second points that have **not yet been written** per container (cursor `written`), groups them per owner via the labels
+  `aoox.application`/`.database` (swarm tasks of one app are summed), then `averageBucket()` (pure, unit-tested: averages over **time**, keeps the sum across containers —
+  divided by the number of points *per container*) → one `minute` row (upsert, so duplicate ticks do not duplicate). `@Cron('2 * * * *')` averages the just-finished hour into an `hour` row
+  (AVG cpu/mem, MAX limit/net/containers). `@Cron('7 3 * * *')` prunes: minute rows older than 48 hours, hour rows older than `METRICS_RETENTION_DAYS` (default 30).
+  Metric endpoints accept `?range=1h|24h|7d|30d` (`MetricsQueryDto`, used by apps & databases): `1h` = the in-memory sampler as before (15 s), `24h` = minute rows, `7d`/`30d` = hour rows;
+  the response includes `range`. Deleting an application → `retention.forget('application', id)` (this table has no FK so history is not removed when other containers/rows are cleaned up).
+  History now survives API restarts. Tested: minute rows appear every minute for an app and 3 DBs, `?range=24h` returns minute rows, hour rollup/prune through the application context
+  (10/20/30 → 20). Compose stack metrics now also take part in retention (see the Compose → "Metric retention for stacks" section) for services that have a domain/port/mount/resource limit.
+  Not yet: retention of host metrics (live 5 minutes only).
+- **Live host** (`host-metrics.service.ts` + `host-live/` → `GET /monitoring/host/live`, owner/admin, throttle 120/minute): in-process sampler every **2 seconds** from Node `os`
+  (`os.cpus()` delta idle/total = CPU % across all cores, `os.totalmem()-freemem()` = RAM, `loadavg()[0]`; inside a Docker container `/proc/stat` & `/proc/meminfo` belong to the host,
+  so the numbers are the host's, with no Docker call per tick), 150 points (5 minutes) of in-memory history. `host-metrics.ts` is pure & unit-tested. The response also carries `managed`
+  (`MonitoringService.managedTotals()` — the CPU%/RAM sum of aoox containers from the 15-second sampler) and `cpus`. **Storage** = `fs.statfsSync(STORAGE_PATH ?? '/')`
+  (`readDisk`; in a container `/` = overlayfs, which reports the host disk behind `/var/lib/docker`; Windows dev = the cwd drive; on failure → 0). Polled by the web every 2 seconds; no Socket.IO.
+- **Resource limits**: `Application` & `ManagedDatabase` have `cpu_millicores` and `memory_mb` (nullable = no limit). `docker/resource-limits.ts` `resourceLimits()` (pure, unit-tested)
+  → `HostConfig.NanoCpus` + `Memory` + `MemorySwap` (= `Memory`, so a hard limit with no swap), used when creating containers (runner `replaceContainer`, DB `provision`) and by
+  `DockerEngineClient.updateContainer` (`POST /containers/{id}/update`) to apply **immediately without restart** from `update-application` / `PATCH /databases/:id` (`update-database/`).
+  Docker note: an update with value 0 = "unchanged", so **removing** a limit (`limitsRemoved()`) forces a recreate — apps via `applyRuntimeConfig`, DBs via a re-`provision`
+  (brief restart; data stays in the volume). The `memoryLimitBytes` metric follows the limit automatically. Previews inherit their app's limits via `replaceContainer` (not a gap — already handled).
+  **Compose limits**: `ComposeApp.serviceResources` (jsonb `[{service, cpuMillicores, memoryMb}]` — per service, not one number for the whole stack, just like
+  `serviceDomains`/`servicePorts`) is rendered into the override as `deploy.resources.limits.{cpus,memory}` (`cpus` as a decimal string of cores, `memory` as a `<N>M` string). **Honored by a plain
+  `docker compose up` without swarm** since Compose v2 — verified directly against the runner's own image (`docker:29-cli`): a container with `deploy.resources.limits.memory: 64M`
+  shows `HostConfig.Memory` 67108864 in `docker inspect`, not 0. There is no direct update path like `POST /containers/{id}/update` for apps/DBs — compose always redeploys from the override, so changing a limit = applies on the next deploy.
+- **Resource usage per project** (`src/modules/project/project-resource-usage/`, inside `ProjectModule` — this module imports `DockerModule`+`MonitoringModule` directly,
+  not the other way around, so there is no cycle): `GET /projects/:id/resource-usage` (detail page, live only) and a new `resourceUsage` field on each item of `GET /projects`
+  (overview cards, `ProjectResourceUsageSummary | null`) — both show CPU%/memory/network only, **without** storage (deliberately skipped: `docker system df -v` per volume
+  is too heavy to call live per card/per project, unlike `MaintenanceService.usage()`, which is synchronous and called once per Settings page, not polled).
+  Data source = the existing in-memory cache of `MonitoringService` (15-second sampler) — **no new Docker call per request**. `ProjectResourceUsageService.containerProjectMap()`
+  groups the sampled containers by project: application/database containers carry the `aoox.project` label directly (set by `deployment-runner.service.ts`/
+  `managed-database.service.ts` on create), so no DB query is needed; compose stacks do **not** have a project label (the `compose-runner.service.ts` override only sets
+  `aoox.component`/`aoox.compose`) — and "bare" stacks without any override at all (no domain/port/mount/limit, recognized via `com.docker.compose.project` like
+  `MonitoringService.sampleAll()`) — both are resolved with **one** `compose_apps` query (id/slug → project_id) for **all** projects at once (not N+1 per project/per card).
+  `buildProjectUsage()` (`project-resource-usage.util.ts`, pure & unit-tested) reuses `aggregateMetrics()` (the same pattern as summing swarm tasks / compose services) to add up all containers of a project into one series, then converts the summed cumulative network counters into **rates** of bytes/second from two consecutive sampler ticks —
+  cumulative numbers across containers that started at different times mean nothing unless converted to a rate; containers that drop out of the
+  sum in the middle (redeploy/stop) are clamped to 0, not reported as negative. **Live only, no stored history** (`24h`/`7d`/`30d` like the other metric endpoints) —
+  adding per-project retention is separate work (it needs a new rollup schema, not just reading the cache) and has not been requested yet.
 
-## Pemantauan server remote
+## Remote server monitoring
 
-- **Sampler** (`MonitoringService`, monitoring module — sekarang meng-import `ServerModule`): selain sapuan lokal 15 detik, tiap **30 detik** (`REMOTE_SAMPLE_INTERVAL_MS`; dua `stats`
-  per container lewat SSH terlalu berat untuk 15 detik) `sampleRemote()` membaca daftar `servers` dan **memulai satu putaran per server tanpa menunggu yang lain**: `listContainers`
-  (`aoox.component`, running) lewat `RemoteDockerService.forServer(id)` (sesi SSH yang di-cache — tidak ada koneksi baru per tick), lalu `sampleContainer` dengan paralelisme 3 per server.
-  Putaran dibatasi `REMOTE_CYCLE_TIMEOUT_MS` 25 detik (`server/with-timeout.ts`) dan **tidak ditumpuk** (`remoteRunning`), jadi satu server lambat/mati hanya menahan putarannya sendiri;
-  sapuan lokal tak tersentuh (diuji nyata: `docker pause` pada server remote → metrik database lokal tetap bertambah tiap 15 detik). Hasil disimpan di peta **terpisah**
-  (`remoteHistory` + `remoteInfo` = label & serverId per container): sapuan lokal menghapus semua id yang tidak ia lihat, dan `managedTotals()`/host live tidak boleh menjumlahkan container
-  mesin lain. id container Docker acak 256-bit, jadi tidak bentrok antar daemon. `metricsFor`/`sampledContainers` membaca keduanya, sehingga endpoint metrik aplikasi
-  (`findContainerByName` di daemon remote + `metricsFor`) dan retensi jalan tanpa perubahan di sisi pemakai. `remoteContainers()` memberi label yang sudah ditangkap sampler ke
-  `MetricRetentionService.ownersByContainer()` (owner dari `aoox.application/.database/.compose`) dan `ProjectResourceUsageService.containerProjectMap()` (`aoox.project`) — keduanya
-  **tanpa panggilan SSH sendiri**, jadi kartu resource project dan riwayat 24h/7d/30d memuat aplikasi remote. Gagal menjangkau server → bacaannya dikosongkan (angka basi lebih buruk
-  daripada kosong); container yang hilang dibuang; server yang dihapus dibuang di tick berikutnya (`forgetServer`).
-- **Event `die`** (`server/remote-events.service.ts`, di-export `ServerModule`): satu stream `GET /events` (`type=container`, `event=die`, `label=aoox.component`) per server lewat terowongan
-  yang sama, reconnect dengan backoff sendiri (1 s → 60 s, kembali ke 1 s bila sempat hidup > 30 s), `reconcile()` tiap 30 detik mengikuti tabel `servers` (mulai untuk server baru, hentikan untuk
-  yang dihapus), dan **restart segera** saat `RemoteDockerService.forget(id)` dipanggil (`onForget` — kredensial diubah / test-server). Generasi (`generation`) membuat callback stream yang sudah
-  diganti diabaikan, jadi tidak ada koneksi ganda. `ContainerDownNotifierService` berlangganan juga (`handle(event, serverId)`): aturan yang sama (grace 5 s, cooldown 10 menit per container,
-  diabaikan bila container sudah diganti deploy / row `stopped` / exit 0) tetapi pengecekan ulang lewat daemon server itu; aplikasi yang sekarang ada di server lain atau server yang sudah dihapus
-  diabaikan; database tidak pernah remote; pesan menyebut nama server (`Application went down: X on server NAME`, field `Server`, `data.server`). Server yang sendiri mati tidak bisa dicek ulang —
-  itu tugas health check di bawah.
-- **Kesehatan server** (`server/server-health.service.ts`, `@Cron` tiap menit): probe paralel per server (`listContainers` lewat terowongan, timeout 12 s) — jawabannya membuktikan server,
-  SSH, dan Docker hidup, dan jumlahnya = "container dipantau". Hasil ditulis ke baris `servers` (`health_status` unknown|up|down, `health_checked_at`, `health_changed_at` = sejak kapan,
-  `health_error`, `monitored_containers`; migrasi `ServerHealthAndMonitorToggles`) dan **itulah yang dibaca web** (`ServerDto.health`, tanpa panggilan ke server saat halaman dibuka).
-  `down` butuh **2 kegagalan berturut-turut** (`DOWN_AFTER_FAILURES`); notifikasi `serverDown` (toggle `on_server_down`, **default `true`**: hanya relevan untuk yang menambah server) dikirim sekali,
-  diingatkan maksimal 1×/jam selama masih down, dan **satu pesan pulih** ("Server reachable again", level `success`, `Down for`) lewat event & toggle yang sama (dibedakan level dan
-  `data.event` `server.down`/`server.recovered`; paling sederhana dan sejajar dengan `dnsIssue`). Cek pertama yang sukses hanya menandai `up` (tak ada yang diumumkan). State in-memory
-  (`failures`, `lastDownNotice`) dibersihkan untuk server yang hilang; **API restart saat server sudah down** tidak mengirim ulang (status dibaca dari DB, pengingat berikutnya 1 jam lagi).
-- **Batas sengaja**: `disk-watcher`, `certificate-watcher`, retensi disk/`disk` card, dan DNS tetap hanya host lokal; compose/database/job tetap hanya host. Lama deteksi server mati ≈ 2 menit
-  (cek tiap menit, dua gagal). Stream `die` dan sampler untuk server baru mulai paling lambat 30 detik setelah server ditambahkan.
-- Diuji nyata dengan server simulasi terisolasi (`docker:dind` + sshd, image `docker save | load`): metrik CPU ~99% bergerak untuk aplikasi di server remote (live + rollup 24h) dan masuk
-  resource usage project; container dimatikan → tepat satu notifikasi "on server …"; `docker pause` server → down setelah dua cek + satu notifikasi, unpause → satu notifikasi pulih;
-  server yang tak terjangkau (IP blackhole) tidak menghambat yang lain; hapus server menghentikan stream-nya.
+- **Sampler** (`MonitoringService`, monitoring module — now imports `ServerModule`): in addition to the local 15-second sweep, every **30 seconds** (`REMOTE_SAMPLE_INTERVAL_MS`; two `stats`
+  per container over SSH is too heavy for 15 seconds) `sampleRemote()` reads the `servers` list and **starts one cycle per server without waiting for the others**: `listContainers`
+  (`aoox.component`, running) via `RemoteDockerService.forServer(id)` (a cached SSH session — no new connection per tick), then `sampleContainer` with a parallelism of 3 per server.
+  A cycle is capped at `REMOTE_CYCLE_TIMEOUT_MS` 25 seconds (`server/with-timeout.ts`) and cycles **do not pile up** (`remoteRunning`), so one slow or dead server only holds back its own cycle;
+  the local sweep is untouched (tested for real: `docker pause` on a remote server → the local database metrics keep increasing every 15 seconds). Results are stored in a **separate** map
+  (`remoteHistory` + `remoteInfo` = label & serverId per container): the local sweep removes all ids it did not see, and `managedTotals()`/the live host must not sum containers of other machines.
+  Docker container ids are random 256-bit values, so they do not collide between daemons. `metricsFor`/`sampledContainers` read both, so the application metrics endpoint
+  (`findContainerByName` on the remote daemon + `metricsFor`) and retention work without changes on the consumer side. `remoteContainers()` gives the labels captured by the sampler to
+  `MetricRetentionService.ownersByContainer()` (owner from `aoox.application/.database/.compose`) and `ProjectResourceUsageService.containerProjectMap()` (`aoox.project`) — both
+  **without any SSH call of their own**, so the project resource cards and the 24h/7d/30d history include remote applications. Failure to reach a server → its readings are cleared (stale numbers are worse
+  than nothing); missing containers are dropped; a deleted server is dropped on the next tick (`forgetServer`).
+- **`die` events** (`server/remote-events.service.ts`, exported by `ServerModule`): one `GET /events` stream (`type=container`, `event=die`, `label=aoox.component`) per server through the same tunnel,
+  reconnects with its own backoff (1 s → 60 s, back to 1 s if it stayed alive for more than 30 s), `reconcile()` every 30 seconds follows the `servers` table (starts for new servers, stops for deleted ones), and **restarts immediately** when `RemoteDockerService.forget(id)` is called (`onForget` — credentials changed / test-server). A `generation` counter makes callbacks of replaced streams ignored, so there are never duplicate connections. `ContainerDownNotifierService` also subscribes (`handle(event, serverId)`): the same rules (5-second grace, 10-minute cooldown per container,
+  skipped when the container was already replaced by a deploy / row `stopped` / exit 0), but re-checked through that server's daemon; an application that now lives on another server or a deleted server is
+  ignored; databases are never remote; the message names the server (`Application went down: X on server NAME`, field `Server`, `data.server`). A server that is itself down cannot be re-checked —
+  that is the job of the health check below.
+- **Server health** (`server/server-health.service.ts`, `@Cron` every minute): parallel probe per server (`listContainers` through the tunnel, timeout 12 s) — the answer proves that the server,
+  SSH, and Docker are alive, and its count = "monitored containers". The result is written to the `servers` row (`health_status` unknown|up|down, `health_checked_at`, `health_changed_at` = since when,
+  `health_error`, `monitored_containers`; migration `ServerHealthAndMonitorToggles`) and **that is what the web reads** (`ServerDto.health`, without calling the server when the page opens).
+  `down` requires **2 consecutive failures** (`DOWN_AFTER_FAILURES`); a `serverDown` notification (toggle `on_server_down`, **default `true`**: only relevant to those who add servers) is sent once,
+  reminded at most 1×/hour while still down, and **one recovery message** ("Server reachable again", level `success`, `Down for`) goes through the same event & toggle (distinguished by level and
+  `data.event` `server.down`/`server.recovered`; the simplest option and consistent with `dnsIssue`). The first successful check only marks `up` (nothing is announced). In-memory state
+  (`failures`, `lastDownNotice`) is cleaned up for servers that no longer exist; **an API restart while a server is already down** does not resend (the status is read from the DB, the next reminder is 1 hour later).
+- **Deliberate limits**: `disk-watcher`, `certificate-watcher`, the disk retention/`disk` card, and DNS stay local-host only; compose/database/jobs stay host only. Time to detect a dead server ≈ 2 minutes
+  (checked every minute, two failures). The `die` stream and the sampler for a new server start at most 30 seconds after the server is added.
+- Tested for real with an isolated simulated server (`docker:dind` + sshd, image via `docker save | load`): CPU metric ~99% moves for an application on the remote server (live + 24h rollup) and appears in the project resource usage; container stopped → exactly one "on server …" notification; `docker pause` of the server → down after two checks + one notification, unpause → one recovery notification; an unreachable server (blackhole IP) does not hold up the others; deleting a server stops its stream.
 
-## Monitor HTTP per aplikasi
+## Application HTTP monitor
 
-- `src/modules/http-monitor/` — pemeriksaan HTTP **opsional** per aplikasi (container hidup tapi 5xx/macet tidak tertangkap `container-down`). Entity `HttpMonitor` (`http_monitors`, satu per
-  aplikasi, FK cascade): `enabled`, `path` (default `/`), `interval_minutes` 1–60 (5), `timeout_seconds` 1–30 (10), `expected_codes` (`200-399`; daftar kode/rentang), `failure_threshold` 1–10 (2),
-  `use_internal`, **plus state hidup** (`status` unknown|up|down, `consecutive_failures`, `status_since`, `last_*`, `last_alert_at`) — state ikut di baris itu sehingga **API restart tidak melupakan
-  outage yang berlangsung dan tidak mengumumkan app sehat sebagai down** (diuji nyata: restart di tengah outage → tidak ada alert baru, pulih tetap terkirim). `HttpCheck` (`http_checks`, hanya hasil:
-  waktu, ok, kode, latensi, error ≤ 200 char — **isi respons tidak pernah disimpan**) dan `HttpIncident` (`http_incidents`: mulai dari cek gagal **pertama** di rangkaian, selesai saat sehat; baris terbuka
-  = outage sedang berlangsung). Migrasi `HttpMonitors` (+ kolom `on_http_down`).
-- **SSRF — hanya path yang berasal dari pengguna**. Host **tidak pernah** dari request (DTO `forbidNonWhitelisted`: `host`/`url` = 400): `resolveTarget()` menurunkannya dari aplikasi itu sendiri —
-  domain pertama (URL publik lewat proxy, port proxy dipakai bila bukan 80/443; `useInternal` melewatinya), lalu app di server remote → `Server.host:hostPort`, app lokal di dalam Docker
-  (`/.dockerenv`, mode container) → `http://aoox-app-<appName>:<containerPort>` di jaringan `aoox`, selain itu `127.0.0.1:hostPort`; tanpa semuanya → "no reachable address" (masalah konfigurasi:
-  ditampilkan di UI, **tidak pernah** alert). `validateMonitorPath()` (`http-probe.ts`, pure, di-unit-test luas): awalan `/` tunggal (bukan `//`/URL absolut), ≤ 200 char, tanpa kontrol/spasi/`\`/`#`, tanpa
-  segmen `..` (juga yang di-percent-encode); lalu URL final dicek `origin` sama dengan basis. `probe()`: `fetch` `redirect: 'manual'` dengan timeout keras (`AbortSignal.timeout`), maks 3 redirect
-  dan **hanya ke hostname + port yang sama** (`sameService`; redirect ke host/port lain tidak diikuti, 3xx-nya yang dinilai — diuji: `Location: http://169.254.169.254/…` → 302 tercatat dalam 18 ms, tidak
-  diikuti), badan dibaca paling banyak 64 KB lalu dibuang, galat dipendekkan (`ECONNREFUSED`, `timeout after 5s`). Yang diuji adalah **dari mesin panel**: tidak membuktikan aksesibilitas dari internet luar,
-  dan dengan domain publik bisa kena hairpin NAT — UI menampilkan target yang dipakai + catatan itu.
-- **Penjadwal**: `@Cron('* * * * *')` `tick()` memilih hanya monitor **jatuh tempo** (`isDue`, slack 10 s; waktu tick dipakai sebagai `lastCheckedAt` supaya interval 1 menit tidak melorot), bukan
-  satu timer per app; pool `CHECK_CONCURRENCY` 5; `inFlight` mencegah tumpang tindih; tick yang belum selesai tidak ditumpuk. Hanya aplikasi `running`; aplikasi stopped/error **tidak dianggap down**
-  (state di-reset ke `unknown`, incident terbuka ditutup tanpa pesan pulih). **Deploy**: dilewati selama ada deployment aktif (`queued/building/pushing/starting`) dan `POST_DEPLOY_GRACE_MS` 60 s sesudah
-  deployment selesai; rangkaian gagal yang menyeberangi deploy di-reset (outage `down` dibiarkan). Retensi `@Cron('17 * * * *')`: hasil > 7 hari dan > 10 080 baris per monitor (1/menit/minggu) dihapus,
-  incident > 50 per monitor dipangkas.
-- **State & alert** (`monitor-state.ts` `nextState`, pure): `down` setelah `failure_threshold` kegagalan berturut-turut, sehat reset seketika; `unknown→up` diam. Event `httpDown` (toggle `on_http_down`,
-  **default `true`** — monitor-nya sendiri opt-in per aplikasi): satu pesan `http.down` saat threshold tercapai, pengingat maks 1×/6 jam selama masih down (`last_alert_at` persisten), satu pesan
-  `http.recovered` (level `success`, `Down for`) saat sehat — event & toggle yang sama (paling sederhana, sejajar `serverDown`). Pesan hanya memuat nama app, project, target (URL tanpa kredensial),
-  kode/galat singkat, dan tautan ke aplikasi.
-- **Statistik** (`view()`): uptime 24 jam/7 hari = cek sehat / total dari `http_checks`; latensi rata-rata dan p95 dari cek **sehat** 24 jam; `series` 24 jam dalam ≤ 120 bucket (rata-rata latensi + jumlah
-  gagal per bucket) untuk sparkline; 10 incident terakhir dengan durasi.
-- **API** (`/applications/:id/monitor`): `GET` (config, target, status, statistik, series, incidents; semua anggota), `PUT` (developer+, viewer 403 lewat cek tulis project), `POST …/check` (throttle
-  10/menit, "periksa sekarang": butuh config tersimpan dan app `running`, hasil tercatat & bisa alert). Ekspor/impor project membawa **konfigurasi** (`httpMonitor`, tanpa state/riwayat, opsional di berkas
-  lama; impor memvalidasi tiap nilai seperti request dan jatuh ke default dengan warning). Hapus aplikasi → FK cascade menghapus monitor, hasil, dan incident.
-- Belum: halaman status publik (butuh keputusan privasi; usulan: opt-in per project, token tak tertebak, hanya nama + status), target berbasis swarm service tanpa domain/port host, badge status monitor di
-  kartu aplikasi halaman project, uji dari banyak lokasi.
+- `src/modules/http-monitor/` — **optional** HTTP checks per application (a container that is alive but returning 5xx/stuck is not caught by `container-down`). Entity `HttpMonitor` (`http_monitors`, one per
+  application, FK cascade): `enabled`, `path` (default `/`), `interval_minutes` 1–60 (5), `timeout_seconds` 1–30 (10), `expected_codes` (`200-399`; a list of codes/ranges), `failure_threshold` 1–10 (2),
+  `use_internal`, **plus live state** (`status` unknown|up|down, `consecutive_failures`, `status_since`, `last_*`, `last_alert_at`) — the state lives in that row so that **an API restart does not forget an ongoing outage and does not announce a healthy app as down** (tested for real: restart in the middle of an outage → no new alert, recovery is still sent). `HttpCheck` (`http_checks`, results only:
+  time, ok, code, latency, error ≤ 200 chars — **the response body is never stored**) and `HttpIncident` (`http_incidents`: starts at the **first** failed check in a streak, ends when healthy; an open row
+  = outage in progress). Migration `HttpMonitors` (+ column `on_http_down`).
+- **SSRF — only paths that come from the user**. The host is **never** taken from the request (DTO `forbidNonWhitelisted`: `host`/`url` = 400): `resolveTarget()` derives it from the application itself —
+  the first domain (public URL through the proxy, the proxy port is used when it is not 80/443; `useInternal` skips this), then an app on a remote server → `Server.host:hostPort`, a local app inside Docker
+  (`/.dockerenv`, container mode) → `http://aoox-app-<appName>:<containerPort>` on the `aoox` network, otherwise `127.0.0.1:hostPort`; with none of these → "no reachable address" (a configuration problem:
+  shown in the UI, **never** alerted). `validateMonitorPath()` (`http-probe.ts`, pure, heavily unit-tested): a single leading `/` (not `//` or an absolute URL), ≤ 200 characters, no control characters/spaces/`\`/`#`, no
+  `..` segments (including percent-encoded ones); then the final URL is checked to have the same `origin` as the base. `probe()`: `fetch` with `redirect: 'manual'` and a hard timeout (`AbortSignal.timeout`), at most 3 redirects
+  and **only to the same hostname + port** (`sameService`; redirects to another host/port are not followed — the 3xx itself is evaluated; tested: `Location: http://169.254.169.254/…` → 302 recorded in 18 ms, not followed),
+  the body is read up to 64 KB and then discarded, errors are shortened (`ECONNREFUSED`, `timeout after 5s`). What is tested is **from the panel machine**: this does not prove reachability from the public internet,
+  and with a public domain it can hit hairpin NAT — the UI shows the target used along with that note.
+- **Scheduler**: `@Cron('* * * * *')` `tick()` selects only monitors that are **due** (`isDue`, slack 10 s; the tick time is used as `lastCheckedAt` so that the 1-minute interval does not drift), instead of
+  one timer per app; a pool of `CHECK_CONCURRENCY` 5; `inFlight` prevents overlap; a tick that has not finished is not stacked. Only `running` apps are checked; stopped/error apps are **not treated as down**
+  (state is reset to `unknown` and open incidents are closed without a recovery message). **Deploys**: skipped while there is an active deployment (`queued/building/pushing/starting`) and for `POST_DEPLOY_GRACE_MS` 60 s after the deployment finishes; a failure streak that crosses a deploy is reset (a `down` outage is left as is). Retention `@Cron('17 * * * *')`: results older than 7 days and more than 10,080 rows per monitor (1/minute/week) are deleted,
+  incidents beyond 50 per monitor are trimmed.
+- **State & alerts** (`monitor-state.ts` `nextState`, pure): `down` after `failure_threshold` consecutive failures, healthy resets immediately; `unknown→up` is silent. Event `httpDown` (toggle `on_http_down`,
+  **default `true`** — the monitor itself is opt-in per application): one `http.down` message when the threshold is reached, a reminder at most 1×/6 hours while still down (`last_alert_at` is persisted), one
+  `http.recovered` message (level `success`, `Down for`) when healthy — same event & toggle (the simplest option, consistent with `serverDown`). The message only contains the app name, project, target (URL without credentials),
+  a short code/error, and a link to the application.
+- **Statistics** (`view()`): uptime over 24 hours/7 days = healthy checks / total from `http_checks`; average and p95 latency from **healthy** checks over 24 hours; `series` for 24 hours in ≤ 120 buckets (average latency + number of failures
+  per bucket) for the sparkline; the last 10 incidents with their durations.
+- **API** (`/applications/:id/monitor`): `GET` (config, target, status, statistics, series, incidents; all members), `PUT` (developer+, viewer 403 via the project write check), `POST …/check` (throttle
+  10/minute, "check now": requires a saved config and a `running` app; the result is recorded and can alert). Project export/import carries the **config** (`httpMonitor`, without state/history; optional in old files;
+  import validates each value like a request and falls back to defaults with a warning). Deleting an application → FK cascade removes the monitor, results, and incidents.
+- Not yet: a public status page (needs a privacy decision; proposal: opt-in per project, unguessable token, only name + status), targets based on swarm services without a domain/host port, a monitor status badge on
+  application cards on the project page, testing from multiple locations.
 
 ## Managed database
 
-- `src/modules/managed-database/` — entity `ManagedDatabase` (di bawah `Project`; engine `postgres`|`mysql`|`mariadb`|`redis`|`valkey`|`mongodb`, `variant`
-  (hanya untuk `postgres`: `pgvector`|`postgis`|`timescaledb`|null), `image_tag`, `db_slug` unik, `password_encrypted` `select: false`, `host_port` opsional,
+- `src/modules/managed-database/` — entity `ManagedDatabase` (under `Project`; engine `postgres`|`mysql`|`mariadb`|`redis`|`valkey`|`mongodb`, `variant`
+  (only for `postgres`: `pgvector`|`postgis`|`timescaledb`|null), `image_tag`, `db_slug` unique, `password_encrypted` `select: false`, optional `host_port`,
   status `creating`→`running`|`stopped`|`error`).
-- `engines.ts` = resep per engine mengikuti env resmi image Docker Hub (`POSTGRES_*`, `MYSQL_*`, `MARIADB_*`, redis/valkey `--requirepass`), port, path data, dan format URL.
-  **Valkey** = drop-in Redis (fork Linux Foundation): resep identik dengan redis (`valkey-server --requirepass ... --appendonly yes`, url `redis://`) — image-nya
-  terverifikasi punya **kedua** binary `valkey-cli` **dan** `redis-cli` (symlink), jadi seluruh kode yang shell-out ke `redis-cli` (backup, data browser) jalan
-  tanpa modifikasi; hanya setiap `if (engine === 'redis')` yang perlu diperluas jadi `|| engine === 'valkey'` (semuanya di `data-browser/database-query.service.ts`
-  dan `schemas.service.ts`, sengaja lewat pengecekan literal per lokasi bukan helper terpusat, supaya `Record<DatabaseEngine, ...>` di `engines.ts`/`backup-recipes.ts`
-  tetap memaksa exhaustiveness compiler saat ada engine baru lagi nanti). **Varian PostgreSQL** (`POSTGRES_VARIANTS` di `engines.ts`, tipe `PostgresVariant`):
-  protokol/env/URL/backup (`pg_dump`/`pg_dumpall`) sama persis dengan postgres polos — hanya `imageNameFor(engine, variant)`/`defaultTagFor(engine, variant)`
-  yang berbeda (dipakai di `managed-database.service.ts` provision, `database-backup.service.ts`, dan data browser `spawn()`, ketiganya sebelumnya hardcode
-  `ENGINES[engine].image` langsung). Tag Docker Hub diverifikasi nyata: `pgvector/pgvector:pg16`, `postgis/postgis:16-3.4`, `timescale/timescaledb:latest-pg16`.
-  Ekstensi diaktifkan sekali lewat `ManagedDatabaseService.activateVariantExtension()` (`CREATE EXTENSION IF NOT EXISTS ...`, di container helper sekali-jalan
-  dengan `pg_isready` loop dulu — `provision()` sendiri tidak menunggu Postgres siap, cuma menunggu container start) setelah container start; gagal hanya di-log
-  warning, tidak menggagalkan provisioning (database tetap bisa dipakai tanpa ekstensinya). **Diuji nyata**: pgvector (ekstensi + kolom `vector` + insert +
-  backup `pg_dump`/restore `psql` penuh, data kembali setelah wipe), PostGIS & TimescaleDB (image resminya sudah mengaktifkan ekstensi sendiri saat init —
-  panggilan `CREATE EXTENSION IF NOT EXISTS` di sini jadi no-op idempoten dengan NOTICE, bukan error; TimescaleDB juga diuji `create_hypertable()` + insert + select),
-  Valkey (siklus penuh backup `redis-cli --rdb` → wipe volume → restore lewat manifest AOF yang sama dengan Redis → data kembali). Ganti engine/varian setelah
-  dibuat **tidak didukung** dari dashboard (hapus + buat ulang, opsional restore backup ke yang baru).
-  **MongoDB** sengaja jadi `engine: 'mongodb'` tersendiri (bukan varian) — protokol/tooling backup sama sekali beda dari SQL. Mongo membuat database secara
-  **lazy** (tanpa `CREATE DATABASE` — database baru "ada" begitu punya isi), jadi `ManagedDatabaseService.initMongoDatabase()` (dipanggil di `provision()` setelah
-  start, pola sama dengan `activateVariantExtension`: container helper sekali-jalan, loop `mongosh --eval "db.adminCommand('ping')"` menunggu server siap, kredensial
-  lewat `Env` bukan diinterpolasi ke script) menulis satu dokumen placeholder ke koleksi `_aoox_init` supaya database utama langsung muncul di `schemas/` tanpa
-  menunggu tulisan pertama dari aplikasi; gagal hanya di-log warning. `SchemasService.engineOf()` punya cabang `'mongodb'` sungguhan (bukan ditolak seperti
-  redis/valkey) — `mongoDatabaseNames`/`mongoCreateDatabase`/`mongoDropDatabase` (`DatabaseQueryService`) lewat `db.adminCommand({listDatabases:1,...})`/
-  `insertOne`/`dropDatabase`. `BACKUP_RECIPES.mongodb` pakai `mongodump`/`mongorestore --archive --gzip` (gzip bawaan mongodump, tanpa wrapper `gzipped()`);
-  `restoreAll` menolak `admin`/`local`/`config` lewat `--nsExclude` supaya restore server penuh tidak pernah menimpa kredensial root user. Diuji nyata: provision
-  → init placeholder → `mongoFind` → backup → wipe (`dropDatabase`) → restore → data kembali, semuanya lewat HTTP API sungguhan (bukan cuma `docker exec` manual).
-- `managed-database.service.ts`: container `aoox-db-<slug>` di network `aoox` + volume `aoox_db_<slug>`, label compose; provisioning **detached**
-  (`provisionInBackground`, pull image bisa lama) → status `running`/`error`. `connection()` memberi URL internal (host = nama container) dan eksternal (bila port host dipublikasikan).
-- Flow: `create-database` (202), `list-databases?projectId`, `get-database` (+ state container), `database-credentials` (password & URL — terpisah agar list tidak membawa rahasia),
-  `delete-database?purge=`, `start/stop-database`. Aplikasi memakai DB dengan menyalin URL internal ke env-nya (belum ada injeksi otomatis).
-- **Data browser** (`data-browser/`, tahap 1 "phpMyAdmin sederhana"): `GET /databases/:id/tables`, `GET /databases/:id/tables/:table/rows?schema&limit&offset&orderBy&dir`,
-  `POST /databases/:id/query {sql}` (throttle 60/menit). `database-query.service.ts` menjalankan `psql --csv -P null='\N'` / `mysql --batch` / `redis-cli --json`
-  di container sekali-jalan image engine (pola backup: tanpa driver DB di API, kredensial via env); stdout/stderr ditulis ke file dan dibaca lewat archive API
-  (log container menambah timestamp & merusak CSV multi-baris), container di-kill setelah 30 s. Parser `query-output.ts` (`parsePsqlCsv` RFC 4180 — NULL = `\N` tak berkutip,
-  `parseMysqlBatch` — NULL = kata `NULL`; keduanya pure & di-unit-test). Guard `query-guard.ts`: satu statement (`;` di luar kutip → 400), identifier tabel/kolom divalidasi
-  + di-quote, SELECT tanpa LIMIT dibungkus `LIMIT 501` (`MAX_ROWS` 500 + flag `truncated`), timeout engine 15 s (`PGOPTIONS -c statement_timeout` / `max_execution_time` /
-  MariaDB `max_statement_time`). **Hak tulis**: member hanya read — statement non-read ditolak 403 *dan* sesi engine dibuat read-only (`default_transaction_read_only=on` /
-  `SET SESSION TRANSACTION READ ONLY`; diuji: `WITH … DELETE` dari member gagal di engine); owner/admin boleh tulis (INSERT/UPDATE/DELETE/DDL) — tag perintah psql (`UPDATE 3`,
-  `CREATE TABLE`) dikembalikan sebagai `message`. Redis: `tables` = key hasil `SCAN 0 COUNT 500`, `rows` = isi key per tipe (GET/HGETALL/LRANGE/SMEMBERS/ZRANGE),
-  `query` = satu perintah (`tokenize` menghormati kutip; whitelist `REDIS_READ_COMMANDS` untuk member; `error:"…"` redis-cli → 400). Image `mariadb` hanya punya CLI `mariadb`
-  (tanpa alias `mysql`) — `sql()` memilih CLI per engine.
-- **Data browser untuk MongoDB**: `mongo()` (private helper) menjalankan `mongosh --eval` di container sekali-jalan dan membungkus **setiap** ekspresi dalam
-  `EJSON.stringify((expr), {relaxed: true})` secara terpusat sebelum eval — output default mongosh untuk nilai bukan-string adalah format shell-inspect
-  (`[ 'a', 'b' ]`), bukan JSON, jadi tanpa pembungkusan ini `JSON.parse` di sisi API gagal untuk `listTables`/`mongoDatabaseNames`/`mongoCreateDatabase`/
-  `mongoDropDatabase` (ditemukan lewat run Docker sungguhan, bukan dari unit test — `mongoFind` kebetulan lolos karena sudah membungkus sendiri sebelum
-  perubahan ini). `listTables` = `db.getCollectionNames()`, `tableRows`/`exportTableCsv` lewat `mongoFind()` + `mongoDocsToRows()` (fungsi murni & di-unit-test:
-  union key di seluruh batch urutan first-seen, `_id` dipin pertama, nilai bukan-string di-`JSON.stringify`). `columns()`/`updateRow()`/`deleteRow()`/ekspor
-  &impor SQL semuanya menolak 400 (skema bebas, belum didukung). Query box hanya `<koleksi>.find({...})` (`buildMongoFindScript()`, fungsi murni & di-unit-test):
-  filter di-`JSON.parse` ketat lalu di-`JSON.stringify` ulang sebelum ditempel ke script `mongosh` yang di-generate — itulah yang mencegah filter seperti
-  `{}); db.dropDatabase(); ({` lolos dari pemanggilan `.find(...)` dan berjalan sebagai JS mongosh bebas (hanya literal JSON valid yang bisa lolos `JSON.parse`,
-  jadi yang sampai ke shell selalu data mati). Operator extended-JSON (`{"$oid":"..."}`) belum diterjemahkan khusus di filter (jadi cuma memfilter field bernama
-  literal `$oid`, bukan error). **Belum**: insert/update/delete/aggregate lewat query box (baca-saja untuk sekarang), tab Struktur/buat-koleksi/edit-hapus baris
-  di web (backend menolak 400, web tidak pernah memanggilnya untuk engine ini).
-- **Data browser tahap 2** (struktur tabel, edit/hapus baris, ekspor CSV, riwayat query): `GET /databases/:id/tables/:table/columns` → `ColumnInfoDto[]` (name/dataType/nullable/
-  defaultValue/isPrimaryKey) dari `information_schema.columns` (Postgres: PK lewat `EXISTS` ke `table_constraints`+`key_column_usage`; MySQL/MariaDB: `column_key = 'PRI'`),
-  dipakai tab **Struktur** di web dan sebagai sumber kebenaran validasi edit — **bukan** `assertIdentifier` yang menolak spasi/non-ASCII (kolom seperti `"first name"` valid di
-  Postgres); nama kolom di `set`/`where` divalidasi terhadap daftar kolom nyata ini.
-  `PATCH`/`DELETE /databases/:id/tables/:table/rows` (owner/admin, body `{where, set?, db?, schema?}`): `query-guard.ts` `assertRowTarget(columns, where, set)` menuntut `where`
-  **persis** primary key — tidak boleh subset (bisa kena banyak baris) atau superset (filter basi tersembunyi) — dan menolak `set` yang menyentuh kolom PK itu sendiri atau kolom
-  tak dikenal; tabel tanpa PK → 400 "edit dengan SQL". Statement dibangun via `sqlLiteral()` (quote+escape manual — nilai berasal dari body JSON tervalidasi, bukan SQL user) dan
-  dijalankan lewat `this.sql()` yang sama dengan query box. **Jaminan tepat satu baris**: Postgres dibaca dari tag perintah (`UPDATE 1`/`DELETE 1`); mysql/mariadb (CLI batch tidak
-  mencetak status) mendapat `SELECT ROW_COUNT()` tambahan dalam skrip yang sama (satu sesi CLI) — `affected !== 1` → 400. MySQL juga menambahkan `LIMIT 1` sebagai lapis kedua.
-  Diuji nyata di Postgres **dan** MariaDB (jalur `ROW_COUNT()`): PK komposit (update/delete tepat 1 baris), tabel tanpa PK (400, bukan update seisi tabel), kolom bernama
-  `"first name"` (edit berhasil, bukan 500), `where` subset/superset PK (400), ubah kolom PK (400), `where` PK yang tidak ada (0 baris → 400, bukan sukses palsu),
-  viewer PATCH/DELETE (403 dari `@Roles`). Catatan: `columns()` MySQL/MariaDB memakai `table_schema = DATABASE()` dan mengabaikan `opts.schema` (MySQL tidak punya schema
-  di dalam database seperti Postgres, sama seperti `listTables`) — tidak tercapai lewat web karena `TableInfo.schema` selalu null untuk engine itu, tapi kalau dipanggil manual
-  dengan `schema` untuk MySQL, `columns()` dan `tableRef()` (yang menghormati `schema`) bisa melihat objek berbeda.
-  `GET /databases/:id/tables/:table/rows/export` → CSV (`toCsv()` RFC 4180, `MAX_EXPORT_ROWS` 5000 terpisah dari `MAX_ROWS` 500 query; header `X-Aoox-Truncated` bila
-  dipotong), diproksi web lewat `/api/databases/[id]/tables/[table]/rows/export` (cookie → Bearer) seperti ekspor SQL.
-  **Riwayat query** (`src/modules/managed-database/query-history/`, entity `QueryHistoryEntry` di `query_history`: FK cascade ke database & user, `sql` teks apa adanya —
-  **tanpa redaksi**, tidak seperti audit log yang punya nama key tetap untuk di-redact; SQL bebas format jadi dicatat verbatim dan dipotong 4 KB, ini properti yang disengaja
-  bukan celah, karena hanya pemilik baris yang melihatnya): ditulis fire-and-forget dari `DataBrowserController.query()` (sukses *dan* gagal, agar riwayat "apa yang baru saja
-  kupanggil" lengkap) setelah `runQuery()`, tidak pernah menggagalkan response query. `QUERY_HISTORY_KEEP` 50 baris per (database, user), dipangkas tiap tulis seperti
-  `compose-runner` `prune()`. Flow `GET`/`DELETE /databases/:id/query-history` — **per user**, tanpa `@Roles` (member melihat riwayatnya sendiri, sama seperti query box),
-  berbeda dari `/audit-logs` yang platform-wide owner/admin.
-- **Banyak database per server** (`schemas/`): `GET /databases/:id/schemas` (semua member) → `[{name, isPrimary}]` (`pg_database` non-template / `SHOW DATABASES`, minus
-  `SYSTEM_SCHEMAS`), `POST` (owner/admin; Postgres `CREATE DATABASE … OWNER <user>` — user provisioning adalah superuser; MySQL/MariaDB `CREATE DATABASE` + `GRANT ALL … TO 'user'@'%'`
-  agar URL koneksi tinggal ganti nama db; MongoDB tidak butuh grant terpisah — `mongoCreateDatabase` cukup menulis satu dokumen placeholder, user root sudah punya akses ke semua
-  database), `DELETE /:name` (owner/admin; primary & sistem ditolak; Postgres `WITH (FORCE)`; MongoDB `db.dropDatabase()`). Redis/Valkey → 400 (db bernomor, bukan nama).
-  Data browser menerima `?db=` / `{db}` (`DatabaseSelectDto`) → `DatabaseQueryService.sql(db, stmt, {database})` menimpa `DB_NAME` di env helper (entri terakhir menang).
-  Env app: `${{database.<slug>.url:<nama>}}` / `.database:<nama>` → URL/nama database lain di server yang sama (`REFERENCE` punya grup `:name`; cache per `slug:name`).
-  Backup: `ManagedDatabase.backupAllDatabases` (PATCH `backup-schedule`) → `DatabaseBackup.scope` `all` (file `*.all.<ext>`): Postgres `pg_dumpall --clean --if-exists`, restore ke db
-  `postgres` tanpa `ON_ERROR_STOP` (DROP DATABASE gagal selagi app terhubung — objek lalu diganti in-place); MySQL/MariaDB `mysqldump --databases <non-sistem> --add-drop-database`
-  (bukan `--all-databases`, supaya tabel grant `mysql` tidak ikut), restore tanpa nama db; MongoDB `mongodump` tanpa `--db` (seluruh server) lalu `mongorestore --nsExclude`
-  `admin`/`local`/`config` supaya root user tidak ikut ditimpa. Diuji E2E di Postgres & MariaDB (drop db → restore → data kembali), dan manual untuk MongoDB
-  (`admin.system.users` tetap utuh setelah restore-all).
-- **Ekspor/impor SQL** (data-browser): `GET /databases/:id/export?db=` men-stream `pg_dump --no-owner --no-privileges --clean --if-exists` / `mysqldump`/`mariadb-dump`
-  polos (tanpa gzip, tanpa row backup) sebagai `<slug>[-db].sql` — `DatabaseQueryService.spawn()` (create+seed `/in` via `putArchive`+start+wait, timeout 30 menit untuk
-  transfer) lalu `streamFileFromContainer('/out/stdout')`. `POST /databases/:id/import?db=` (owner/admin, throttle 10/menit, multipart `file` via `FileInterceptor` —
-  `@types/multer` dev dep sesuai docs Nest; maks `IMPORT_MAX_BYTES` 64 MB karena file di-tar di memori) → `psql -v ON_ERROR_STOP=1 -f` / `mysql <`; gagal di statement
-  pertama yang error → 400 dengan pesan engine, statement sebelumnya tetap berlaku (perilaku CLI; tanpa transaksi pembungkus). Web mem-proxy ekspor lewat
-  `/api/databases/[id]/export` (cookie → Bearer) dan impor lewat server action multipart (`importSqlAction`). Redis/Valkey dan MongoDB tidak punya SQL untuk
-  di-ekspor/impor — keduanya ditolak 400 (`dumpScript()`/`importSql()`; pakai backup/restore sebagai gantinya).
+- `engines.ts` = a recipe per engine following the official Docker Hub image env (`POSTGRES_*`, `MYSQL_*`, `MARIADB_*`, redis/valkey `--requirepass`), port, data path, and URL format.
+  **Valkey** = drop-in Redis (Linux Foundation fork): the recipe is identical to redis (`valkey-server --requirepass ... --appendonly yes`, url `redis://`) — its image has been verified to contain **both** the `valkey-cli` **and** `redis-cli` binaries (symlink), so all code that shells out to `redis-cli` (backup, data browser) works without modification; only each `if (engine === 'redis')` needs to be extended to `|| engine === 'valkey'` (all in `data-browser/database-query.service.ts`
+  and `schemas.service.ts`; this is deliberately done with literal checks per location rather than a central helper, so that the `Record<DatabaseEngine, ...>` in `engines.ts`/`backup-recipes.ts`
+  still forces compiler exhaustiveness when another engine is added later). **PostgreSQL variants** (`POSTGRES_VARIANTS` in `engines.ts`, type `PostgresVariant`):
+  protocol/env/URL/backup (`pg_dump`/`pg_dumpall`) are exactly the same as plain postgres — only `imageNameFor(engine, variant)`/`defaultTagFor(engine, variant)`
+  differ (used in `managed-database.service.ts` provision, `database-backup.service.ts`, and the data browser `spawn()`, all three of which previously hardcoded `ENGINES[engine].image` directly). Docker Hub tags verified for real: `pgvector/pgvector:pg16`, `postgis/postgis:16-3.4`, `timescale/timescaledb:latest-pg16`.
+  Extensions are enabled once via `ManagedDatabaseService.activateVariantExtension()` (`CREATE EXTENSION IF NOT EXISTS ...`, in a one-shot helper container
+  with a `pg_isready` loop first — `provision()` itself does not wait for Postgres to be ready, it only waits for the container to start) after the container starts; failure is only logged as a
+  warning and does not fail provisioning (the database can still be used without the extension). **Tested for real**: pgvector (extension + `vector` column + insert +
+  full `pg_dump`/`psql` restore, data back after a wipe), PostGIS & TimescaleDB (their official images already enable the extension at init —
+  the `CREATE EXTENSION IF NOT EXISTS` call here is an idempotent no-op with a NOTICE, not an error; TimescaleDB was also tested with `create_hypertable()` + insert + select),
+  Valkey (full cycle of `redis-cli --rdb` backup → wipe volume → restore through the same AOF manifest as Redis → data back). Changing the engine/variant after
+  creation is **not supported** from the dashboard (delete + recreate, optionally restoring a backup into the new one).
+  **MongoDB** is deliberately its own `engine: 'mongodb'` (not a variant) — its protocol/backup tooling is entirely different from SQL. Mongo creates databases **lazily** (no `CREATE DATABASE` — a new database "exists" once it has content), so `ManagedDatabaseService.initMongoDatabase()` (called in `provision()` after start, same pattern as `activateVariantExtension`: one-shot helper container, a `mongosh --eval "db.adminCommand('ping')"` loop waiting for the server to be ready, credentials passed via `Env` rather than interpolated into the script) writes one placeholder document to the `_aoox_init` collection so the main database shows up in `schemas/` right away without waiting for the first write from an application; failure is only logged as a warning. `SchemasService.engineOf()` has a real `'mongodb'` branch (instead of being rejected like redis/valkey) — `mongoDatabaseNames`/`mongoCreateDatabase`/`mongoDropDatabase` (`DatabaseQueryService`) use `db.adminCommand({listDatabases:1,...})`/
+  `insertOne`/`dropDatabase`. `BACKUP_RECIPES.mongodb` uses `mongodump`/`mongorestore --archive --gzip` (mongodump's built-in gzip, no `gzipped()` wrapper);
+  `restoreAll` rejects `admin`/`local`/`config` via `--nsExclude` so that a full-server restore never overwrites the root user's credentials. Tested for real: provision
+  → placeholder init → `mongoFind` → backup → wipe (`dropDatabase`) → restore → data back, all through the real HTTP API (not just manual `docker exec`).
+- `managed-database.service.ts`: container `aoox-db-<slug>` on the `aoox` network + volume `aoox_db_<slug>`, compose labels; provisioning is **detached**
+  (`provisionInBackground`, the image pull can take a while) → status `running`/`error`. `connection()` gives the internal URL (host = container name) and the external one (when a host port is published).
+- Flow: `create-database` (202), `list-databases?projectId`, `get-database` (+ container state), `database-credentials` (password & URL — separate so that lists do not carry secrets),
+  `delete-database?purge=`, `start/stop-database`. Applications use a DB by copying its internal URL into their env (there is no automatic injection yet).
+- **Data browser** (`data-browser/`, stage 1 "simple phpMyAdmin"): `GET /databases/:id/tables`, `GET /databases/:id/tables/:table/rows?schema&limit&offset&orderBy&dir`,
+  `POST /databases/:id/query {sql}` (throttle 60/minute). `database-query.service.ts` runs `psql --csv -P null='\N'` / `mysql --batch` / `redis-cli --json`
+  in a one-shot container of the engine image (the backup pattern: no DB driver in the API, credentials via env); stdout/stderr are written to a file and read through the archive API
+  (the container log adds timestamps and breaks multi-line CSV), and the container is killed after 30 s. Parsers in `query-output.ts` (`parsePsqlCsv` RFC 4180 — NULL = unquoted `\N`,
+  `parseMysqlBatch` — NULL = the word `NULL`; both pure & unit-tested). Guard `query-guard.ts`: a single statement (`;` outside quotes → 400), table/column identifiers validated
+  + quoted, a SELECT without LIMIT is wrapped in `LIMIT 501` (`MAX_ROWS` 500 + a `truncated` flag), engine timeout 15 s (`PGOPTIONS -c statement_timeout` / `max_execution_time` /
+  MariaDB `max_statement_time`). **Write access**: members are read-only — a non-read statement is rejected with 403 *and* the engine session is made read-only (`default_transaction_read_only=on` /
+  `SET SESSION TRANSACTION READ ONLY`; tested: a `WITH … DELETE` from a member fails in the engine); owner/admin may write (INSERT/UPDATE/DELETE/DDL) — the psql command tag (`UPDATE 3`,
+  `CREATE TABLE`) is returned as `message`. Redis: `tables` = keys from `SCAN 0 COUNT 500`, `rows` = the contents of a key per type (GET/HGETALL/LRANGE/SMEMBERS/ZRANGE),
+  `query` = one command (`tokenize` respects quotes; whitelist `REDIS_READ_COMMANDS` for members; an `error:"…"` from redis-cli → 400). The `mariadb` image only has the `mariadb` CLI
+  (no `mysql` alias) — `sql()` picks the CLI per engine.
+- **Data browser for MongoDB**: `mongo()` (private helper) runs `mongosh --eval` in a one-shot container and wraps **every** expression in
+  `EJSON.stringify((expr), {relaxed: true})` centrally before eval — mongosh's default output for non-string values is shell-inspect format
+  (`[ 'a', 'b' ]`), not JSON, so without this wrapping `JSON.parse` on the API side fails for `listTables`/`mongoDatabaseNames`/`mongoCreateDatabase`/
+  `mongoDropDatabase` (found by a real Docker run, not by unit tests — `mongoFind` happened to pass because it already wrapped its own output before
+  this change). `listTables` = `db.getCollectionNames()`, `tableRows`/`exportTableCsv` go through `mongoFind()` + `mongoDocsToRows()` (pure & unit-tested:
+  union of keys across the whole batch in first-seen order, `_id` pinned first, non-string values `JSON.stringify`'d). `columns()`/`updateRow()`/`deleteRow()`/SQL export
+  & import all reject with 400 (schemaless, not supported). The query box only accepts `<collection>.find({...})` (`buildMongoFindScript()`, pure & unit-tested):
+  the filter is strictly `JSON.parse`d and then `JSON.stringify`'d again before being pasted into the generated `mongosh` script — this is what stops a filter like
+  `{}); db.dropDatabase(); ({` from passing as a `.find(...)` call and running as arbitrary mongosh JS (only valid JSON literals can pass `JSON.parse`,
+  so what reaches the shell is always inert data). Extended-JSON operators (`{"$oid":"..."}`) are not translated specially in filters (so they only match a field literally named `$oid`, not an error). **Not yet**: insert/update/delete/aggregate through the query box (read-only for now), a Structure tab/create collection/edit-delete row
+  in the web (the backend rejects with 400, and the web never calls it for this engine).
+- **Data browser stage 2** (table structure, edit/delete rows, CSV export, query history): `GET /databases/:id/tables/:table/columns` → `ColumnInfoDto[]` (name/dataType/nullable/
+  defaultValue/isPrimaryKey) from `information_schema.columns` (Postgres: PK via `EXISTS` on `table_constraints`+`key_column_usage`; MySQL/MariaDB: `column_key = 'PRI'`),
+  used by the **Structure** tab in the web and as the source of truth for edit validation — **not** `assertIdentifier`, which rejects spaces/non-ASCII (columns like `"first name"` are valid in Postgres); column names in `set`/`where` are validated against this real column list.
+  `PATCH`/`DELETE /databases/:id/tables/:table/rows` (owner/admin, body `{where, set?, db?, schema?}`): `query-guard.ts` `assertRowTarget(columns, where, set)` requires `where` to be **exactly** the primary key — not a subset (could hit many rows) or a superset (a hidden stale filter) — and rejects a `set` that touches the PK column itself or unknown columns;
+  a table without a PK → 400 "edit with SQL". Statements are built via `sqlLiteral()` (manual quote+escape — the values come from a validated JSON body, not from user SQL) and
+  run through the same `this.sql()` as the query box. **Exactly-one-row guarantee**: Postgres reads it from the command tag (`UPDATE 1`/`DELETE 1`); mysql/mariadb (the batch CLI does not print a status) get an extra `SELECT ROW_COUNT()` in the same script (one CLI session) — `affected !== 1` → 400. MySQL also adds `LIMIT 1` as a second layer.
+  Tested for real on Postgres **and** MariaDB (the `ROW_COUNT()` path): composite PK (update/delete exactly 1 row), table without PK (400, not updating the whole table), column named
+  `"first name"` (edit succeeds, not a 500), `where` subset/superset of the PK (400), changing a PK column (400), a `where` PK that does not exist (0 rows → 400, not a fake success),
+  viewer PATCH/DELETE (403 from `@Roles`). Note: `columns()` for MySQL/MariaDB uses `table_schema = DATABASE()` and ignores `opts.schema` (MySQL has no schema inside a database like Postgres does, same as `listTables`) — this is not reachable through the web because `TableInfo.schema` is always null for that engine, but if called manually
+  with a `schema` for MySQL, `columns()` and `tableRef()` (which respects `schema`) could see different objects.
+  `GET /databases/:id/tables/:table/rows/export` → CSV (`toCsv()` RFC 4180, `MAX_EXPORT_ROWS` 5000 separate from the query `MAX_ROWS` 500; an `X-Aoox-Truncated` header when cut off),
+  proxied by the web through `/api/databases/[id]/tables/[table]/rows/export` (cookie → Bearer) like the SQL export.
+  **Query history** (`src/modules/managed-database/query-history/`, entity `QueryHistoryEntry` in `query_history`: FK cascade to database & user, `sql` stored verbatim —
+  **with no redaction**, unlike the audit log which has a fixed list of key names to redact; free-form SQL is therefore recorded verbatim and truncated to 4 KB; this is an intentional property, not a gap, because only the owner of the row can see it): written fire-and-forget from `DataBrowserController.query()` (on success *and* failure, so that the history of "what I just ran" is complete) after `runQuery()`, and never fails the query response. `QUERY_HISTORY_KEEP` 50 rows per (database, user), pruned on each write like `compose-runner`'s `prune()`. Flow `GET`/`DELETE /databases/:id/query-history` — **per user**, without `@Roles` (members see their own history, the same as the query box),
+  unlike `/audit-logs`, which is platform-wide owner/admin.
+- **Multiple databases per server** (`schemas/`): `GET /databases/:id/schemas` (all members) → `[{name, isPrimary}]` (`pg_database` non-template / `SHOW DATABASES`, minus
+  `SYSTEM_SCHEMAS`), `POST` (owner/admin; Postgres `CREATE DATABASE … OWNER <user>` — the provisioning user is a superuser; MySQL/MariaDB `CREATE DATABASE` + `GRANT ALL … TO 'user'@'%'`
+  so that the connection URL only needs the db name changed; MongoDB needs no separate grant — `mongoCreateDatabase` just writes one placeholder document, the root user already has access to all databases), `DELETE /:name` (owner/admin; primary & system databases rejected; Postgres `WITH (FORCE)`; MongoDB `db.dropDatabase()`). Redis/Valkey → 400 (numbered DBs, not names).
+  The data browser accepts `?db=` / `{db}` (`DatabaseSelectDto`) → `DatabaseQueryService.sql(db, stmt, {database})` overrides `DB_NAME` in the helper env (the last entry wins).
+  App env: `${{database.<slug>.url:<name>}}` / `.database:<name>` → URL/name of another database on the same server (`REFERENCE` has a `:name` group; cache per `slug:name`).
+  Backup: `ManagedDatabase.backupAllDatabases` (PATCH `backup-schedule`) → `DatabaseBackup.scope` `all` (file `*.all.<ext>`): Postgres `pg_dumpall --clean --if-exists`, restored into the `postgres` db without `ON_ERROR_STOP` (DROP DATABASE fails while an app is connected — the objects are then replaced in place); MySQL/MariaDB `mysqldump --databases <non-system> --add-drop-database`
+  (not `--all-databases`, so that the `mysql` grant tables are not included), restored without a db name; MongoDB `mongodump` without `--db` (the whole server), then `mongorestore --nsExclude`
+  `admin`/`local`/`config` so that the root user is not overwritten. Tested end-to-end on Postgres & MariaDB (drop db → restore → data back), and manually for MongoDB
+  (`admin.system.users` stays intact after restore-all).
+- **SQL export/import** (data-browser): `GET /databases/:id/export?db=` streams plain `pg_dump --no-owner --no-privileges --clean --if-exists` / `mysqldump`/`mariadb-dump`
+  (no gzip, no backup row) as `<slug>[-db].sql` — `DatabaseQueryService.spawn()` (create + seed `/in` via `putArchive` + start + wait, a 30-minute timeout for the transfer) and then `streamFileFromContainer('/out/stdout')`. `POST /databases/:id/import?db=` (owner/admin, throttle 10/minute, multipart `file` via `FileInterceptor` —
+  the `@types/multer` dev dependency per the Nest docs; max `IMPORT_MAX_BYTES` 64 MB because the file is tarred in memory) → `psql -v ON_ERROR_STOP=1 -f` / `mysql <`; a failure at the first erroring statement → 400 with the engine's message, and the statements before it remain applied (CLI behavior; no wrapping transaction). The web proxies the export through
+  `/api/databases/[id]/export` (cookie → Bearer) and the import through a multipart server action (`importSqlAction`). Redis/Valkey and MongoDB have no SQL to
+  export/import — both are rejected with 400 (`dumpScript()`/`importSql()`; use backup/restore instead).
 
-## Companion admin database
+## Database companion admin
 
-- `src/modules/database-companion/` — satu container web-admin per managed database (UI Adminer/phpMyAdmin/pgAdmin/Mongo Express/Redis Commander/DbGate), dipasang sekali klik. Entity
-  `DatabaseCompanion` (`database_companions`: `database_id` **unik** + FK cascade, `tool`, `status` creating|running|stopped|error, `error_message`, `host` unik nullable, `https`, `host_port`,
-  `password_encrypted` nullable `select:false` AES lewat `secret.util`+`ENCRYPTION_KEY`); migrasi `DatabaseCompanions` (tulis tangan). Flow: `get-companion` (`GET /databases/:id/companion` → `null` atau
-  `{id,tool,status,errorMessage,host,https,hostPort,url,username,createdAt}`), `companion-options` (`GET .../companion/options` → `{tools:[{id,label,description,usesDatabaseLogin}]}` terfilter engine),
-  `create-companion` (`POST`, 202, throttle 10/menit, body `{tool, host?, https?, hostPort?}`), `companion-credentials` (`GET .../companion/credentials` → `{username,password}`, throttle 30/menit),
-  `delete-companion` (`DELETE`, 204). Redaksi audit-log sudah menutup key `password`/`secret` (body POST memang tidak membawa rahasia).
-- **Katalog** `companion-tools.ts` (murni, di-unit-test): image + tag **dipin**, port web, engine yang didukung, `usesDatabaseLogin`, dan `build(ctx)` → `{env, cmd, files}`. Tag diverifikasi ada di registry
-  (`docker manifest inspect`): `adminer:5.4.2` (8080; mysql/mariadb/postgres), `phpmyadmin:5.2.3` (80; mysql/mariadb), `dpage/pgadmin4:9.18.0` (80; postgres + varian), `mongo-express:1.0.2-20-alpine3.19`
-  (8081; mongodb), `ghcr.io/joeferner/redis-commander:0.9.1` (8081; redis/valkey — Docker Hub hanya punya `latest` 2021, tag versi hanya di GHCR), `dbgate/dbgate:7.3.1-alpine` (3000; semua engine).
-  Antarmuka env dibaca dari dokumentasi/sumber resmi masing-masing (bukan ditebak): Adminer `ADMINER_DEFAULT_SERVER` (hanya mengisi kolom server; driver Postgres dipilih lewat URL `?pgsql=<host>` — `url` Adminer+Postgres
-  memuat query itu), phpMyAdmin `PMA_HOST`/`PMA_PORT` (`PMA_ARBITRARY` tetap mati: form login tidak bisa diarahkan ke host lain), pgAdmin `PGADMIN_DEFAULT_EMAIL`/`PASSWORD` + `servers.json` di-`putArchive`
-  ke `/pgadmin4` sebelum start (tanpa password DB karena `servers.json` tidak punya field itu → pgAdmin menanyakannya saat connect; **server mode tetap aktif**, jangan set `PGADMIN_CONFIG_SERVER_MODE=False` —
-  itu mematikan login; email `admin@example.com` karena pgAdmin menolak domain special-use seperti `.local`), Mongo Express `ME_CONFIG_MONGODB_URL`/`ME_CONFIG_BASICAUTH*`/secret cookie+session
-  turunan dari password (`VCAP_APP_HOST=0.0.0.0`), Redis Commander `REDIS_HOST/PORT/PASSWORD` + `HTTP_USER/HTTP_PASSWORD`, DbGate `CONNECTIONS`/`LABEL_/ENGINE_/SERVER_/PORT_/USER_/PASSWORD_/DATABASE_<id>`
-  (mongo: `URL_<id>`; mariadb memakai plugin mysql) + `LOGIN`/`PASSWORD` (`SHELL_CONNECTION`/`SHELL_SCRIPTING` default mati, tidak disentuh).
-- **Auth, tidak pernah tanpa login**: adminer/phpmyadmin memakai login database sendiri (user mengambil kredensial dari halaman database; tidak ada password yang digenerate, `username`/`password` null);
-  tool lain mendapat password acak 24 alfanumerik yang disimpan terenkripsi, `username` = `admin` (pgAdmin: `admin@example.com`). `build()` melempar bila tool ber-login-generated dipanggil tanpa password.
-  Konsekuensi yang diterima: DbGate/Mongo Express/Redis Commander sudah memuat password database di env container, jadi siapa pun yang tahu login-nya punya akses database penuh — karena itu
-  **`credentials` menolak `viewer` (403)** (beda dari `database-credentials` yang masih terbuka bagi viewer; dicek lewat `ProjectAccessService.roleFor`), sedangkan memasang/menghapus = POST/DELETE sehingga viewer sudah 403
-  lewat aturan request-context. Akses project lewat `ManagedDatabaseService.findOwnedOrFail` (outsider 404). Adminer tetap bisa dicoba ke host lain di jaringan `aoox` bila penggunanya punya kredensialnya
-  (hanya kolom server yang diisi, tidak dikunci) — didokumentasikan, bukan diblokir.
-- **Akses**: minimal salah satu dari `host` (domain; label Traefik lewat `ProxyService.labelsFor(dbadmin-<slug>, port, …)`; proxy lokal di-provision otomatis bila belum `running` — aturan yang sama dengan
-  `add-domain`, ACME tidak diwajibkan; host dicek unik terhadap `domains` **dan** companion lain → 409) atau `hostPort` (`HostPortService.assertFree` → 400; `database_companions` kini ikut dicek
-  `HostPortService`, jadi flow app/compose/companion/**create-database** menolak port yang dipakai companion; `create-database` dulu tidak mengeceknya dan port bentrok baru gagal saat container dibuat, database
-  berakhir `status: error` "port is already allocated"). Tanpa keduanya → 400. **Boleh memakai `host` DAN `hostPort` sekaligus** (keputusan, konsisten dengan aplikasi biasa): `url` memakai domain, port host tetap dipublikasikan
-  (diuji). DB harus `running` (409), satu companion per database (409). Tool/engine tak cocok → 400.
-- **`url`**: domain → `http(s)://<host>[:proxyPort]/`; host port → `http://<PUBLIC_IP atau REGISTRY_PUBLIC_HOST>:<port>/`, **`null`** bila alamat server tidak dikonfigurasi (kosong/`localhost`) — web lalu membangunnya dari
-  `window.location.hostname` + `hostPort` (dan di kasus itu query Adminer+Postgres hilang; user memilih driver PostgreSQL manual).
-- **Container**: `aoox-dbadmin-<db_slug>` (`companion-names.ts`), jaringan `aoox`, `restart unless-stopped`, `logConfig`, **hanya host**. **Tanpa volume** (pgAdmin/DbGate memakai state sementara; konfigurasi datang
-  dari env/`servers.json` tiap dibuat) → `orphan-volumes` tidak terpengaruh dan tidak diubah. **Tanpa overlay `aoox-swarm`**: database selalu ada di bridge `aoox` juga, jadi companion menjangkaunya by name
-  tanpa `connectIfActive`; Traefik provider docker membaca labelnya dari `aoox`. Provisioning detached seperti `provisionInBackground` database: POST membalas 202 `creating`, lalu `running|error` (pesan error di `errorMessage`).
-- **Keputusan label** (`companionLabels()`): `aoox.component=companion` + `aoox.companion=<databaseId>` + `aoox.project` + `composeLabels('dbadmin-<slug>')`. **Tidak** membawa `aoox.database`/`aoox.application`/`aoox.compose`
-  (diuji): `MetricRetentionService.ownersByContainer` hanya mengenali ketiganya, jadi metrik companion tidak masuk riwayat database (tidak dobel); `MonitoringService` tetap men-sampel live 1 jam karena
-  label `aoox.component` ada; `project-resource-usage` menjumlahkannya ke project lewat `aoox.project` (memang memakai sumber daya project itu); `ContainerDownNotifier` hanya melapor component
-  application/database → companion yang mati **diam** (tidak ada notifikasi palsu; statusnya terlihat di GET). Label tidak pernah memuat password.
-- **Status mengikuti kenyataan**: `GET` mencocokkan baris `running|stopped|error` dengan container (`findContainerByName`): hilang → `error` ("no longer exists"), berhenti → `stopped`, jalan → `running`;
-  daemon tak terjangkau → status lama dipertahankan. Tidak ada watcher. **Stop database tidak menyentuh companion** (tetap jalan, hanya tidak bisa konek sampai database dinyalakan; tidak ada re-provision saat start).
-- **Hapus**: `DELETE .../companion` menghapus container lalu row. `ManagedDatabaseService.remove()` menghapus container companion **by name** (try/catch, hanya warning — tidak boleh memblokir delete DB) sebelum
-  container database; row ikut terhapus lewat FK cascade. `DatabaseCompanionModule` tidak di-import `ManagedDatabaseModule` (siklus), makanya lewat nama. Hapus **project** mengikuti perilaku lama (hanya cascade row;
-  container database/app tidak dihapus di jalur itu) — companion sama.
-- Ekspor/impor project **tidak** membawa companion. Diuji unit (katalog, service, host-port) **dan** smoke test nyata di Docker Desktop (mode host port, API sungguhan; satu DB per engine, dihapus sesudahnya):
-  - adminer+MariaDB dan adminer+PostgreSQL: login dengan kredensial DB asli berhasil; URL `?pgsql=<host>` benar-benar memilih driver PostgreSQL (tanpa query, driver default "MySQL / MariaDB").
-  - phpmyadmin+MySQL 8: login DB berhasil; form tidak punya kolom server dan `pma_servername` yang dikirim manual diabaikan (host tetap `PMA_HOST`).
-  - pgadmin+PostgreSQL: login `admin@example.com` + password generated (diuji di browser) berhasil, server dari `servers.json` muncul di pohon dan **meminta password DB** saat connect; setelah diisi terhubung.
-    Login lewat `curl` tidak praktis (form React + CSRF) — uji lewat browser.
-  - mongo-express+MongoDB: **HTTP Basic sungguhan** (401 tanpa/ salah kredensial, 200 dengan), daftar database tampil; `VCAP_APP_HOST=0.0.0.0` membuatnya listen di semua interface.
-  - redis-commander+Redis: **bukan HTTP Basic** — `HTTP_USER`/`HTTP_PASSWORD` mengaktifkan form sign-in (`POST /signin` JSON → bearer JWT); cangkang HTML `/` tetap 200 tanpa login,
-    tetapi seluruh `/apiv2/*` 401 tanpa token, jadi data tak terbaca; setelah sign-in key tampil. Jangan menguji "401 tanpa kredensial" pada `/`.
-  - dbgate+PostgreSQL: form login (`LOGIN`/`PASSWORD`) menjaga UI, koneksi `db` sudah terpasang dan terhubung (PostgreSQL 16). Catatan: saat koneksi pertama dibuka UI sempat menampilkan
-    "Invalid database connection, driver not found" sesaat (balapan pemuatan plugin sisi klien); setelah reload status "Connected". Ada dialog analitik anonim pada login pertama (bawaan DbGate).
-  - Semua: container di network `aoox` saja, label tepat `aoox.component=companion`/`aoox.companion`/`aoox.project`/`com.docker.compose.*` (tanpa `aoox.database`/`aoox.application`), `restart unless-stopped`;
-    `GET .../companion` merekonsiliasi (stop → `stopped`, start lagi → `running`, `docker rm` → `error` "no longer exists"); viewer 403 untuk credentials/POST/DELETE; satu per DB → 409; DB berhenti → 409;
-    tanpa host/hostPort → 400; tool/engine tak cocok → 400; hostPort = port DB → 400; DELETE companion dan DELETE database menghapus container-nya (baris `database_companions` ikut cascade);
-    `GET /projects/:id/resource-usage` menghitung container companion (`containers` bertambah); `metric_samples` milik database tetap `containers = 1` (tidak ada penghitungan ganda);
-    companion yang di-`docker kill` **tidak** menghasilkan notifikasi (kontrol positif: `docker kill` container database → satu notifikasi `container.down`).
-  - **Tidak diuji nyata**: mode domain (butuh proxy), Valkey/Mongo di DbGate, MongoDB tanpa `VCAP_APP_HOST`, Redis Commander di Valkey.
+- `src/modules/database-companion/` — one web-admin container per managed database (the UI of Adminer/phpMyAdmin/pgAdmin/Mongo Express/Redis Commander/DbGate), installed with one click. Entity
+  `DatabaseCompanion` (`database_companions`: `database_id` **unique** + FK cascade, `tool`, `status` creating|running|stopped|error, `error_message`, `host` unique nullable, `https`, `host_port`,
+  `password_encrypted` nullable `select:false` AES via `secret.util`+`ENCRYPTION_KEY`); migration `DatabaseCompanions` (hand-written). Flow: `get-companion` (`GET /databases/:id/companion` → `null` or
+  `{id,tool,status,errorMessage,host,https,hostPort,url,username,createdAt}`), `companion-options` (`GET .../companion/options` → `{tools:[{id,label,description,usesDatabaseLogin}]}` filtered by engine),
+  `create-companion` (`POST`, 202, throttle 10/minute, body `{tool, host?, https?, hostPort?}`), `companion-credentials` (`GET .../companion/credentials` → `{username,password}`, throttle 30/minute),
+  `delete-companion` (`DELETE`, 204). The audit-log redaction already covers the `password`/`secret` keys (the POST body does not carry secrets anyway).
+- **Catalog** `companion-tools.ts` (pure, unit-tested): image + tag **pinned**, web port, supported engines, `usesDatabaseLogin`, and `build(ctx)` → `{env, cmd, files}`. Tags verified to exist in the registry
+  (`docker manifest inspect`): `adminer:5.4.2` (8080; mysql/mariadb/postgres), `phpmyadmin:5.2.3` (80; mysql/mariadb), `dpage/pgadmin4:9.18.0` (80; postgres + variants), `mongo-express:1.0.2-20-alpine3.19`
+  (8081; mongodb), `ghcr.io/joeferner/redis-commander:0.9.1` (8081; redis/valkey — Docker Hub only has a 2021 `latest`, versioned tags are only on GHCR), `dbgate/dbgate:7.3.1-alpine` (3000; all engines).
+  The env interfaces were read from each tool's official docs/source (not guessed): Adminer `ADMINER_DEFAULT_SERVER` (only pre-fills the server field; the Postgres driver is selected through the URL `?pgsql=<host>` — the Adminer+Postgres `url` includes that query),
+  phpMyAdmin `PMA_HOST`/`PMA_PORT` (`PMA_ARBITRARY` stays off: the login form cannot be pointed at another host), pgAdmin `PGADMIN_DEFAULT_EMAIL`/`PASSWORD` + `servers.json` `putArchive`d to `/pgadmin4` before start (no DB password because `servers.json` has no such field → pgAdmin asks for it on connect; **server mode stays enabled** — do not set `PGADMIN_CONFIG_SERVER_MODE=False`,
+  which disables login; email `admin@example.com` because pgAdmin rejects special-use domains such as `.local`), Mongo Express `ME_CONFIG_MONGODB_URL`/`ME_CONFIG_BASICAUTH*`/secret cookie+session
+  derived from the password (`VCAP_APP_HOST=0.0.0.0`), Redis Commander `REDIS_HOST/PORT/PASSWORD` + `HTTP_USER/HTTP_PASSWORD`, DbGate `CONNECTIONS`/`LABEL_/ENGINE_/SERVER_/PORT_/USER_/PASSWORD_/DATABASE_<id>`
+  (mongo: `URL_<id>`; mariadb uses the mysql plugin) + `LOGIN`/`PASSWORD` (`SHELL_CONNECTION`/`SHELL_SCRIPTING` default off, untouched).
+- **Auth, never without a login**: adminer/phpmyadmin use the database's own login (the user takes the credentials from the database page; no password is generated, `username`/`password` null);
+  other tools get a random 24-character alphanumeric password stored encrypted, with `username` = `admin` (pgAdmin: `admin@example.com`). `build()` throws if a tool that needs a generated login is called without a password.
+  Accepted consequence: DbGate/Mongo Express/Redis Commander already hold the database password in the container env, so anyone who knows their login has full database access — which is why **`credentials` rejects `viewer` (403)** (unlike `database-credentials`, which is still open to viewers; checked via `ProjectAccessService.roleFor`), while installing/removing = POST/DELETE, so viewers are already 403 through the request-context rule.
+  Project access goes through `ManagedDatabaseService.findOwnedOrFail` (outsiders get 404). Adminer can still be pointed at another host on the `aoox` network if the user has its credentials
+  (only the server field is pre-filled, it is not locked) — documented, not blocked.
+- **Access**: at least one of `host` (a domain; Traefik labels via `ProxyService.labelsFor(dbadmin-<slug>, port, …)`; the local proxy is provisioned automatically if it is not yet `running` — the same rule as
+  `add-domain`, ACME is not required; the host is checked for uniqueness against `domains` **and** other companions → 409) or `hostPort` (`HostPortService.assertFree` → 400; `database_companions` is now also checked by
+  `HostPortService`, so the app/compose/companion/**create-database** flows reject a port used by a companion; `create-database` used to skip this check, and a conflicting port only failed when the container was created, leaving the database
+  in `status: error` "port is already allocated"). Without either → 400. **Using `host` AND `hostPort` together is allowed** (a decision, consistent with regular applications): `url` uses the domain, and the host port remains published (tested). The DB must be `running` (409), one companion per database (409). Mismatched tool/engine → 400.
+- **`url`**: domain → `http(s)://<host>[:proxyPort]/`; host port → `http://<PUBLIC_IP or REGISTRY_PUBLIC_HOST>:<port>/`, **`null`** when the server address is not configured (empty/`localhost`) — the web then builds it from
+  `window.location.hostname` + `hostPort` (and in that case the Adminer+Postgres query is lost; the user picks the PostgreSQL driver manually).
+- **Container**: `aoox-dbadmin-<db_slug>` (`companion-names.ts`), `aoox` network, `restart unless-stopped`, `logConfig`, **host only**. **No volume** (pgAdmin/DbGate use temporary state; the configuration comes from env/`servers.json` on every creation) → `orphan-volumes` is unaffected and unchanged. **No `aoox-swarm` overlay**: the database is always on the `aoox` bridge too, so the companion reaches it by name
+  without `connectIfActive`; the Traefik docker provider reads its labels from `aoox`. Provisioning is detached like the database's `provisionInBackground`: POST replies 202 `creating`, then `running|error` (the error message is in `errorMessage`).
+- **Label decision** (`companionLabels()`): `aoox.component=companion` + `aoox.companion=<databaseId>` + `aoox.project` + `composeLabels('dbadmin-<slug>')`. It does **not** carry `aoox.database`/`aoox.application`/`aoox.compose` (tested):
+  `MetricRetentionService.ownersByContainer` only recognizes those three, so companion metrics do not enter the database history (no double counting); `MonitoringService` still samples it live for 1 hour because the
+  `aoox.component` label is present; `project-resource-usage` adds it to the project through `aoox.project` (it does use that project's resources); `ContainerDownNotifier` only reports application/database components → a dead companion is **silent** (no false notification; its status is visible in GET). Labels never contain the password.
+- **Status follows reality**: `GET` matches the `running|stopped|error` row with the container (`findContainerByName`): missing → `error` ("no longer exists"), stopped → `stopped`, running → `running`;
+  daemon unreachable → the previous status is kept. There is no watcher. **Stopping the database does not touch the companion** (it keeps running and just cannot connect until the database is started again; there is no re-provisioning on start).
+- **Delete**: `DELETE .../companion` removes the container and then the row. `ManagedDatabaseService.remove()` removes the companion container **by name** (try/catch, warning only — it must not block deleting the DB) before
+  the database container; the row is removed via FK cascade. `DatabaseCompanionModule` does not import `ManagedDatabaseModule` (cycle), hence the name-based lookup. Deleting a **project** follows the old behavior (cascades rows only;
+  database/app containers are not removed on that path) — the companion is the same.
+- Project export/import does **not** carry companions. Unit-tested (catalog, service, host-port) **and** smoke-tested for real on Docker Desktop (host-port mode, real API; one DB per engine, removed afterwards):
+  - adminer+MariaDB and adminer+PostgreSQL: login with the real DB credentials succeeds; the URL `?pgsql=<host>` really selects the PostgreSQL driver (without the query, the default driver is "MySQL / MariaDB").
+  - phpmyadmin+MySQL 8: DB login succeeds; the form has no server field and a manually sent `pma_servername` is ignored (the host stays `PMA_HOST`).
+  - pgadmin+PostgreSQL: login with `admin@example.com` + the generated password (tested in the browser) succeeds, the server from `servers.json` appears in the tree and **asks for the DB password** on connect; once entered, it connects.
+    Logging in with `curl` is impractical (React form + CSRF) — test in a browser.
+  - mongo-express+MongoDB: **real HTTP Basic** (401 without/with wrong credentials, 200 with), database list shown; `VCAP_APP_HOST=0.0.0.0` makes it listen on all interfaces.
+  - redis-commander+Redis: **not HTTP Basic** — `HTTP_USER`/`HTTP_PASSWORD` enable a sign-in form (`POST /signin` JSON → bearer JWT); the HTML shell at `/` stays 200 without login,
+    but the entire `/apiv2/*` returns 401 without a token, so the data is unreadable; after sign-in the keys appear. Do not test for "401 without credentials" on `/`.
+  - dbgate+PostgreSQL: the login form (`LOGIN`/`PASSWORD`) guards the UI, the `db` connection is already set up and connected (PostgreSQL 16). Note: on first opening the connection the UI briefly showed
+    "Invalid database connection, driver not found" (a race while the client-side plugins load); after a reload the status was "Connected". There is an anonymous analytics dialog on first login (DbGate default).
+  - All: containers on the `aoox` network only, labels exactly `aoox.component=companion`/`aoox.companion`/`aoox.project`/`com.docker.compose.*` (no `aoox.database`/`aoox.application`), `restart unless-stopped`;
+    `GET .../companion` reconciles (stop → `stopped`, start again → `running`, `docker rm` → `error` "no longer exists"); viewer 403 for credentials/POST/DELETE; one per DB → 409; DB stopped → 409;
+    no host/hostPort → 400; mismatched tool/engine → 400; hostPort = the DB's port → 400; DELETE companion and DELETE database both remove its container (the `database_companions` row cascades);
+    `GET /projects/:id/resource-usage` counts the companion container (`containers` increases); the database's `metric_samples` stay at `containers = 1` (no double counting);
+    a companion killed with `docker kill` produces **no** notification (positive control: `docker kill` of the database container → one `container.down` notification).
+  - **Not tested for real**: domain mode (needs a proxy), Valkey/Mongo in DbGate, MongoDB without `VCAP_APP_HOST`, Redis Commander on Valkey.
 
-## Backup database
+## Database backup
 
-- `src/modules/database-backup/` — entity `DatabaseBackup` (`database_backups`, FK cascade ke `managed_databases`; `filename` = `<slug>/<ISO stamp>.<ext>`,
-  status `running`→`success`|`failed`, `trigger` `manual`|`scheduled`, `size_bytes`). `ManagedDatabase` punya `backup_cron` (null = nonaktif) & `backup_keep` (default 7).
-- Semua dump ada di **satu volume** `aoox_backups`, di-mount `/backups` ke container sekali-jalan dari image engine itu sendiri (`backup-recipes.ts`:
-  `pg_dump | gzip`, `mysqldump`/`mariadb-dump` sebagai root, `redis-cli --rdb`, `mongodump --archive --gzip`). Kredensial hanya lewat env
-  (`DB_HOST DB_PORT DB_USER DB_PASSWORD DB_NAME BACKUP_FILE`), tidak di `Cmd`.
-- Restore SQL = `online` (stream ke `psql`/`mysql`). MongoDB juga `online` (`mongorestore --archive --gzip --drop`, tidak perlu stop container). Redis/Valkey =
-  `offline-volume`: container di-stop, volume data di-mount ke `/data`, snapshot dipasang sebagai
-  **base file multi-part AOF** + manifest (Redis 7 dengan `appendonly yes` mengabaikan `dump.rdb`), lalu container di-start lagi (`finally`).
-- Unduh/hapus file lewat helper `busybox:stable` (`GET /containers/{id}/archive` → `SingleFileUntar` di klien Docker; `DockerService.runOnceWithOutput` untuk exit code + output).
-- Jadwal: `backup-scheduler.service.ts` (`@nestjs/schedule@6` + `SchedulerRegistry`/`CronJob` dari `cron`), job per DB didaftarkan saat boot dan `reschedule(db)` saat jadwal diubah;
-  setelah backup terjadwal, `prune(db)` menghapus backup **terjadwal** tertua melebihi `backupKeep` (manual tidak pernah dipangkas). Cron divalidasi `isValidCron` → 400.
-- Flow: `create-backup` (`POST /databases/:id/backups`, 201, sinkron), `list-backups`, `restore-backup` (`POST /backups/:id/restore`), `download-backup` (stream, `Content-Disposition`),
-  `delete-backup` (row + file), `update-backup-schedule` (`PATCH /databases/:id/backup-schedule`). Web mem-proxy unduhan lewat `/api/backups/:id/download` (cookie session → Bearer).
-- Resep dump SQL memakai file sementara lalu gzip (`gzipped()` di `backup-recipes.ts`): `dump | gzip` melaporkan exit code gzip, sehingga dump gagal menghasilkan backup "sukses" 20 byte;
-  `pipefail` tidak ada di dash, jadi status dump dipropagasi manual. Backup gagal → notifikasi `backupFailure`.
-- **Tujuan S3** (`src/modules/backup-destination/`, entity `BackupDestination` di `backup_destinations`: endpoint nullable = AWS, region, bucket, prefix, `access_key_id`,
-  `secret_access_key_encrypted` `select:false`, `force_path_style` default true). Flow `create/delete/test-destination` (owner/admin), `list-destinations` (semua member — DTO tanpa secret,
-  dipakai select di halaman DB). Transfer lewat container sekali-jalan **`rclone/rclone:1`** (file tidak lewat proses API): konfigurasi remote murni via env
-  `RCLONE_CONFIG_S3_*` (`rcloneEnv()`, pure & di-unit-test; `provider=Other` bila ada endpoint, `AWS` bila tidak; `NO_CHECK_BUCKET=true` — bucket harus sudah ada), volume backup
-  di-mount `:ro`, di network `aoox` (MinIO self-hosted bisa dipanggil pakai nama container). `upload` = `copyto`, `remove` = `deletefile` (tidak pernah throw — prune tak boleh macet),
-  `test` = `lsjson --max-depth 1` (output JSON multi-baris, di-parse dari baris `[` pertama).
-  `ManagedDatabase.backupDestinationId` (FK SET NULL; diset lewat `PATCH /databases/:id/backup-schedule` `backupDestinationId`) → tiap backup (manual & terjadwal) setelah dump lokal sukses
-  diunggah; `DatabaseBackup.destinationId` + `remoteKey` (`<prefix>/<slug>/<stamp>.<ext>`). Gagal unggah = backup `failed` + notifikasi (file lokal tetap ada untuk diunduh) —
-  tujuan dipasang supaya salinan ada di tempat lain. Hapus/prune backup juga menghapus objek remote. Konstanta volume di `backups-volume.ts` (dipakai kedua module).
-- **Backup volume aplikasi** (`src/modules/volume-backup/`, entity `VolumeBackup` di `volume_backups`: FK app & mount cascade, `volume`, `filename` `<appName>/<mount>/<stamp>.tar.gz`,
-  status/trigger/size/destination/remoteKey seperti backup DB). `Application` punya `backup_cron`/`backup_keep`/`backup_destination_id` (jadwal berlaku untuk **semua** mount `volume`,
-  prune per mount). Backup = busybox sekali-jalan dengan volume di-mount `:ro` + `tar czf` ke `aoox_backups`; restore = stop container → `rm -rf ./* ./.[!.]* ./..?*` → `tar xzf` →
-  start lagi (`finally`). Unduh/hapus/upload S3 memakai mekanisme yang sama dengan backup DB. Hanya app di **server lokal** (400 untuk `serverId`). Flow `create-volume-backup`
-  (`POST /applications/:id/mounts/:mountId/backups`, sinkron), `list-volume-backups`, `restore/download/delete-volume-backup` (`/volume-backups/:id`), `update-volume-backup-schedule`
-  (`PATCH /applications/:id/backup-schedule`, DTO yang sama dengan DB). Web: `volume-backups.tsx` di bawah tab Mount + proxy `/api/volume-backups/:id/download`.
-- **Restore dari S3** (`backup-files.service.ts`, di-export `DatabaseBackupModule`, dipakai juga volume-backup): `localFiles()` = satu `find` busybox di volume backup →
-  `annotate(rows)` menambah `local: boolean` ke `GET .../backups` dan `.../volume-backups`; `ensureLocal(backup)` dipanggil sebelum restore/download — bila file lokal hilang
-  (dipangkas retensi, disk baru) dan ada `remoteKey`, `BackupDestinationService.download()` (`rclone copyto` remote → volume) menariknya kembali; tanpa salinan → 400 (restore) / 404 (download).
-  Web menandai "hanya di S3". Belum: retensi terpisah di S3, backup bind mount, impor backup yang rownya sudah tidak ada di DB (server baru total).
+- `src/modules/database-backup/` — entity `DatabaseBackup` (`database_backups`, FK cascade to `managed_databases`; `filename` = `<slug>/<ISO stamp>.<ext>`,
+  status `running`→`success`|`failed`, `trigger` `manual`|`scheduled`, `size_bytes`). `ManagedDatabase` has `backup_cron` (null = disabled) & `backup_keep` (default 7).
+- All dumps live in **one volume** `aoox_backups`, mounted at `/backups` into a one-shot container from the engine's own image (`backup-recipes.ts`:
+  `pg_dump | gzip`, `mysqldump`/`mariadb-dump` as root, `redis-cli --rdb`, `mongodump --archive --gzip`). Credentials are passed only via env
+  (`DB_HOST DB_PORT DB_USER DB_PASSWORD DB_NAME BACKUP_FILE`), not in `Cmd`.
+- SQL restore = `online` (streamed into `psql`/`mysql`). MongoDB is also `online` (`mongorestore --archive --gzip --drop`, no need to stop the container). Redis/Valkey =
+  `offline-volume`: the container is stopped, the data volume is mounted at `/data`, the snapshot is installed as a
+  **multi-part AOF base file** + manifest (Redis 7 with `appendonly yes` ignores `dump.rdb`), then the container is started again (`finally`).
+- Downloading/deleting files goes through a `busybox:stable` helper (`GET /containers/{id}/archive` → `SingleFileUntar` in the Docker client; `DockerService.runOnceWithOutput` for exit code + output).
+- Scheduling: `backup-scheduler.service.ts` (`@nestjs/schedule@6` + `SchedulerRegistry`/`CronJob` from `cron`). A job per DB is registered at boot, and `reschedule(db)` runs when the schedule changes.
+  After a scheduled backup, `prune(db)` deletes the oldest **scheduled** backups beyond `backupKeep` (manual backups are never pruned). Cron is validated with `isValidCron` → 400.
+- Flow: `create-backup` (`POST /databases/:id/backups`, 201, synchronous), `list-backups`, `restore-backup` (`POST /backups/:id/restore`), `download-backup` (stream, `Content-Disposition`),
+  `delete-backup` (row + file), `update-backup-schedule` (`PATCH /databases/:id/backup-schedule`). The web app proxies downloads via `/api/backups/:id/download` (session cookie → Bearer).
+- SQL dump recipes use a temporary file and then gzip (`gzipped()` in `backup-recipes.ts`): `dump | gzip` reports gzip's exit code, so a failed dump produced a "successful" 20-byte backup;
+  `pipefail` is not available in dash, so the dump's status is propagated manually. A failed backup → `backupFailure` notification.
+- **S3 destination** (`src/modules/backup-destination/`, entity `BackupDestination` in `backup_destinations`: nullable endpoint = AWS, region, bucket, prefix, `access_key_id`,
+  `secret_access_key_encrypted` `select:false`, `force_path_style` default true). Flow `create/delete/test-destination` (owner/admin), `list-destinations` (all members — DTO without secrets,
+  used by the select on the DB page). Transfers run through a one-shot **`rclone/rclone:1`** container (files never pass through the API process): remote configuration purely via env
+  `RCLONE_CONFIG_S3_*` (`rcloneEnv()`, pure & unit-tested; `provider=Other` when an endpoint is set, `AWS` when not; `NO_CHECK_BUCKET=true` — the bucket must already exist), backup volume
+  mounted `:ro`, on the `aoox` network (self-hosted MinIO can be reached by container name). `upload` = `copyto`, `remove` = `deletefile` (never throws — prune must not get stuck),
+  `test` = `lsjson --max-depth 1` (multi-line JSON output, parsed from the first `[` line).
+  `ManagedDatabase.backupDestinationId` (FK SET NULL; set via `PATCH /databases/:id/backup-schedule` `backupDestinationId`) → every backup (manual & scheduled) is uploaded after the local dump succeeds;
+  `DatabaseBackup.destinationId` + `remoteKey` (`<prefix>/<slug>/<stamp>.<ext>`). A failed upload = backup `failed` + notification (the local file remains for download) —
+  the destination is attached so a copy exists elsewhere. Deleting/pruning a backup also deletes the remote object. Volume constants are in `backups-volume.ts` (used by both modules).
+- **Application volume backup** (`src/modules/volume-backup/`, entity `VolumeBackup` in `volume_backups`: FK to app & mount cascade, `volume`, `filename` `<appName>/<mount>/<stamp>.tar.gz`,
+  status/trigger/size/destination/remoteKey as for DB backups). `Application` has `backup_cron`/`backup_keep`/`backup_destination_id` (the schedule applies to **all** `volume` mounts,
+  pruning per mount). Backup = one-shot busybox with the volume mounted `:ro` + `tar czf` into `aoox_backups`; restore = stop container → `rm -rf ./* ./.[!.]* ./..?*` → `tar xzf` →
+  start again (`finally`). Download/delete/S3 upload use the same mechanism as DB backups. Only apps on the **local server** (400 for `serverId`). Flow `create-volume-backup`
+  (`POST /applications/:id/mounts/:mountId/backups`, synchronous), `list-volume-backups`, `restore/download/delete-volume-backup` (`/volume-backups/:id`), `update-volume-backup-schedule`
+  (`PATCH /applications/:id/backup-schedule`, same DTO as DB). Web: `volume-backups.tsx` under the Mount tab + proxy `/api/volume-backups/:id/download`.
+- **Restore from S3** (`backup-files.service.ts`, exported by `DatabaseBackupModule`, also used by volume-backup): `localFiles()` = a single busybox `find` on the backup volume →
+  `annotate(rows)` adds `local: boolean` to `GET .../backups` and `.../volume-backups`; `ensureLocal(backup)` is called before restore/download — if the local file is gone
+  (pruned by retention, new disk) and a `remoteKey` exists, `BackupDestinationService.download()` (`rclone copyto` remote → volume) pulls it back; without a copy → 400 (restore) / 404 (download).
+  The web marks it as "S3 only". Not yet: separate retention on S3, bind-mount backups, importing backups whose rows no longer exist in the DB (completely new server).
 
 ## Template (one-click)
 
-- `src/modules/template/` — katalog **statis dalam TypeScript** (`templates/*.ts`, `Template` di `template.types.ts`: id, versi, `variables` `{key,label,default,generate,required,hint}`,
-  `services` `{service,port,label}` yang boleh diberi domain, `compose`). Tidak diambil dari URL saat runtime (offline & tidak bisa diganti YAML pihak lain); tidak perlu `assets` nest-cli.
-  Isi (15): wordpress, ghost, n8n, uptime-kuma, minio, gitea, **vaultwarden** (1.37.3), **umami** (`ghcr.io/umami-software/umami:postgresql-v2.20.2` + postgres), **grafana** (13.0.2, SQLite),
-  **metabase** (v0.63.18.5 + postgres), **directus** (12.4.1 + postgres; variabel bernama `KEY`/`SECRET` memang nama env Directus), **mattermost** (`mattermost-team-edition:11.11.1` + postgres) dan
-  **nextcloud** (`32.0.15-apache` + postgres + redis `--requirepass` + service `cron` dengan `entrypoint: /cron.sh`; `PROTOCOL` default https untuk `OVERWRITEPROTOCOL`, http hanya uji lokal).
-  **odoo** (`odoo:19.0-20260926` Community + postgres; tag bertanggal karena `19.0` bergeser tiap malam; konfigurasi lewat compose `configs` inline -> `/etc/odoo/odoo.conf`
-  karena master password (`admin_passwd`) hanya bisa lewat file config, bukan CLI/env; `proxy_mode`, `workers = 0`, `list_db = True` supaya database pertama bisa dibuat lewat web;
-  variabel `MASTER_PASSWORD` di-generate; healthcheck `/web/health`; pengamanan `/web/database/manager` setelahnya = edit compose: `list_db = False` + `dbfilter`; wizard `POST /web/database/create`
-  Odoo 19 mewajibkan field `phone`). Diuji: master password yang dihasilkan diterima, yang salah ditolak, login admin, data bertahan setelah recreate.
-  **excalidraw** (`excalidraw/excalidraw`, port 80, tanpa DB/volume/variabel; hanya **klien statis** nginx — kolaborasi langsung butuh server terpisah `excalidraw-room`, belum ada, tahap 2).
-  Docker Hub **tidak punya tag versi** untuk image ini (hanya `latest` bergulir + `sha-*` 2021 yang basi), jadi di-pin ke digest manifest-list: `latest@sha256:f7ee194a…` (spec tag eksplisit lolos
-  karena regex menerima `:<digest>`; Docker memakai digest). Naikkan digest secara manual untuk update. Healthcheck tidak ditambahkan: Dockerfile upstream sudah punya `HEALTHCHECK` wget (nginx alpine).
-  **Diuji nyata**: `POST /compose-apps/from-template` dengan `servicePorts` host port → deploy sukses, HTTP 200 (`<title>Excalidraw Whiteboard`), container memakai referensi digest ter-pin,
-  `HEALTHCHECK` bawaan image (`wget -q -O /dev/null http://localhost`) mencapai `healthy`, hapus stack membersihkan container/network (tanpa volume).
-  Konvensi template baru: tag image versi tertentu (spec menjaga tiap image punya tag eksplisit), DB memakai `healthcheck` `pg_isready` + `depends_on: condition: service_healthy`, volume bernama,
-  logo simple-icons. Semua diuji nyata lewat `POST /compose-apps/from-template` di belakang proxy lokal (endpoint health/status menjawab 200; login Directus; data Grafana/Umami selamat dari recreate
-  container; Nextcloud memakai pgsql+Redis). Catatan: `/server/health` Directus 403 tanpa token — pakai `/server/ping`. `GET /templates` (semua member).
-- `template.service.ts`: `renderEnv(template, values)` (nilai user → default → `generateValue` untuk `generate`; `required` kosong → `TemplateVariableError` → 400),
-  `generateValue` **alfanumerik saja** (masuk `.aoox.env` = sumber interpolasi compose `$`, dan lewat `EnvResolverService` `${{`), `referencedVariables`.
-  Spec `template.service.spec.ts` menjaga katalog: id unik, tiap service ada di compose, `${VAR}` di compose == `variables`, key PASSWORD/SECRET/KEY selalu `generate`.
-- Flow di compose module: `create-from-template/` (`POST /compose-apps/from-template` `{projectId, templateId, name?, variables?, serviceDomains?}`, 202) → row `source: 'template'`
-  + `templateId` + `composeContent` disalin + env hasil `renderEnv` + domain (divalidasi terhadap `template.services`), lalu `runner.start(app,'deploy')`. DTO create git biasa tidak dipakai (regex `gitUrl`).
-- Web: `/templates` (`templates-catalog.tsx` + `deploy-template-dialog.tsx`: project, nama, host per service + HTTPS, field variabel); halaman compose menampilkan `compose-domains.tsx`
-  dan `ComposeForm source="template"` (textarea compose, tanpa field git). Belum: template dari repo/URL kustom, versi/upgrade template, ikon offline.
+- `src/modules/template/` — a **static catalog in TypeScript** (`templates/*.ts`, `Template` in `template.types.ts`: id, version, `variables` `{key,label,default,generate,required,hint}`,
+  `services` `{service,port,label}` that may be given a domain, `compose`). It is not fetched from a URL at runtime (offline, and cannot be replaced by someone else's YAML); no nest-cli `assets` needed.
+  Contents (15): wordpress, ghost, n8n, uptime-kuma, minio, gitea, **vaultwarden** (1.37.3), **umami** (`ghcr.io/umami-software/umami:postgresql-v2.20.2` + postgres), **grafana** (13.0.2, SQLite),
+  **metabase** (v0.63.18.5 + postgres), **directus** (12.4.1 + postgres; variables named `KEY`/`SECRET` are indeed Directus env names), **mattermost** (`mattermost-team-edition:11.11.1` + postgres) and
+  **nextcloud** (`32.0.15-apache` + postgres + redis `--requirepass` + a `cron` service with `entrypoint: /cron.sh`; `PROTOCOL` defaults to https for `OVERWRITEPROTOCOL`, http only for local testing).
+  **odoo** (`odoo:19.0-20260926` Community + postgres; a dated tag because `19.0` shifts every night; configuration via an inline compose `configs` entry -> `/etc/odoo/odoo.conf`
+  because the master password (`admin_passwd`) can only be set through a config file, not CLI/env; `proxy_mode`, `workers = 0`, `list_db = True` so the first database can be created via the web;
+  the `MASTER_PASSWORD` variable is generated; healthcheck `/web/health`; hardening `/web/database/manager` afterwards = edit compose: `list_db = False` + `dbfilter`; wizard `POST /web/database/create`
+  Odoo 19 requires the `phone` field). Tested: the generated master password is accepted, a wrong one is rejected, admin login works, data survives recreate.
+  **excalidraw** (`excalidraw/excalidraw`, port 80, no DB/volume/variables; only the nginx **static client** — live collaboration needs a separate `excalidraw-room` server, not yet present, stage 2).
+  Docker Hub has **no version tags** for this image (only the rolling `latest` + outdated 2021 `sha-*`), so it is pinned to the manifest-list digest: `latest@sha256:f7ee194a…` (the explicit tag spec passes
+  because the regex accepts `:<digest>`; Docker uses the digest). Bump the digest manually to update. No healthcheck was added: the upstream Dockerfile already has a `HEALTHCHECK` with wget (nginx alpine).
+  **Tested for real**: `POST /compose-apps/from-template` with host ports in `servicePorts` → deploy succeeded, HTTP 200 (`<title>Excalidraw Whiteboard`), the container uses the pinned digest reference,
+  the image's built-in `HEALTHCHECK` (`wget -q -O /dev/null http://localhost`) reaches `healthy`, deleting the stack cleans up the container/network (no volumes).
+  New template conventions: a specific image version tag (the spec ensures every image has an explicit tag), DB uses a `pg_isready` `healthcheck` + `depends_on: condition: service_healthy`, named volumes,
+  simple-icons logo. Everything was tested for real via `POST /compose-apps/from-template` behind a local proxy (health/status endpoints answer 200; Directus login; Grafana/Umami data survived container recreate;
+  Nextcloud uses pgsql+Redis). Note: Directus `/server/health` returns 403 without a token — use `/server/ping`. `GET /templates` (all members).
+- `template.service.ts`: `renderEnv(template, values)` (user value → default → `generateValue` for `generate`; an empty `required` → `TemplateVariableError` → 400),
+  `generateValue` is **alphanumeric only** (it goes into `.aoox.env`, the compose interpolation source `$`, and through `EnvResolverService` `${{`), `referencedVariables`.
+  The `template.service.spec.ts` spec guards the catalog: unique ids, every service exists in compose, `${VAR}` in compose == `variables`, keys PASSWORD/SECRET/KEY are always `generate`.
+- Flow in the compose module: `create-from-template/` (`POST /compose-apps/from-template` `{projectId, templateId, name?, variables?, serviceDomains?}`, 202) → row `source: 'template'`
+  + `templateId` + `composeContent` copied + env from `renderEnv` + domains (validated against `template.services`), then `runner.start(app,'deploy')`. The regular git create DTO is not used (`gitUrl` regex).
+- Web: `/templates` (`templates-catalog.tsx` + `deploy-template-dialog.tsx`: project, name, host per service + HTTPS, variable fields); the compose page shows `compose-domains.tsx`
+  and `ComposeForm source="template"` (compose textarea, no git fields). Not yet: templates from a repo/custom URL, template versioning/upgrades, offline icons.
 
 ## Scheduled jobs
 
-- `src/modules/job/` — entity `Job` (`jobs`, di bawah `Application`: `name`, `cron` nullable = manual saja, `command` dijalankan `sh -c`, `target` `container`|`run`, `enabled`,
-  `timeout_seconds` default 600, `last_run_at`/`last_status`) dan `JobRun` (`job_runs`: status `running`→`success`|`failed`|`timeout`, `trigger` manual|scheduled, `exit_code`,
-  `output` dipotong 64 KB; `JOB_RUN_KEEP` 50 run terakhir per job).
-- `job-runner.service.ts`: `container` = `DockerEngineClient.execWithCode` (exec + `GET /exec/{id}/json` untuk `ExitCode`) di container app yang running; `run` = container sekali-jalan
-  dari `currentImage` dengan env ter-resolve, mount, limit sumber daya, label `aoox.component=job` (diabaikan monitoring/container-down), dihapus setelah selesai (stop bila timeout).
-  **Timeout** ditegakkan di dalam container lewat `timeout` bila ada (`shellCommand`, perintah dilewatkan sebagai `$0` supaya tanda kutip bebas); API hanya menyerah menunggu setelah
-  `timeout+30 s` (exec tidak bisa di-kill dari luar). Jebakan yang ditemukan: `timeout` **tidak boleh jadi perintah terakhir** skrip `sh -c` — ash/dash tail-exec sehingga `timeout` menjadi
-  PID 1 di container sekali-jalan dan sinyalnya tidak sampai ke anak (perintah jalan sampai habis); karena itu skrip diakhiri `; exit $?`. Busybox `timeout` mengembalikan 143 (bukan 124) →
-  `isTimeoutExit(code, elapsed, limit)` = kode 124/137/143 **dan** durasi ≥ limit. Gagal/timeout → notifikasi `jobFailure`.
-- `job-scheduler.service.ts`: satu `CronJob` per job aktif dengan `cron` (`reschedule`/`unschedule`, daftar ulang saat boot); tick dilewati bila job masih berjalan (`isActive`, tanpa antre).
-- Flow: `create-job`/`list-jobs` (`/applications/:id/jobs`), `update-job`/`delete-job`/`run-job` (202, 409 bila masih jalan)/`list-job-runs` (20 terakhir) di `/jobs/:id`. Cron divalidasi → 400.
-- Web: tab **Jobs** (`application-jobs.tsx`): baris job (toggle aktif, Jalankan, hapus; riwayat run di-poll 2 detik selama ada `running`, lalu `router.refresh()` agar header ikut) + form job baru.
+- `src/modules/job/` — entity `Job` (`jobs`, under `Application`: `name`, `cron` nullable = manual only, `command` run with `sh -c`, `target` `container`|`run`, `enabled`,
+  `timeout_seconds` default 600, `last_run_at`/`last_status`) and `JobRun` (`job_runs`: status `running`→`success`|`failed`|`timeout`, `trigger` manual|scheduled, `exit_code`,
+  `output` truncated to 64 KB; `JOB_RUN_KEEP` keeps the last 50 runs per job).
+- `job-runner.service.ts`: `container` = `DockerEngineClient.execWithCode` (exec + `GET /exec/{id}/json` for `ExitCode`) in the running app container; `run` = a one-shot container
+  from `currentImage` with resolved env, mounts, resource limits, label `aoox.component=job` (ignored by monitoring/container-down), removed after completion (stopped on timeout).
+  **Timeout** is enforced inside the container via `timeout` when available (`shellCommand`, the command is passed as `$0` so quotes are free); the API only gives up waiting after
+  `timeout+30 s` (an exec cannot be killed from outside). Pitfall found: `timeout` **must not be the last command** of the `sh -c` script — ash/dash tail-exec, so `timeout` becomes
+  PID 1 in the one-shot container and the signal never reaches the child (the command runs to completion); therefore the script ends with `; exit $?`. Busybox `timeout` returns 143 (not 124) →
+  `isTimeoutExit(code, elapsed, limit)` = code 124/137/143 **and** duration ≥ limit. Failure/timeout → `jobFailure` notification.
+- `job-scheduler.service.ts`: one `CronJob` per active job with a `cron` (`reschedule`/`unschedule`, re-registered at boot); a tick is skipped if the job is still running (`isActive`, no queuing).
+- Flow: `create-job`/`list-jobs` (`/applications/:id/jobs`), `update-job`/`delete-job`/`run-job` (202, 409 if still running)/`list-job-runs` (last 20) under `/jobs/:id`. Invalid cron → 400.
+- Web: **Jobs** tab (`application-jobs.tsx`): job rows (active toggle, Run, delete; run history is polled every 2 seconds while anything is `running`, then `router.refresh()` so the header updates too) + new job form.
   `src/features/job/`.
-- **Pemilik job** = aplikasi **atau** database **atau** stack compose (`application_id`/`database_id`/`compose_app_id` nullable, tepat satu terisi; `service` untuk compose).
-  `JobRunnerService.resolve(job)` → `JobContext` (`findContainer` + `runSpec`): app = container app / image `currentImage` + env + mount; database = container `aoox-db-<slug>`
-  / image engine + env `DB_HOST DB_PORT DB_USER DB_PASSWORD DB_NAME` (sama dengan resep backup — di dalam container DB tersedia env resmi image, mis. `$POSTGRES_USER`);
-  compose = container berlabel `com.docker.compose.project`+`service` / image & env container itu (`inspect`, `Config.Env` ditambahkan ke tipe klien). `JobService.build(owner, dto, service)`
-  dipakai `create-job` (`/applications/:id/jobs`), `create-database-job` (`/databases/:id/jobs`), `create-compose-job` (`/compose-apps/:id/jobs`, DTO `CreateComposeJobDto` mewajibkan
-  `service` — jangan pakai `declare` di DTO turunan: dekorator validasinya tidak terdaftar). `ComposeModule` sekarang meng-export `ComposeService`.
-  Belum: riwayat > 20 di UI, streaming output.
+- **Job owner** = an application **or** a database **or** a compose stack (`application_id`/`database_id`/`compose_app_id` nullable, exactly one filled; `service` for compose).
+  `JobRunnerService.resolve(job)` → `JobContext` (`findContainer` + `runSpec`): app = app container / `currentImage` + env + mounts; database = container `aoox-db-<slug>`
+  / engine image + env `DB_HOST DB_PORT DB_USER DB_PASSWORD DB_NAME` (same as the backup recipe — inside the DB container the image's official env is available, e.g. `$POSTGRES_USER`);
+  compose = container labeled `com.docker.compose.project`+`service` / that container's image & env (`inspect`, `Config.Env` added to the client type). `JobService.build(owner, dto, service)`
+  is used by `create-job` (`/applications/:id/jobs`), `create-database-job` (`/databases/:id/jobs`), and `create-compose-job` (`/compose-apps/:id/jobs`; `CreateComposeJobDto` requires
+  `service` — do not use `declare` in the child DTO: its validation decorators are not registered). `ComposeModule` now exports `ComposeService`.
+  Not yet: history beyond 20 in the UI, output streaming.
 
-## Docker manager (Infrastruktur > Docker)
+## Docker manager (Infrastructure > Docker)
 
-- `src/modules/docker-manager/` — lihat dan lakukan hal dasar di daemon mana pun: host (`serverId` kosong) atau server remote (`?serverId=<uuid>` → `RemoteDockerService.forServer`,
-  `DockerTargetService.handle`; uuid tak dikenal 404, bukan uuid 400). Bukan Portainer: tanpa exec/shell, compose editor, build/pull manual. Flow di folder sendiri:
+- `src/modules/docker-manager/` — view and perform basic actions on any daemon: the host (`serverId` empty) or a remote server (`?serverId=<uuid>` → `RemoteDockerService.forServer`,
+  `DockerTargetService.handle`; unknown uuid → 404, not a malformed uuid → 400). Not Portainer: no exec/shell, no compose editor, no manual build/pull. Flow in its own folder:
   `list-containers`, `container-logs`, `container-action` (start/stop/restart), `remove-container`, `list-images`, `remove-image` (+ prune dangling), `list-volumes`, `list-networks`.
-  Satu panggilan Engine per tab (`listContainers all` + `listImages`/`listNetworks`/`system/df`); "dipakai oleh" dihitung dari **satu** `listContainers` (`ImageID`, `Mounts`,
-  `NetworkSettings.Networks`), bukan N+1. Klien: `listImages`, `listNetworks`, `ContainerSummary` bertambah `ImageID/Created/Mounts/NetworkSettings`, `HostConfig.Mounts`.
-- **Route** (semua `@Controller('docker')`): `GET /docker/containers`, `GET /docker/containers/:id/logs?tail` (1–500, default 200, dipotong 500 baris/200 KB; satu kali ambil, bukan stream),
-  `POST /docker/containers/:id/start|stop|restart` (204), `DELETE /docker/containers/:id?force=` (204; berjalan tanpa force = 409 dari daemon), `GET /docker/images`,
-  `POST /docker/images/prune` (hanya dangling), `DELETE /docker/images/:id` (204), `GET /docker/volumes`, `GET /docker/networks`. **Peran**: baca + log `@Roles('owner','admin')`, semua tulis
-  `@Roles('owner')` (token API ber-scope ditolak otomatis oleh `@Roles`; token readOnly 403 untuk tulis; member 403 untuk semua; diuji nyata). Tulis di-throttle 30/menit, volume 20/menit
-  (`/system/df` berat). Tiap route tulis ada teks Indonesia di `aoox-web/.../audit-log.format.ts` (6 kunci, 1:1).
-- **Pengaman (inti fitur, `managed.ts` murni + `DockerTargetService.resolveUnmanaged`)**: setiap tulis container meng-`inspect` dulu dan memutuskan dari **apa yang dilaporkan daemon**
-  (id penuh, nama, label), bukan dari string yang dikirim — nama dan id mendapat putusan yang sama. `classifyContainer` menganggap milik aoox (→ **403**, pesan menunjuk halaman resource):
-  hostname API sendiri (`os.hostname()` = id pendek container; hanya untuk daemon host; harus 12–64 hex), label `aoox.application/.database/.compose/.companion`, `aoox.component=*`
-  (proxy, registry, build, job, backup…), compose project `aoox` (postgres/api/web panel — **setelah** cek component, supaya `aoox-proxy` yang juga berlabel project `aoox` terbaca "proxy"),
-  project `aoox-<slug>` (stack user), dan nama berawalan `aoox-`/`aoox_` walau tanpa label. Referensi container divalidasi (`isSafeContainerRef`: 64 hex atau nama Docker sah) sebelum dikirim ke
-  daemon, id image (`isSafeImageId`) juga; tidak ada yang disisipkan ke perintah shell (hanya path Engine API ter-encode). Respons daftar memakai DTO eksplisit — tanpa `Config.Env`/label mentah.
-  Log container boleh dibaca untuk container aoox juga (membaca tidak merusak); aksi tidak.
-- **Image**: hapus hanya bila **tidak ada container (jalan atau berhenti)** yang dibuat dari image itu (409 menyebut nama container) dan bukan image aoox (`isAooxImage`: `aoox-*` helper,
-  `aoox/<project>/<app>`, `hideandseeklab/aoox-*` → 409 "bersihkan lewat Disk Docker"); id dicocokkan terhadap daftar daemon dan harus tepat satu. **Lapis perlindungan kedua** (`image-protection.ts` murni + `ImageProtectionService`, 3 query per list/hapus,
-  bukan per image; `protectedReason` ikut di DTO list supaya web menyembunyikan tombol): **409** bila image (a) direferensikan DB sebagai `Application.currentImage`, `Deployment.imageRef` yang
-  masih tersimpan (rollback memakainya; baris lama yang dibersihkan `MaintenanceService` otomatis tak lagi melindungi) atau `PreviewDeployment.imageRef` berstatus `building`/`running`, dibatasi aplikasi
-  di daemon itu (`Application.serverId` = server terpilih, atau `IS NULL` untuk host), atau (b) — **hanya di host** — repo-nya berawalan host registry lokal (`REGISTRY_PUBLIC_HOST:REGISTRY_PORT`
-  default `localhost:5000`, plus `url`/`domain` baris `registries` bertipe `self-hosted`): "milik registry aoox, hapus lewat Registry". Kecocokan ref memakai `parseImageRef` (kanonik:
-  `docker.io/library/nginx` = `nginx` = `nginx:latest`, host dengan port tidak tertukar dengan tag, `@sha256` dicocokkan ke `RepoDigests`, id penuh/pendek ke `Id`) — diuji unit, termasuk
-  `localhost:5000` ≠ `localhost:5001`. Server remote tidak memakai aturan registry (isinya hanya salinan tarikan) tetapi tetap dilindungi bila cocok dengan baris DB server itu.
-  Prune hanya dangling milik **semua** pemakai daemon itu, tidak terbatas aoox — web menyebut ini di dialog konfirmasi beserta perkiraan jumlah/ukuran dari daftar yang sudah dimuat.
-  **Belum ada** (tahap 2, sengaja tidak dikerjakan): hapus volume/network non-aoox. **Belum teruji nyata**: server remote lewat SSH, dan jalur hostname-API-sendiri di container API sungguhan.
-- **Volume**: ukuran dari `system/df` (`-1` → `null`), penanda `managed` (`isAooxVolume`), `orphan` memakai `MaintenanceService.orphanVolumeNames(df)` (kini publik; `MaintenanceModule` meng-export
-  `MaintenanceService`) — **hanya host**; server remote selalu `orphan:false` karena DB panel hanya tahu volume host. Network: bawaan (`bridge/host/none/ingress/docker_gwbridge`), `managed`
-  (`aoox`, `aoox-swarm`, project `aoox*`). Volume dan network tahap ini baca saja.
-- **Diuji nyata** (API dan web milik sendiri di DB terisolasi, Docker lokal): decoy berlabel aoox (component, project `aoox`, `aoox.application`, nama `aoox-…`) ditolak 403 untuk stop/restart/start/hapus/hapus-force
-  lewat nama **dan** id, StartedAt tak berubah; lalu `aoox-proxy`/`aoox-registry`/`aoox_db` sungguhan ditolak 403 untuk lima aksi yang sama dan tidak tersentuh; container biasa: log, stop, start (304 diperlakukan sukses),
-  restart, hapus tanpa force 409 / force 204, hapus yang berhenti, container yang tidak ada 404; image dipakai 409, tak terpakai 204, id aneh 404; volume/network terdaftar; admin baca 200 tulis 403, member 403, token readOnly baca 200 tulis 403,
-  token ber-scope 403, audit log mencatat tiap aksi (termasuk 403/404/409). **Belum diuji nyata**: server remote lewat SSH (kodenya sama, `forServer`), prune dangling di host ini (ada image dangling milik user;
-  hanya unit test), jalur hostname-sendiri di container API sungguhan (hanya unit test; di host dev hostname bukan id container).
+  One Engine call per tab (`listContainers all` + `listImages`/`listNetworks`/`system/df`); "used by" is computed from **one** `listContainers` (`ImageID`, `Mounts`,
+  `NetworkSettings.Networks`), not N+1. Client: `listImages`, `listNetworks`, `ContainerSummary` extended with `ImageID/Created/Mounts/NetworkSettings`, `HostConfig.Mounts`.
+- **Routes** (all under `@Controller('docker')`): `GET /docker/containers`, `GET /docker/containers/:id/logs?tail` (1–500, default 200, truncated to 500 lines/200 KB; a single fetch, not a stream),
+  `POST /docker/containers/:id/start|stop|restart` (204), `DELETE /docker/containers/:id?force=` (204; without force on a running container = 409 from the daemon), `GET /docker/images`,
+  `POST /docker/images/prune` (dangling only), `DELETE /docker/images/:id` (204), `GET /docker/volumes`, `GET /docker/networks`. **Roles**: read + logs `@Roles('owner','admin')`, all writes
+  `@Roles('owner')` (scoped API tokens are rejected automatically by `@Roles`; readOnly tokens get 403 for writes; members get 403 for everything; tested for real). Writes are throttled at 30/min, volumes at 20/min
+  (`/system/df` is heavy). Each write route has Indonesian text in `aoox-web/.../audit-log.format.ts` (6 keys, 1:1).
+- **Guards (the core of the feature, `managed.ts` pure + `DockerTargetService.resolveUnmanaged`)**: every container write first `inspect`s and decides based on **what the daemon reports**
+  (full id, name, labels), not on the string sent — name and id get the same verdict. `classifyContainer` treats it as aoox-owned (→ **403**, message points to the resource page):
+  the API's own hostname (`os.hostname()` = the container's short id; host daemon only; must be 12–64 hex), labels `aoox.application/.database/.compose/.companion`, `aoox.component=*`
+  (proxy, registry, build, job, backup…), compose project `aoox` (panel postgres/api/web — **after** the component check, so `aoox-proxy`, which also carries project `aoox`, is read as "proxy"),
+  project `aoox-<slug>` (user stacks), and names prefixed with `aoox-`/`aoox_` even without labels. Container references are validated (`isSafeContainerRef`: 64 hex or a valid Docker name) before being sent to the
+  daemon, image ids (`isSafeImageId`) too; nothing is interpolated into a shell command (only URL-encoded Engine API paths). List responses use an explicit DTO — no raw `Config.Env`/labels.
+  Reading container logs is allowed for aoox containers too (reading does no harm); actions are not.
+- **Images**: removal only when **no container (running or stopped)** was created from that image (409 naming the container) and it is not an aoox image (`isAooxImage`: `aoox-*` helpers,
+  `aoox/<project>/<app>`, `hideandseeklab/aoox-*` → 409 "clean up via Docker Disk"); the id is matched against the daemon's list and must match exactly one. **Second protection layer** (`image-protection.ts` pure + `ImageProtectionService`, 3 queries per list/removal,
+  not per image; `protectedReason` is included in the list DTO so the web can hide the button): **409** when the image is referenced by the DB as (a) `Application.currentImage`, a stored `Deployment.imageRef` (rollback uses it; old rows cleaned by `MaintenanceService` no longer protect automatically) or a `PreviewDeployment.imageRef` in `building`/`running` status, scoped to apps on that daemon
+  (`Application.serverId` = the selected server, or `IS NULL` for the host), or (b) — **host only** — its repository begins with the local registry host (`REGISTRY_PUBLIC_HOST:REGISTRY_PORT`,
+  default `localhost:5000`, plus the `url`/`domain` of `registries` rows of type `self-hosted`): "belongs to the aoox registry, remove it via Registry". Ref matching uses `parseImageRef` (canonical:
+  `docker.io/library/nginx` = `nginx` = `nginx:latest`, a host with a port is not confused with a tag, `@sha256` is matched against `RepoDigests`, full/short id against `Id`) — unit-tested, including
+  `localhost:5000` ≠ `localhost:5001`. Remote servers do not use the registry rule (their contents are just pulled copies) but are still protected when matching that server's DB rows.
+  Prune removes only dangling images of **all** users of that daemon, not limited to aoox — the web mentions this in the confirmation dialog along with the estimated count/size from the loaded list.
+  **Not yet** (stage 2, deliberately not done): removing non-aoox volumes/networks. **Not yet tested for real**: remote servers via SSH, and the own-API-hostname path in a real API container.
+- **Volumes**: size from `system/df` (`-1` → `null`), `managed` flag (`isAooxVolume`), `orphan` uses `MaintenanceService.orphanVolumeNames(df)` (now public; `MaintenanceModule` exports
+  `MaintenanceService`) — **host only**; remote servers always report `orphan:false` because the panel DB only knows host volumes. Networks: built-in (`bridge/host/none/ingress/docker_gwbridge`), `managed`
+  (`aoox`, `aoox-swarm`, project `aoox*`). Volumes and networks are read-only at this stage.
+- **Tested for real** (own API and web in an isolated DB, local Docker): decoy containers labeled aoox (component, project `aoox`, `aoox.application`, name `aoox-…`) rejected with 403 for stop/restart/start/remove/force-remove
+  by **both** name and id, StartedAt unchanged; then the real `aoox-proxy`/`aoox-registry`/`aoox_db` were rejected with 403 for the same five actions and left untouched; regular containers: logs, stop, start (304 treated as success),
+  restart, removal without force 409 / with force 204, removing a stopped one, a missing container 404; image in use 409, unused 204, odd id 404; volumes/networks listed; admin read 200 write 403, member 403, readOnly token read 200 write 403,
+  scoped token 403, audit log records each action (including 403/404/409). **Not yet tested for real**: remote servers via SSH (same code, `forServer`), dangling prune on this host (the user has dangling images here;
+  unit tests only), the own-hostname path in a real API container (unit tests only; on the dev host the hostname is not a container id).
 
-## Pemeliharaan disk
+## Disk maintenance
 
-- `src/modules/maintenance/` — `MaintenanceService.usage()` (`GET /maintenance/disk`, owner/admin: `GET /system/df` diringkas + `reclaimableBytes` = image dangling + build cache
-  non-shared, `prunableDeployments`, laporan cleanup terakhir **in-memory**) dan `cleanup()` (`POST /maintenance/cleanup {registryGc?}`, owner, sinkron, 409 bila sedang jalan;
-  juga `@Cron('30 4 * * *')` kecuali `MAINTENANCE_NIGHTLY=false`). Urutan: per aplikasi hapus deployment sukses melebihi `Application.deploymentKeep` (default 10; **tidak pernah**
-  `currentImage`, dan image yang masih dirujuk row yang disimpan — rollback memakai ulang ref — tidak dihapus; `imageRef` row lama di-null-kan, log tetap) → `DELETE /images/{ref}` +
-  hapus tag di registry lokal (`getTag`+`deleteManifest`) → hapus row failed/queued > 30 hari → `POST /images/prune` (dangling) + `POST /build/prune` → GC registry (`SelfHostedRegistryService`,
-  sekarang di-export). Klien Docker dapat `removeImage`, `pruneImages`, `pruneBuildCache`. Uji nyata: 17,7 GB dibebaskan, container app tak tersentuh. Web: `disk-card.tsx` di Settings
-  (bar pemakaian, tombol Bersihkan untuk owner, toggle GC registry) dan field **Riwayat deployment** di form aplikasi. Belum: retensi riwayat monitoring, app di server remote
-  (image lama dihapus di daemon server itu tapi tidak ada registry di sana).
-- **Volume yatim** (`orphan-volumes.ts`, murni & di-unit-test — tanpa panggilan Docker): `expectedVolumes()` menghitung ulang, dari baris DB, setiap nama volume yang seharusnya
-  masih ada (memakai ulang generator nama yang sama dengan runner: `volumeNameFor`/`filesVolumeFor` dari `mounts.ts`, `volumeNameForDb`, `composeVolumeFor`, plus lima volume
-  singleton tetap seperti `aoox_buildkit`/`aoox_backups`) lalu dibandingkan ke `GET /system/df` daemon **lokal**. `isCandidateVolume()` **sengaja ketat** — hanya volume
-  berawalan `aoox_app_`/`aoox_db_`/`aoox_compose_` atau salah satu dari kelima singleton itu yang pernah dianggap "milik aoox"; volume `aoox_` lain
-  (mis. `aoox_postgres_data` — nama yang justru dihasilkan `docker-compose.dist.yml` untuk Postgres **milik panel sendiri**, karena stack itu diberi `name: aoox`)
-  tidak pernah masuk pertimbangan sama sekali, apalagi dilaporkan. `MaintenanceService.usage()` menampilkan daftar nama sebagai pratinjau (`orphanVolumes`); `cleanup()` baru benar-benar
-  menghapusnya lewat `DELETE /volumes/{name}` saat dipanggil dengan `pruneVolumes: true` — **default `false`**, termasuk di cron malam (beda dari `registryGc` yang default `true`),
-  karena volume bisa menyimpan data yang tidak ada cadangannya di tempat lain, sedangkan image/build cache selalu bisa dibangun ulang. Hanya daemon lokal — volume di server remote
-  tidak pernah disentuh. Diuji nyata terhadap dev DB: menemukan 4 volume yatim sungguhan (mount yang sudah dihapus tapi volume `_files` bersama tidak ikut terhapus, app/compose lama
-  dari eksperimen sebelumnya) **dan** dengan benar mengabaikan `aoox_postgres_data` decoy yang sengaja ditanam — itulah satu-satunya jaminan yang wajib tidak pernah regresi.
-  Web: `disk-card.tsx` menampilkan daftar + toggle "Sekalian hapus volume yatim" (hanya tampil kalau ada).
+- `src/modules/maintenance/` — `MaintenanceService.usage()` (`GET /maintenance/disk`, owner/admin: summarized `GET /system/df` + `reclaimableBytes` = dangling images + non-shared build cache,
+  `prunableDeployments`, the last cleanup report **in memory**) and `cleanup()` (`POST /maintenance/cleanup {registryGc?}`, owner, synchronous, 409 if already running;
+  also `@Cron('30 4 * * *')` unless `MAINTENANCE_NIGHTLY=false`). Order: per application, delete successful deployments beyond `Application.deploymentKeep` (default 10; **never**
+  `currentImage`, and images still referenced by kept rows — rollback reuses the ref — are not deleted; the `imageRef` of old rows is nulled, the log stays) → `DELETE /images/{ref}` +
+  delete the tag in the local registry (`getTag` + `deleteManifest`) → delete failed/queued rows older than 30 days → `POST /images/prune` (dangling) + `POST /build/prune` → registry GC (`SelfHostedRegistryService`,
+  now exported). The Docker client gained `removeImage`, `pruneImages`, `pruneBuildCache`. Tested for real: 17.7 GB freed, app containers untouched. Web: `disk-card.tsx` in Settings
+  (usage bar, Clean up button for owners, registry GC toggle) and the **Deployment history** field in the application form. Not yet: monitoring history retention, apps on remote servers
+  (old images are removed on that server's daemon, but there is no registry there).
+- **Orphan volumes** (`orphan-volumes.ts`, pure & unit-tested — no Docker calls): `expectedVolumes()` recomputes, from DB rows, every volume name that should still exist
+  (reusing the same name generators as the runner: `volumeNameFor`/`filesVolumeFor` from `mounts.ts`, `volumeNameForDb`, `composeVolumeFor`, plus five fixed singletons such as `aoox_buildkit`/`aoox_backups`), then compares them with `GET /system/df` of the **local** daemon. `isCandidateVolume()` is **deliberately strict** — only volumes prefixed `aoox_app_`/`aoox_db_`/`aoox_compose_` or one of those five singletons are ever considered "aoox-owned"; other `aoox_` volumes
+  (e.g. `aoox_postgres_data` — the name `docker-compose.dist.yml` produces for the panel's **own** Postgres, because that stack is given `name: aoox`)
+  are never considered at all, let alone reported. `MaintenanceService.usage()` shows the list of names as a preview (`orphanVolumes`); `cleanup()` only actually deletes them via `DELETE /volumes/{name}` when called with `pruneVolumes: true` — **default `false`**, including in the nightly cron (unlike `registryGc`, which defaults to `true`),
+  because volumes may hold data with no backup elsewhere, whereas images/build cache can always be rebuilt. Local daemon only — volumes on remote servers
+  are never touched. Tested for real against the dev DB: found 4 real orphan volumes (mounts that were deleted but whose shared `_files` volume was not removed, old apps/compose stacks from earlier experiments) **and** correctly ignored a deliberately planted `aoox_postgres_data` decoy — that is the one guarantee that must never regress.
+  Web: `disk-card.tsx` shows the list + a "Also remove orphan volumes" toggle (shown only when there are some).
 
-## Webhook masuk (keamanan tambahan)
+## Inbound webhooks (extra security)
 
-- `webhook-ip-allowlist.ts` (application module, dipakai ulang compose seperti `webhook-signature.ts`): lapis kedua **opsional**, `WEBHOOK_VERIFY_GITHUB_IP=true` (default mati) —
-  saat aktif, request yang teridentifikasi dari GitHub (header `X-GitHub-Event`/`X-Hub-Signature-256`) dan appnya sudah punya webhook secret harus juga datang dari salah satu rentang
-  IP resmi GitHub (`GET https://api.github.com/meta` field `hooks`, di-cache 1 jam; gagal fetch → **fail-open**, tidak pernah mengubah outage GitHub jadi outage deploy). `ipInCidr()`
-  murni & di-unit-test (IPv4 **dan** IPv6, termasuk menormalkan alamat IPv4-mapped `::ffff:a.b.c.d` yang muncul dari `req.ip` di socket dual-stack Docker). **Sengaja GitHub-only dan
-  mati secara default**: GitLab tidak mempublikasikan rentang IP webhook yang stabil (GitLab self-hosted bisa di mana saja), dan GitHub *Enterprise Server* (self-hosted) juga mengirim
-  `X-GitHub-Event` tapi dari jaringan pelanggan sendiri, bukan rentang github.com — menyalakan flag ini di sana akan menolak semua delivery asli. Diuji nyata terhadap `api.github.com/meta`
-  sungguhan (bukan mock): delivery bertanda tangan valid dari `127.0.0.1` ditolak 401 (`::ffff:127.0.0.1` di luar rentang), delivery GitLab dengan token yang sama dari alamat yang sama
-  tetap lolos (IP tidak pernah dicek untuk GitLab). Berlaku untuk webhook aplikasi maupun compose.
+- `webhook-ip-allowlist.ts` (application module, reused by compose like `webhook-signature.ts`): an **optional** second layer, `WEBHOOK_VERIFY_GITHUB_IP=true` (default off) —
+  when enabled, requests identified as coming from GitHub (`X-GitHub-Event`/`X-Hub-Signature-256` headers) for an app that already has a webhook secret must also come from one of GitHub's official IP ranges
+  (`GET https://api.github.com/meta`, field `hooks`, cached for 1 hour; fetch failure → **fail-open**, so a GitHub outage never becomes a deploy outage). `ipInCidr()`
+  is pure & unit-tested (IPv4 **and** IPv6, including normalizing the IPv4-mapped address `::ffff:a.b.c.d` that appears in `req.ip` on Docker's dual-stack sockets). **Deliberately GitHub-only and
+  off by default**: GitLab does not publish stable webhook IP ranges (self-hosted GitLab can be anywhere), and GitHub *Enterprise Server* (self-hosted) also sends
+  `X-GitHub-Event` but from the customer's own network, not github.com's ranges — enabling this flag there would reject every genuine delivery. Tested for real against the live `api.github.com/meta`
+  (not a mock): a validly signed delivery from `127.0.0.1` was rejected with 401 (`::ffff:127.0.0.1` is outside the ranges), while a GitLab delivery with the same token from the same address
+  still passed (the IP is never checked for GitLab). Applies to both application and compose webhooks.
 
-## Ekspor/impor project
+## Project export/import
 
-- Domain diekspor hanya `{host, https}`: **berkas konfigurasi dinamis Traefik** (per proxy) dan **`Domain.middlewares`** tidak ikut; domain hasil impor tanpa middleware, dan impor tidak gagal bila file sumber membawa field `middlewares` (diabaikan, ada tesnya).
-- `src/modules/project-transfer/` — format sendiri (`project-export.types.ts`: `format: 'aoox-project'`, `version: 1`). Tanpa id: referensi ke objek platform
-  (registry, git credential, tujuan backup, server) dibawa **berdasarkan nama** dan dicocokkan saat impor; yang tidak ketemu → kolom null + `warnings`, bukan error.
-  Isi: project (nama/deskripsi/env), aplikasi (sumber, build, env/buildArgs, domain, mount, job, jadwal backup, limit, preview), database (engine/tag/nama/user, mount, job,
-  `password` hanya bila `includeSecrets`), compose (source/template/composeContent/git, serviceDomains, job). Tidak diekspor: webhook token/secret (dibuat baru), riwayat deployment/backup, status.
-- `export-project/` `GET /projects/:id/export?includeSecrets=` (`includeSecrets` → owner saja, 403), `import-project/` `POST /projects/import {file, name?}` (throttle 10/menit; `file` `@IsObject`,
-  bentuknya divalidasi `validateShape` → 400 untuk format/versi salah). `ProjectImportService.import()`: project baru milik pengimpor; `appName`/`slug` dipakai ulang bila bebas, kalau tidak
-  di-slugify ulang (re-impor di instance yang sama); `hostPort` yang sudah dipakai app/DB lain dan domain yang sudah ada dilewati dengan warning; mount bind hanya owner/admin (aturan add-mount);
-  job lewat `JobService.build` (cron salah → job dilewati) lalu `JobSchedulerService.reschedule`; DB dibuat `creating` + `provisionInBackground` (password dari file atau baru) setelah mount-nya
-  ada, `BackupSchedulerService.reschedule`; app `VolumeBackupSchedulerService.reschedule`. Ketiga scheduler kini di-export module-nya. Membalas `ImportReport {projectId, created{...}, warnings[]}`.
-  Spec `project-import.service.spec.ts` (repo in-memory). Belum: impor selektif/merge ke project yang ada, ekspor data (backup) ikut serta, ekspor seluruh instance.
+- Domains are exported only as `{host, https}`: **dynamic Traefik config files** (per proxy) and **`Domain.middlewares`** are not included; imported domains have no middlewares, and an import does not fail if the source file carries a `middlewares` field (it is ignored, with a test).
+- `src/modules/project-transfer/` — its own format (`project-export.types.ts`: `format: 'aoox-project'`, `version: 1`). No ids: references to platform objects
+  (registry, git credential, backup destination, server) are carried **by name** and matched on import; anything not found → null column + `warnings`, not an error.
+  Contents: project (name/description/env), applications (source, build, env/buildArgs, domains, mounts, jobs, backup schedule, limits, previews), databases (engine/tag/name/user, mounts, jobs,
+  `password` only with `includeSecrets`), compose (source/template/composeContent/git, serviceDomains, jobs). Not exported: webhook tokens/secrets (regenerated), deployment/backup history, status.
+- `export-project/` `GET /projects/:id/export?includeSecrets=` (`includeSecrets` → owner only, 403), `import-project/` `POST /projects/import {file, name?}` (throttle 10/min; `file` `@IsObject`,
+  its shape is checked by `validateShape` → 400 for a wrong format/version). `ProjectImportService.import()`: the new project belongs to the importer; `appName`/`slug` are reused if free, otherwise re-slugified (re-import on the same instance); `hostPort` values already used by another app/DB and existing domains are skipped with a warning; bind mounts are for owner/admin only (add-mount rules);
+  jobs go through `JobService.build` (bad cron → job skipped), then `JobSchedulerService.reschedule`; DBs are created as `creating` + `provisionInBackground` (password from the file or a new one) after their mounts
+  exist, then `BackupSchedulerService.reschedule`; apps get `VolumeBackupSchedulerService.reschedule`. All three schedulers are now exported by their modules. Responds with `ImportReport {projectId, created{...}, warnings[]}`.
+  Spec `project-import.service.spec.ts` (in-memory repos). Not yet: selective import/merge into an existing project, including data (backups), exporting an entire instance.
 
-## Backup instance (database panel)
+## Instance backup (panel database)
 
-- `src/modules/instance-backup/` — snapshot DB panel **tanpa pg_dump** (API tidak punya binary-nya dan Postgres panel bisa di luar network `aoox`): `database-snapshot.ts`
-  `tableOrder(entityMetadatas)` (Kahn atas FK, pure & di-unit-test; siklus → error) → tiap tabel `SELECT row_to_json(t)` → satu JSON `{format:'aoox-instance', version:1,
-  migrations[], tables[]}` di-gzip → ditulis ke volume `aoox_backups` `_instance/<stamp>.json.gz` lewat busybox stopped + `putArchive` (`tarFiles` kini menerima Buffer).
-  Entity `InstanceBackup` (`instance_backups`: filename, status success|failed, trigger, size, `row_count`, `schema_version` = migrasi terakhir, destination/remoteKey) — row ditulis **setelah**
-  dump selesai sehingga snapshot tidak pernah memuat dirinya sebagai "running"; `InstanceBackupSettings` (`instance_backup_settings`, satu row `default`: cron, keep, destinationId).
-- Restore (`json_populate_recordset(NULL::"t", $1)` per 500 baris dalam satu transaksi; DELETE urutan terbalik lalu INSERT urutan FK): syarat daftar `migrations` **sama persis** (400 kalau beda —
-  restore hanya antar versi yang sama), tabel `migrations` tidak disentuh, row `instance_backups` milik server ini di-merge kembali (`ON CONFLICT DO NOTHING`, dibaca sebagai `row_to_json`
-  karena key harus nama kolom). Setelahnya: `reloadAll()` di `JobSchedulerService`/`BackupSchedulerService`/`VolumeBackupSchedulerService` (hapus entri cron miliknya, daftar ulang dari DB),
-  `RemoteDockerService.forgetAll()`, dan probe dekripsi satu nilai terenkripsi → warning "ENCRYPTION_KEY berbeda" bila gagal; warning JWT_SECRET selalu disertakan. Container tidak disentuh.
-- Flow (semua `@Roles('owner')`): `POST /instance/backups` (sinkron, 201), `GET /instance/backups` (+`local` via `BackupFilesService.annotate`), `POST /instance/backups/:id/restore`
-  (`ensureLocal` → tarik dari S3 bila perlu), `POST /instance/restore` (multipart `file`, `SNAPSHOT_MAX_BYTES` 256 MB — jalur server baru), `GET .../download`, `DELETE`,
-  `GET/PATCH /instance/backup-settings` (+`InstanceBackupSchedulerService.reschedule`; terjadwal → `prune(keep)` hanya yang scheduled). Gagal → notifikasi `backupFailure`.
-  Web: `instance-backup-card.tsx` di Settings → Infrastruktur (owner), proxy unduh `/api/instance-backups/[id]/download`, restore dari file lewat server action multipart.
-  Belum: restore selektif per tabel, backup file mount/volume registry ikut serta, restore lintas versi (jalankan migrasi setelah restore).
+- `src/modules/instance-backup/` — a snapshot of the panel DB **without pg_dump** (the API does not have its binary, and the panel's Postgres may be outside the `aoox` network): `database-snapshot.ts`
+  `tableOrder(entityMetadatas)` (Kahn's algorithm over FKs, pure & unit-tested; cycle → error) → each table `SELECT row_to_json(t)` → one JSON `{format:'aoox-instance', version:1,
+  migrations[], tables[]}` gzipped → written to the `aoox_backups` volume at `_instance/<stamp>.json.gz` via a stopped busybox + `putArchive` (`tarFiles` now accepts a Buffer).
+  Entity `InstanceBackup` (`instance_backups`: filename, status success|failed, trigger, size, `row_count`, `schema_version` = latest migration, destination/remoteKey) — the row is written **after**
+  the dump finishes so a snapshot never contains itself as "running"; `InstanceBackupSettings` (`instance_backup_settings`, one `default` row: cron, keep, destinationId).
+- Restore (`json_populate_recordset(NULL::"t", $1)` per 500 rows in one transaction; DELETE in reverse order, then INSERT in FK order): the `migrations` lists must be **exactly equal** (400 if different —
+  restore only works between identical versions), the `migrations` table is not touched, the `instance_backups` rows for this server are merged back (`ON CONFLICT DO NOTHING`, read as `row_to_json`
+  because keys must be column names). Afterwards: `reloadAll()` on `JobSchedulerService`/`BackupSchedulerService`/`VolumeBackupSchedulerService` (remove their own cron entries, re-register from the DB),
+  `RemoteDockerService.forgetAll()`, and a decryption probe of one encrypted value → a warning "ENCRYPTION_KEY differs" if it fails; a JWT_SECRET warning is always included. The containers are not touched.
+- Flow (all `@Roles('owner')`): `POST /instance/backups` (synchronous, 201), `GET /instance/backups` (+`local` via `BackupFilesService.annotate`), `POST /instance/backups/:id/restore`
+  (`ensureLocal` → pull from S3 if needed), `POST /instance/restore` (multipart `file`, `SNAPSHOT_MAX_BYTES` 256 MB — the new-server path), `GET .../download`, `DELETE`,
+  `GET/PATCH /instance/backup-settings` (+`InstanceBackupSchedulerService.reschedule`; scheduled → `prune(keep)` applies only to scheduled ones). Failure → `backupFailure` notification.
+  Web: `instance-backup-card.tsx` in Settings → Infrastructure (owner), download proxy `/api/instance-backups/[id]/download`, restore from a file via a multipart server action.
+  Not yet: selective per-table restore, including registry mount/volume backups, cross-version restore (run migrations after restore).
 
-## Update instance (aoox itu sendiri)
+## Instance update (aoox itself)
 
-- `src/modules/instance-update/` — cek & terapkan update untuk image `aoox-api`/`aoox-web` milik panel sendiri (bukan aplikasi yang di-deploy user — itu sudah ada
-  `ImageDigestService`/`ImageUpdateWatcherService` terpisah). Sebelumnya cuma bisa manual (`docker compose pull && up -d` lewat SSH, didokumentasikan di docs/instalasi).
-- **Perbandingan digest, bukan versi/tag**: `remoteDigestFor()` memakai ulang `parseImageRef` (application module) + `fetchRemoteDigest` (registry module, `HEAD /v2/.../manifests/<tag>`)
-  yang sudah dipakai `ImageDigestService` untuk auto-update image aplikasi — **selalu Docker Hub** (`hideandseeklab/aoox-api`/`aoox-web` publik, tanpa kredensial), tag dari env
-  `API_IMAGE`/`WEB_IMAGE` (default `:latest`, sama dengan `docker-compose.dist.yml`). **Sengaja tidak membandingkan local `docker inspect`/`RepoDigests` dengan digest registry** —
-  pelajaran yang sama dengan auto-update aplikasi ("beda representasi bisa memicu loop redeploy"): baseline **selalu** disimpan dari `fetchRemoteDigest()` yang sama dipakai untuk
-  cek berikutnya, bukan dicampur dengan nilai dari sumber lain. `InstanceUpdateState` (tabel `instance_update_state`, row tunggal `default`): `apiDigest`/`webDigest`/`checkedAt`.
-  **Cek pertama kali** (baseline `null`) tidak bisa tahu apakah versi yang berjalan sudah basi — hanya menyimpan digest saat ini sebagai baseline dan melaporkan `updateAvailable: false`
-  (`currentDigest: null` di response, dibedakan dari "sudah terbaru" di UI); jujur soal keterbatasan ini daripada berpura-pura tahu.
-- **Apply** (`POST /instance/update/apply`, owner, throttle 3/menit, 202): pola yang sama persis dengan `panel-domain` — butuh `INSTALL_DIR`, fire digest baru + simpan sebagai
-  baseline lalu `setTimeout` 1,5 detik supaya response HTTP sempat terkirim sebelum container `web`/`api` di-recreate. Helper `docker:29-cli` (bind `INSTALL_DIR` host langsung +
-  docker socket, `runComposeHelper()` di `docker/compose-apply.util.ts` — dipakai bersama `panel-domain` dan `instance-env`) menjalankan `docker compose $FILES --env-file .env.dist
-  pull` lalu `up -d`. **Jebakan yang sempat lolos**: dulu dipikir `-f docker-compose.dist.yml` saja cukup karena "override otomatis ter-include" — salah; Compose hanya
-  meng-auto-include `docker-compose.override.yml` kalau file utama bernama persis `docker-compose.yml` (default lookup tanpa `-f`), bukan saat `-f docker-compose.dist.yml` disebut
-  eksplisit (ditemukan lewat test VPS sungguhan: domain panel hilang lagi setelah `aoox update`). `COMPOSE_FILES_SCRIPT` (util yang sama) membangun `$FILES` dengan `[ -f
-  docker-compose.override.yml ] && FILES="$FILES -f docker-compose.override.yml"` — file itu boleh belum ada sama sekali (belum pernah set domain panel). Tidak menyentuh
-  `docker-compose.domain.yml` manual (butuh `-f` eksplisit sendiri, di luar cakupan fitur ini).
-- `GET /instance/update` (owner) juga membalas `currentVersion` (dibaca dari `package.json` di `process.cwd()` — image runner meng-copy `package.json` ke `/app/`, lihat Dockerfile)
-  untuk ditampilkan, bukan dipakai untuk logika pembanding update (channel alpha belum tentu naik linear per tag, digest tetap sumber kebenaran).
-- CLI: `aoox update` (cek) / `aoox update --apply` (terapkan). Web: `instance-update-card.tsx` di Settings → Infrastruktur (owner), tombol "Cek update" (server action, bukan cuma
-  render awal) dan "Terapkan update" (disabled kalau `INSTALL_DIR` kosong atau tidak ada update).
-  Belum: notifikasi (email/webhook) saat ada update tersedia — sinyal versi di bawah hanya untuk badge sidebar/halaman Update —, rollback otomatis kalau `docker compose up` gagal setelah pull.
-- **Sinyal "ada versi lebih baru" untuk sidebar** (`instance-version.service.ts`, `semver.ts`, `registry/remote-tags.ts`): sinyal digest di atas tidak cukup — baseline `null` di cek pertama tidak bisa
-  tahu versi berjalan sudah basi, dan hanya jalan saat owner menekan tombol. Jadi ada sumber kedua yang **berbasis versi**: `fetchRemoteTags()` (`GET /v2/hideandseeklab/aoox-api/tags/list?n=1000`, alur
-  Bearer yang sama dengan `fetchRemoteDigest`) → `newestVersion(tags, currentVersion)` (semver.org 2.0.0 murni: `alpha.9 < alpha.10`, stabil > pre-release dengan inti sama; tag non-semver seperti
-  `latest` diabaikan; instalasi **stabil tidak pernah ditawari pre-release**, instalasi pre-release ditawari apa pun yang lebih baru) → disimpan di kolom `latest_version`/`latest_checked_at`
-  (`instance_update_state`, migrasi `InstanceUpdateLatestVersion`, additive). Dipicu `@Cron('17 */6 * * *')` (+ jitter acak ≤5 menit) dan sekali ±20–60 detik setelah boot
-  (`OnApplicationBootstrap`, `setTimeout(...).unref()`), **tidak pernah** per request; gagal jaringan/registry = `debug` saja, cache lama dipertahankan, `latest_checked_at` hanya untuk sukses
-  (instalasi tanpa internet tetap normal tanpa badge). `check()` (`GET /instance/update`, tombol "Cek update") memanggil `refresh()` juga dan mengembalikan blok `version`, jadi halaman dan sidebar
-  selalu konsisten. **`updateAvailable` diturunkan saat dibaca** (versi cache lebih baru dari `appVersion()` proses ini), bukan disimpan: badge hilang seketika begitu container baru menyala.
-  **Instalasi dengan tag di-pin**: `docker-compose.dist.yml` sekarang meneruskan `API_IMAGE`/`WEB_IMAGE` (default persis sama dengan baris `image:`) ke container api, tapi **instalasi lama** baru
-  menerimanya lewat `aoox reinstall` (`aoox update`/"Terapkan update" tidak menulis ulang compose) — sebelum itu env-nya kosong; `tracked()` memakai `API_IMAGE` bila ada,
-  kalau tidak `Config.Image` container sendiri (`inspectContainer(os.hostname())`, sekali per proses) → `latest` (badge boleh), `pinned` (tag versi/channel/digest — `pull` tidak akan menggesernya,
-  jadi **tanpa badge**, halaman Update hanya menginformasikan versi terbaru) atau `unknown` (daemon tak terjangkau/bukan container — **tanpa badge**, sengaja daripada menyesatkan).
-  `GET /auth/me` menambah `updateAvailable: {version, applying}` **hanya untuk `owner`** (`MeService`, dibaca dari cache tanpa panggilan registry; error apa pun → field dihilangkan, `/auth/me` tidak pernah
-  rusak karenanya; peran lain bahkan tidak memicu pembacaan cache). `applying` dibatasi 10 menit sejak `applyStartedAt` supaya apply yang gagal tidak mengunci teks "Sedang memperbarui…" selamanya.
-  Env `INSTANCE_UPDATE_REGISTRY_URL` mengganti basis URL registry (mirror/uji). Diuji nyata dengan registry palsu + Postgres terpisah: versi lebih tinggi → owner dapat field, admin/member tidak;
-  sama/lebih lama → hilang; `alpha.10` > `alpha.9`; registry 500 → tanpa error log, cache dipertahankan. **Belum diuji nyata**: tag `pinned` terhadap container Docker sungguhan (hanya tes unit).
-- **Variabel opsional yang diteruskan compose ke api**: `API_IMAGE`, `WEB_IMAGE` (default = `image:`; jangan biarkan keduanya berbeda — ada tes di CLI yang menjaga), `WEBHOOK_VERIFY_GITHUB_IP`
-  dan `PREVIEW_DOMAIN` (`${VAR:-}` = kosong = mati/tidak diset; pembacanya memakai `=== 'true'` dan `?.trim() ||`, jadi string kosong aman — beda dari jebakan `??`). Keempatnya tidak ditulis ke
-  `.env.dist` baru oleh `aoox install`/`reinstall` (tak ada default bermakna) — hanya contoh terkomentar di `.env.dist.example`.
-- **Keterbatasan penting**: `apply()` hanya `docker compose pull && up -d` — **tidak pernah** menulis ulang `docker-compose.dist.yml` di `INSTALL_DIR` host. Jadi perbaikan/fitur baru
-  yang butuh baris baru di file compose itu sendiri (var `environment:` baru, service baru, dll — mis. `PUBLIC_API_URL` yang sekarang juga diteruskan ke service `api`, lihat bagian
-  Git credential & Webhook) **tidak sampai** ke instalasi yang sudah ada lewat `aoox update` / tombol "Terapkan update" — image baru dijalankan dengan compose file **lama** di host,
-  jadi environment baru itu tidak pernah terpasang sampai file compose di host diedit manual. Langkah manual: tambahkan baris yang kurang ke service yang tepat di
-  `/opt/aoox/docker-compose.dist.yml` (atau `INSTALL_DIR` lain), lalu `docker compose -f docker-compose.dist.yml -f docker-compose.override.yml --env-file .env.dist up -d`
-  (`-f docker-compose.override.yml` hanya kalau file itu ada — dibuat oleh panel-domain/instance-env, lihat bagian Proxy & Domain). Ide yang belum diimplementasikan: `apply()`
-  bisa juga menulis ulang `docker-compose.dist.yml` dari salinan yang dibundel di image `api` sendiri (image sudah membawa versi baru file itu untuk keperluan lain) sebelum
-  `up -d`, supaya update compose ikut ter-apply otomatis — belum dikerjakan, perlu hati-hati karena bisa menimpa modifikasi manual operator di file itu (mis. `docker-compose.build.yml`
-  override lokal, atau baris yang sengaja ditambah operator sendiri).
-- **Perbaikan instalasi lama**: `aoox reinstall` di `../aoox-cli` menutup keterbatasan di atas — menulis ulang `docker-compose.dist.yml` (+ `docker-compose.domain.yml` bila ada) dari salinan
-  bundel CLI, **menggabung** `.env.dist` (nilai/urutan/komentar dipertahankan, hanya key hilang yang punya default aman ditambah, mis. `TERMINAL_SSH_USER=root`; secret tidak pernah dibuat
-  ulang, berhenti bila `POSTGRES_PASSWORD`/`JWT_SECRET`/`ENCRYPTION_KEY` hilang), backup ke `<dir>/backups/<waktu>/`, lalu `pull` + `up -d --force-recreate` dengan daftar `-f` yang
-  sama dengan stack berjalan (label `com.docker.compose.project.config_files` container api). `docker-compose.override.yml` (milik panel-domain/instance-env) tidak disentuh. Rekomendasikan ini
-  — **bukan** `aoox install --force` (secret baru) — untuk instalasi yang ketinggalan compose/env. Karena default key diturunkan dari `buildEnvFile` + `${VAR}` di compose bundel,
-  perubahan compose/env baru di sini tetap harus disalin ke `aoox-cli/assets/install/` (lihat bagian Docker / distribusi).
+- `src/modules/instance-update/` — check and apply updates for the panel's own `aoox-api`/`aoox-web` images (not the apps users deploy — those are already covered by the separate
+  `ImageDigestService`/`ImageUpdateWatcherService`). Previously it could only be done manually (`docker compose pull && up -d` over SSH, documented in the install docs).
+- **Digest comparison, not version/tag**: `remoteDigestFor()` reuses `parseImageRef` (application module) + `fetchRemoteDigest` (registry module, `HEAD /v2/.../manifests/<tag>`)
+  already used by `ImageDigestService` for app image auto-update — **always Docker Hub** (`hideandseeklab/aoox-api`/`aoox-web` are public, no credentials), with the tag taken from env
+  `API_IMAGE`/`WEB_IMAGE` (default `:latest`, same as `docker-compose.dist.yml`). **Deliberately does not compare local `docker inspect`/`RepoDigests` with the registry digest** —
+  the same lesson as app auto-update ("different representations can cause a redeploy loop"): the baseline is **always** stored from the same `fetchRemoteDigest()` used for the next check,
+  never mixed with values from another source. `InstanceUpdateState` (table `instance_update_state`, single `default` row): `apiDigest`/`webDigest`/`checkedAt`.
+  **First check** (baseline `null`) cannot tell whether the running version is already outdated — it only stores the current digest as the baseline and reports `updateAvailable: false`
+  (`currentDigest: null` in the response, distinguishing it from "up to date" in the UI); this limitation is stated honestly rather than pretending to know.
+- **Apply** (`POST /instance/update/apply`, owner, throttle 3/min, 202): exactly the same pattern as `panel-domain` — requires `INSTALL_DIR`, stores the new digest as the baseline,
+  then `setTimeout` 1.5 seconds so the HTTP response can be sent before the `web`/`api` containers are recreated. A `docker:29-cli` helper (bind-mounts the host `INSTALL_DIR` directly + the
+  docker socket; `runComposeHelper()` in `docker/compose-apply.util.ts`, shared with `panel-domain` and `instance-env`) runs `docker compose $FILES --env-file .env.dist
+  pull` then `up -d`. **Pitfall that slipped through**: it was previously assumed that `-f docker-compose.dist.yml` alone was enough because the "override is included automatically" — wrong; Compose only auto-includes `docker-compose.override.yml` when the main file is named exactly `docker-compose.yml` (the default lookup without `-f`), not when `-f docker-compose.dist.yml` is given
+  explicitly (found via a real VPS test: the panel domain disappeared again after `aoox update`). `COMPOSE_FILES_SCRIPT` (same util) builds `$FILES` with
+  `[ -f docker-compose.override.yml ] && FILES="$FILES -f docker-compose.override.yml"` — the file may not exist at all (the panel domain has never been set). It does not touch
+  a manual `docker-compose.domain.yml` (it needs its own explicit `-f`, outside the scope of this feature).
+- `GET /instance/update` (owner) also returns `currentVersion` (read from `package.json` in `process.cwd()` — the runner image copies `package.json` to `/app/`, see the Dockerfile)
+  for display, not for update comparison logic (the alpha channel does not necessarily increase linearly per tag; the digest remains the source of truth).
+- CLI: `aoox update` (check) / `aoox update --apply` (apply). Web: `instance-update-card.tsx` in Settings → Infrastructure (owner), a "Check for update" button (server action, not just the initial render) and "Apply update" button (disabled if `INSTALL_DIR` is empty or there is no update).
+  Not yet: notifications (email/webhook) when an update is available — the version signal below is only for the sidebar badge / Update page — and automatic rollback if `docker compose up` fails after the pull.
+- **"Newer version available" signal for the sidebar** (`instance-version.service.ts`, `semver.ts`, `registry/remote-tags.ts`): the digest signal above is not enough — a `null` baseline on the first check cannot tell whether the running version is outdated, and it only runs when the owner presses the button. So there is a second source that is **version-based**: `fetchRemoteTags()` (`GET /v2/hideandseeklab/aoox-api/tags/list?n=1000`, same Bearer flow as `fetchRemoteDigest`) → `newestVersion(tags, currentVersion)` (pure semver.org 2.0.0: `alpha.9 < alpha.10`, stable > pre-release with the same core; non-semver tags such as
+  `latest` are ignored; **stable installs are never offered a pre-release**, pre-release installs are offered anything newer) → stored in the `latest_version`/`latest_checked_at` columns
+  (`instance_update_state`, migration `InstanceUpdateLatestVersion`, additive). Triggered by `@Cron('17 */6 * * *')` (+ random jitter up to 5 minutes) and once ~20–60 seconds after boot
+  (`OnApplicationBootstrap`, `setTimeout(...).unref()`), **never** per request; network/registry failure = `debug` only, the old cache is kept, `latest_checked_at` is only set on success
+  (installs without internet access keep working normally, without a badge). `check()` (`GET /instance/update`, "Check for update" button) also calls `refresh()` and returns a `version` block, so the page and sidebar
+  always agree. **`updateAvailable` is derived at read time** (the cached version is newer than this process's `appVersion()`), not stored: the badge disappears immediately once the new container starts.
+  **Pinned-tag installs**: `docker-compose.dist.yml` now passes `API_IMAGE`/`WEB_IMAGE` (defaults identical to the `image:` lines) to the api container, but **existing installs** only get them via `aoox reinstall` (`aoox update`/"Apply update" does not rewrite compose) — until then the env is empty; `tracked()` uses `API_IMAGE` when set,
+  otherwise the container's own `Config.Image` (`inspectContainer(os.hostname())`, once per process) → `latest` (badge allowed), `pinned` (version/channel/digest tag — `pull` will not move it,
+  so **no badge**; the Update page only informs about the latest version), or `unknown` (daemon unreachable / not a container — **no badge**, deliberately rather than misleading).
+  `GET /auth/me` adds `updateAvailable: {version, applying}` **for `owner` only** (`MeService`, read from the cache without a registry call; any error → the field is omitted, so `/auth/me` never breaks because of it; other roles do not even trigger the cache read). `applying` is capped at 10 minutes since `applyStartedAt` so a failed apply does not lock the "Updating…" (Sedang memperbarui…) text forever.
+  Env `INSTANCE_UPDATE_REGISTRY_URL` overrides the registry base URL (mirror/testing). Tested for real with a fake registry + a separate Postgres: higher version → owner gets the field, admin/member do not; same/older → gone;
+  `alpha.10` > `alpha.9`; registry 500 → no error log, cache kept. **Not yet tested for real**: `pinned` tags against a real Docker container (unit tests only).
+- **Optional variables passed by compose to api**: `API_IMAGE`, `WEB_IMAGE` (default = `image:`; do not let them differ — a CLI test guards this), `WEBHOOK_VERIFY_GITHUB_IP`
+  and `PREVIEW_DOMAIN` (`${VAR:-}` = empty = off/unset; their readers use `=== 'true'` and `?.trim() ||`, so an empty string is safe — unlike the `??` pitfall). None of the four is written into a new `.env.dist` by `aoox install`/`reinstall` (no meaningful default) — only commented examples in `.env.dist.example`.
+- **Important limitation**: `apply()` only does `docker compose pull && up -d` — it **never** rewrites `docker-compose.dist.yml` in the host's `INSTALL_DIR`. So fixes/new features that need new lines in the compose file itself (new `environment:` vars, new services, etc. — e.g. `PUBLIC_API_URL`, which is now also passed to the `api` service, see the Git credential & Webhook section) **do not reach** existing installs via `aoox update` / "Apply update" — the new image runs with the **old** compose file on the host,
+  so the new environment is never applied until the host compose file is edited manually. Manual step: add the missing line to the right service in
+  `/opt/aoox/docker-compose.dist.yml` (or another `INSTALL_DIR`), then `docker compose -f docker-compose.dist.yml -f docker-compose.override.yml --env-file .env.dist up -d`
+  (`-f docker-compose.override.yml` only if that file exists — it is created by panel-domain/instance-env, see the Proxy & Domain section). An idea not yet implemented: `apply()`
+  could also rewrite `docker-compose.dist.yml` from the copy bundled in the `api` image itself (the image already carries the new version of that file for other purposes) before
+  `up -d`, so compose updates are applied automatically — not done yet, because it needs care: it could overwrite manual operator changes to that file (e.g. a local `docker-compose.build.yml`
+  override, or lines the operator added on purpose).
+- **Fixing old installs**: `aoox reinstall` in `../aoox-cli` closes the gap above — it rewrites `docker-compose.dist.yml` (+ `docker-compose.domain.yml` if present) from the CLI's bundled copy,
+  **merges** `.env.dist` (values/order/comments kept, only missing keys with safe defaults are added, e.g. `TERMINAL_SSH_USER=root`; secrets are never regenerated,
+  and it stops if `POSTGRES_PASSWORD`/`JWT_SECRET`/`ENCRYPTION_KEY` is missing), backs up to `<dir>/backups/<time>/`, then `pull` + `up -d --force-recreate` with the same `-f` list as the running stack (from the `com.docker.compose.project.config_files` label of the api container). `docker-compose.override.yml` (owned by panel-domain/instance-env) is not touched. Recommended — **not** `aoox install --force` (new secrets) — for installs that are behind on compose/env. Because the default keys are derived from `buildEnvFile` + the `${VAR}` references in the bundled compose,
+  any new compose/env changes here must still be copied to `aoox-cli/assets/install/` (see the Docker / distribution section).
 
-## Environment instance (`.env.dist` sebagian, dari dashboard)
+## Instance environment (part of `.env.dist`, from the dashboard)
 
-- `src/modules/instance-env/` — subset **whitelist** env var yang bisa diubah owner dari dashboard tanpa SSH: `TERMINAL_SSH_HOST/PORT/USER/PASSWORD`, `PUBLIC_IP`,
-  `REGISTRY_PUBLIC_HOST`. Pola sama persis dengan `panel-domain`/`instance-update` (butuh `INSTALL_DIR`, helper `docker:29-cli` via `runComposeHelper()`,
-  `setTimeout` 1,5 detik karena mengganti env ini me-recreate container `api` — satu-satunya service yang mendeklarasikan var-var ini di `docker-compose.dist.yml`).
-  **Sengaja whitelist, bukan editor bebas**: menambah field di sini tanpa juga menambahkannya ke `environment:` service `api` di `docker-compose.dist.yml` tidak akan
-  pernah berlaku (Compose hanya meneruskan var yang memang dideklarasikan di sana, meski `.env.dist` punya baris lain) — jangan buat field baru tanpa mengecek itu dulu.
-  Var seperti `JWT_SECRET`/`ENCRYPTION_KEY`/`POSTGRES_PASSWORD` **tidak pernah** masuk whitelist ini (mengubahnya lewat form biasa berisiko: invalidasi semua sesi,
-  gagal dekripsi kredensial tersimpan, dll — tetap harus manual dengan kesadaran penuh).
-- `GET /instance/env` (owner) membalas nilai aktif sekarang (`ConfigService.get()`, sama seperti `panel-domain.status()` membaca `WEB_ORIGIN`) — bukan isi file `.env.dist`
-  yang belum diterapkan. `terminalSshPassword` **tidak pernah** dikembalikan (hanya `terminalSshPasswordSet: boolean`), pola yang sama dengan notifikasi/webhook DTO yang
-  tidak pernah membawa rahasia di endpoint list/status.
-- `GET /instance/env` juga membalas `terminalSshUserDefault` (`root`, dari konstanta yang sama dengan backend terminal): `terminalSshUser` tetap **nilai mentah** (null bila kosong)
-  supaya form tidak menyimpan `root` yang tak pernah diketik user; web menampilkan `root (default)` sebagai placeholder + catatan selagi kosong.
-- `PATCH /instance/env` (owner, throttle 5/menit, 202): tiap field independen — field yang di-omit dibiarkan, string kosong **menghapus** nilai (kembali ke default
-  `${VAR:-default}` di compose, mis. `REGISTRY_PUBLIC_HOST=` kosong → balik ke `localhost`). Hanya key yang benar-benar dikirim yang di-upsert ke `.env.dist`
-  (`envUpsertLine()`), jadi menyimpan bagian "SSH Terminal" saja tidak menyentuh `PUBLIC_IP`/`REGISTRY_PUBLIC_HOST`. Web: `instance-env-card.tsx` di Settings → Infrastruktur
-  → **Environment** (owner), dua bagian (SSH Terminal, Jaringan) dengan tombol simpan terpisah agar tidak perlu isi semua sekaligus.
-  Belum: whitelist var lain yang sering ditanyakan (mis. `METRICS_RETENTION_DAYS`, `DISK_ALERT_PERCENT` — belum ada di `docker-compose.dist.yml` sama sekali, perlu
-  ditambahkan ke compose dulu sebelum bisa masuk whitelist ini), validasi bahwa `TERMINAL_SSH_HOST` benar-benar bisa dijangkau sebelum disimpan.
-- `docker/compose-apply.util.ts` (dipakai `panel-domain`, `instance-update`, `instance-env`): `envUpsertLine()` (pure, di-unit-test) dan `runComposeHelper()`
-  (buat container `docker:29-cli`, bind `installDir` + socket docker, opsional tulis file lewat `putArchive`, start, wait, hapus) — sebelumnya disalin manual di dua
-  tempat (dan nyaris di tempat ketiga ini), sekarang satu sumber kebenaran untuk pola "edit `.env.dist`/compose lalu `docker compose up` dari dalam container sendiri".
+- `src/modules/instance-env/` — a **whitelisted** subset of env vars the owner can change from the dashboard without SSH: `TERMINAL_SSH_HOST/PORT/USER/PASSWORD`, `PUBLIC_IP`,
+  `REGISTRY_PUBLIC_HOST`. Same pattern as `panel-domain`/`instance-update` (requires `INSTALL_DIR`, a `docker:29-cli` helper via `runComposeHelper()`,
+  `setTimeout` 1.5 seconds because changing these env vars recreates the `api` container — the only service that declares these vars in `docker-compose.dist.yml`).
+  **Deliberately a whitelist, not a free-form editor**: adding a field here without also adding it to the `environment:` of the `api` service in `docker-compose.dist.yml` will never take effect (Compose only forwards vars that are declared there, even if `.env.dist` has other lines) — do not create new fields without checking that first.
+  Vars such as `JWT_SECRET`/`ENCRYPTION_KEY`/`POSTGRES_PASSWORD` are **never** on this whitelist (changing them through a regular form is risky: it invalidates all sessions,
+  breaks decryption of stored credentials, etc. — they must remain manual, done with full awareness).
+- `GET /instance/env` (owner) returns the currently active values (`ConfigService.get()`, same as `panel-domain.status()` reads `WEB_ORIGIN`) — not the content of `.env.dist`
+  which has not been applied yet. `terminalSshPassword` is **never** returned (only `terminalSshPasswordSet: boolean`), the same pattern as the notification/webhook DTOs, which never carry secrets on list/status endpoints.
+- `GET /instance/env` also returns `terminalSshUserDefault` (`root`, from the same constant as the terminal backend): `terminalSshUser` remains the **raw value** (null when empty)
+  so the form does not save a `root` the user never typed; the web shows `root (default)` as a placeholder + note while empty.
+- `PATCH /instance/env` (owner, throttle 5/min, 202): each field is independent — omitted fields are left alone, and an empty string **removes** the value (back to the `${VAR:-default}` default
+  in compose, e.g. `REGISTRY_PUBLIC_HOST=` empty → back to `localhost`). Only the keys actually sent are upserted into `.env.dist`
+  (`envUpsertLine()`), so saving only the "SSH Terminal" section does not touch `PUBLIC_IP`/`REGISTRY_PUBLIC_HOST`. Web: `instance-env-card.tsx` in Settings → Infrastructure
+  → **Environment** (owner), two sections (SSH Terminal, Network) with separate save buttons so you do not have to fill in everything at once.
+  Not yet: whitelisting other frequently requested vars (e.g. `METRICS_RETENTION_DAYS`, `DISK_ALERT_PERCENT` — not present in `docker-compose.dist.yml` at all yet, so they must be added to compose before they can join this whitelist),
+  validating that `TERMINAL_SSH_HOST` is actually reachable before saving.
+- `docker/compose-apply.util.ts` (used by `panel-domain`, `instance-update`, `instance-env`): `envUpsertLine()` (pure, unit-tested) and `runComposeHelper()`
+  (creates a `docker:29-cli` container, binds `installDir` + the docker socket, optionally writes files via `putArchive`, starts, waits, removes) — previously copied by hand in two
+  places (and nearly a third time for this feature), now a single source of truth for the pattern "edit `.env.dist`/compose, then `docker compose up` from inside its own container".
 
-## Docker Swarm (tahap 1–2: single node, app sebagai service)
+## Docker Swarm (stages 1–2: single node, apps as services)
 
-- `src/modules/swarm/` — `SwarmService` di atas Engine API (`GET /swarm`, `POST /swarm/init|leave`, `GET/POST/DELETE /nodes`, klien: `inspectSwarm/initSwarm/leaveSwarm/listNodes/
-  inspectNode/updateNode/removeNode`, service: `createService/inspectService/updateService(version!)/removeService/listTasks/serviceLogs/followServiceLogs`, `connectNetwork`,
-  `createOverlayNetwork`; tipe `SwarmNode/ServiceSpec/ServiceInspect/SwarmTask`). Flow (`/swarm`): `swarm-status` (owner/admin; join token hanya owner), `init-swarm` (owner; daemon
-  `error` — sertifikat kedaluwarsa — di-`leave --force` dulu), `leave-swarm` (409 selama masih ada app `deployMode='service'`), `update-node` (drain/aktif, promote), `remove-node`.
-  Modul mengimpor **entity** `Application` saja (bukan ApplicationModule — runner mengimpor SwarmModule, arah sebaliknya siklus) + ProxyModule.
-- **Network**: service tidak bisa masuk bridge `aoox` → overlay attachable **`aoox-swarm`** (`SWARM_NETWORK` di proxy.service) dibuat saat init; container proxy & managed DB
-  yang berjalan di-`connect` ke sana (`ensureNetwork`, juga dipanggil tiap deploy service) supaya Traefik menjangkau task dan app menjangkau DB by name; proxy & managed DB yang
-  dibuat sesudahnya di-connect saat provision (`SwarmService.connectIfActive`, no-op tanpa swarm; ManagedDatabaseModule mengimpor SwarmModule). Diuji: task service membuka
-  `${{database.<slug>.url}}` lewat nama container. `leave` menghapus overlay-nya sendiri (network swarm-scope hilang bersama swarm) dan mem-provision ulang proxy tanpa flag swarm.
-- **Traefik**: v3 punya provider terpisah — `provisionOn` menambahkan `--providers.swarm=true|exposedbydefault=false|network=aoox-swarm|refreshSeconds=3` bila daemon manager
-  (provider swarm **polling**, bukan event; 15 s default membuat task lama masih dirutekan sesaat → 3 s). Init/leave swarm mem-provision ulang proxy bila terpasang. Label Traefik dibaca dari
-  **service** (`Labels`), label `aoox.*`/compose dari **task container** (`ContainerSpec.Labels`) untuk monitoring/events — `serviceSpecFor` menaruh keduanya.
-- **App sebagai service** (`Application.deployMode` `container`|`service`, `replicas` 1–20; DTO create/update, hanya host — `serverId` + service = 400; swarm nonaktif = 400):
-  `service-spec.ts` `serviceSpecFor()` (pure, di-unit-test): env/healthcheck/mounts (`mountFromBind` dari string `bindsFor`)/limit (`Resources.Limits`)/network/LogDriver/
-  `EndpointSpec.Ports` `PublishMode: host` untuk `hostPort`/`UpdateConfig` `Parallelism 1, FailureAction rollback, Order start-first` (stop-first bila ada host port). Runner
-  `replaceContainer` bercabang: service → `SwarmDeployService.deploy(app, spec, auth, log)` (hapus container legacy `<name>`/`-next`, create atau `update?version=`, `waitConverged`
-  = poll `UpdateStatus` (`completed`/`rollback_*`/`paused`) + task `running`/failed ≥3; create gagal → service dihapus); container → service lama dihapus dulu.
-  Update selalu mem-bump `TaskTemplate.ForceUpdate` (spec identik — tag sama di-pull ulang — tetap me-roll task, seperti container mode selalu recreate) dan update "milik kita"
-  dikenali dari `UpdateStatus.StartedAt` yang **berbeda** dari sebelum panggilan, bukan perbandingan jam daemon vs API (diuji: 3 deploy identik berturut-turut sukses ±15 s).
-  Replika > 1 dengan mount `volume` = semua task memakai volume yang sama di node ini (keadaan tetap, bukan hanya saat swap).
-  `X-Registry-Auth` (`registryAuthFor`) untuk registry lokal/registry image privat. Ganti mode/replika di `update-application` → `applyRuntimeConfig` (deploy ulang image terakhir).
-- Jalur lain: get-application `service` (`SwarmDeployService.status`: desired/running/tasks) + `container` diturunkan dari task; stop/start = `scale(0)`/`scale(replicas)`;
-  delete = `removeService`; logs & gateway = `serviceLogs`/`followServiceLogs` (semua task); metrics & job exec = task running terbaru (`taskContainers`); restore volume backup = scale 0/kembali;
-  `container-down-notifier`: task swarm hanya dilaporkan bila `running < desired` ("task crashed (1/2 replicas)"), rolling update tidak memicu. Diuji: 2 replika via Traefik,
-  rolling update 119/120 request 200, stop/start, exec job, kill task → replaced + notifikasi, ganti mode bolak-balik, hapus.
-- **Tahap 3 (multi-node)**: `Application.swarmNodeId` (nullable; DTO create/update `@Matches` id node) → `Placement.Constraints` `node.id==…` (`serviceSpecFor.constraints`);
-  app **dengan mount** selalu dipin ke node host (`placementFor`: volume/file mount hanya ada di daemon ini), ganti node → `applyRuntimeConfig`. `ServiceStatus.tasks[]` membawa
-  `nodeId`/`node` (hostname dari `listNodes`)/`local`; `taskContainers()` hanya task **di node ini** (`SwarmService.localNodeId`) karena Engine API tidak punya exec/stats lintas node —
-  job `target: container` di app yang task-nya semua di node lain → error jelas (pakai `run` atau pin ke host), metrik `null`; log service tetap lintas node.
-  `SwarmStatus.registry` `{url, reachableFromNodes}`: URL registry `localhost:` tidak bisa di-pull node lain → kartu web menampilkan peringatan (set `REGISTRY_PUBLIC_HOST` + `insecure-registries`/TLS,
-  provision ulang registry); image publik tidak terpengaruh. Diuji dengan worker `docker:27-dind` yang join swarm Docker Desktop: task terjadwal di worker (pin) / di host (mount),
-  log lintas node, pesan exec. **Belum bisa diuji di sini**: lalu lintas overlay VXLAN antara VM Docker Desktop dan dind (kontrol plane jalan, data plane timeout dua arah — batasan lingkungan,
-  butuh mesin kedua sungguhan); di mesin nyata Traefik → task di node lain memakai jalur yang sama dengan single-node. Belum: metrik gabungan antar task, DB/compose/preview sebagai service,
-  `docker stack deploy`, constraint selain `node.id`.
-- **Observability service**: metrik app service = **jumlah semua task lokal** (`aggregateMetrics()` di `container-metrics.ts`, pure & di-unit-test: `current` = jumlah sampel terakhir,
-  `history` di-bucket per tick sampler 15 s; respons `tasks` = jumlah task yang dijumlahkan). `service-health-watcher.service.ts` (`@Cron('*/2 * * * *')`): app service `running` yang
-  `running < desired` di **dua tick berturut-turut** → notifikasi `containerDown` "Service short of replicas" (+ task pending & error-nya), cooldown 30 menit — melengkapi container-down-notifier
-  yang buta terhadap task yang tidak pernah start (unschedulable, image tak bisa di-pull). Perubahan mode/replika/node/limit app service = **deployment `kind: 'config'`**
-  (`DeploymentRunnerService.queueRuntimeConfig`, jalur rollback tanpa build; 409 bila ada deployment lain) — bukan sinkron, karena rolling update bisa bermenit-menit. Update start-first yang
-  task barunya tak pernah jalan (constraint mustahil, image tak ada) tidak pernah gagal sendiri → `waitConverged` timeout → `engine.rollbackService(id, version, spec)`
-  (`?rollback=previous`, body harus spec valid meski diabaikan; body kosong = socket hang up) → daemon memulihkan `PreviousSpec`; `statusAfterFailure` menjaga `status: 'running'`
-  bila task lama masih melayani. Diuji: node bogus → deployment `failed`, service `rollback_completed`, app tetap 2/2 running; `docker service update --replicas 3` + constraint mustahil →
-  notifikasi short. Rollback ke deployment lama sudah cukup memakai flow rollback biasa (update service dengan image lama).
-- **Label node & constraint**: `PATCH /swarm/nodes/:id {labels}` mengganti seluruh set label node (key `[A-Za-z0-9_.-]`, nilai `[A-Za-z0-9_.:/-]`; tampil di `SwarmNodeInfo.labels`).
-  `Application.swarmConstraint` (regex `SWARM_CONSTRAINT`: `node.(id|hostname|role|platform.os|arch|labels.<k>)(==|!=)<v>`) digabung dengan `swarmNodeId`/pin host di `placementFor`
-  (semua constraint harus terpenuhi). **Parameter rolling update** per app: `updateParallelism` (1–20), `updateDelaySeconds` (0–600), `updateOrder` `auto|start-first|stop-first`
-  (`serviceSpecFor.update`; start-first **tidak dihormati** bila ada host port). Perubahan keduanya di update-application = deployment `config`. Web: field "Constraint tambahan",
-  "Rolling update" (task/batch + jeda) dan "Urutan" di form saat mode service; editor label inline per node di kartu Swarm (owner).
+- `src/modules/swarm/` — `SwarmService` on top of the Engine API (`GET /swarm`, `POST /swarm/init|leave`, `GET/POST/DELETE /nodes`, client: `inspectSwarm/initSwarm/leaveSwarm/listNodes/
+  inspectNode/updateNode/removeNode`, services: `createService/inspectService/updateService(version!)/removeService/listTasks/serviceLogs/followServiceLogs`, `connectNetwork`,
+  `createOverlayNetwork`; types `SwarmNode/ServiceSpec/ServiceInspect/SwarmTask`). Flow (`/swarm`): `swarm-status` (owner/admin; join token owner only), `init-swarm` (owner; if the daemon is in `error` — expired certificate — run `leave --force` first), `leave-swarm` (409 while any app with `deployMode='service'` remains), `update-node` (drain/active, promote), `remove-node`.
+  The module imports only the `Application` **entity** (not ApplicationModule — the runner imports SwarmModule, the other direction would be a cycle) + ProxyModule.
+- **Network**: services cannot join the `aoox` bridge → an attachable overlay **`aoox-swarm`** (`SWARM_NETWORK` in proxy.service) is created at init; running proxy and managed DB containers are `connect`ed to it (`ensureNetwork`, also called on every service deploy) so Traefik can reach tasks and apps can reach DBs by name; proxies and managed DBs created afterwards are connected at provision time (`SwarmService.connectIfActive`, no-op without a swarm; ManagedDatabaseModule imports SwarmModule). Tested: a service task opens `${{database.<slug>.url}}` via the container name. `leave` removes its own overlay (a swarm-scoped network disappears with the swarm) and re-provisions the proxy without the swarm flag.
+- **Traefik**: v3 has a separate provider — `provisionOn` adds `--providers.swarm=true|exposedbydefault=false|network=aoox-swarm|refreshSeconds=3` when the daemon is a manager
+  (the swarm provider **polls**, rather than using events; the 15 s default kept old tasks routed briefly → 3 s). Init/leave swarm re-provisions the proxy if it is installed. Traefik labels are read from the **service** (`Labels`), while `aoox.*`/compose labels come from the **task container** (`ContainerSpec.Labels`) for monitoring/events — `serviceSpecFor` sets both.
+- **Apps as services** (`Application.deployMode` `container`|`service`, `replicas` 1–20; create/update DTO, host only — `serverId` + service = 400; swarm disabled = 400):
+  `service-spec.ts` `serviceSpecFor()` (pure, unit-tested): env/healthcheck/mounts (`mountFromBind` from `bindsFor` strings)/limits (`Resources.Limits`)/network/LogDriver/
+  `EndpointSpec.Ports` `PublishMode: host` for `hostPort`/`UpdateConfig` `Parallelism 1, FailureAction rollback, Order start-first` (stop-first when a host port is set). The runner's
+  `replaceContainer` branches: service → `SwarmDeployService.deploy(app, spec, auth, log)` (removes legacy `<name>`/`-next` containers, creates or `update?version=`, `waitConverged`
+  = polls `UpdateStatus` (`completed`/`rollback_*`/`paused`) + tasks `running`/failed ≥3; if create fails the service is removed); container → the old service is removed first.
+  Updates always bump `TaskTemplate.ForceUpdate` (an identical spec — same tag re-pulled — still rolls the tasks, just as container mode always recreates) and "our" update is recognized from an `UpdateStatus.StartedAt` that **differs** from before the call, not by comparing daemon and API clocks (tested: 3 identical deploys in a row succeed in ±15 s).
+  Replicas > 1 with a `volume` mount = all tasks use the same volume on this node (a steady state, not only during a swap).
+  `X-Registry-Auth` (`registryAuthFor`) for the local registry / private registry images. Changing mode/replicas in `update-application` → `applyRuntimeConfig` (redeploys the last image).
+- Other paths: get-application `service` (`SwarmDeployService.status`: desired/running/tasks) + `container` derived from tasks; stop/start = `scale(0)`/`scale(replicas)`;
+  delete = `removeService`; logs & gateway = `serviceLogs`/`followServiceLogs` (all tasks); metrics & job exec = the latest running task (`taskContainers`); restore of a volume backup = scale to 0 / back; `container-down-notifier`: swarm tasks are reported only when `running < desired` ("task crashed (1/2 replicas)"); rolling updates do not trigger it. Tested: 2 replicas via Traefik,
+  rolling update 119/120 requests 200, stop/start, job exec, killing a task → replaced + notification, switching modes back and forth, deletion.
+- **Stage 3 (multi-node)**: `Application.swarmNodeId` (nullable; create/update DTO `@Matches` a node id) → `Placement.Constraints` `node.id==…` (`serviceSpecFor.constraints`);
+  an app **with mounts** is always pinned to the host node (`placementFor`: volume/file mounts exist only on this daemon); changing the node → `applyRuntimeConfig`. `ServiceStatus.tasks[]` carries
+  `nodeId`/`node` (hostname from `listNodes`)/`local`; `taskContainers()` only returns tasks **on this node** (`SwarmService.localNodeId`) because the Engine API has no cross-node exec/stats —
+  a `target: container` job on an app whose tasks are all on other nodes → a clear error (use `run` or pin to the host), metrics `null`; service logs still span nodes.
+  `SwarmStatus.registry` `{url, reachableFromNodes}`: a `localhost:` registry URL cannot be pulled by other nodes → the web card shows a warning (set `REGISTRY_PUBLIC_HOST` + `insecure-registries`/TLS,
+  re-provision the registry); public images are unaffected. Tested with a `docker:27-dind` worker that joined the Docker Desktop swarm: tasks scheduled on the worker (pinned) / on the host (mounts),
+  logs across nodes, the exec message. **Cannot be tested here yet**: VXLAN overlay traffic between the Docker Desktop VM and the dind (control plane works, data plane times out in both directions — an environment limitation,
+  needs a real second machine); on a real machine Traefik → tasks on other nodes uses the same path as single-node. Not yet: combined metrics across tasks, DB/compose/preview as services,
+  `docker stack deploy`, constraints other than `node.id`.
+- **Service observability**: metrics for an app service = **sum of all local tasks** (`aggregateMetrics()` in `container-metrics.ts`, pure & unit-tested: `current` = the sum of the latest samples,
+  `history` bucketed per 15 s sampler tick; the `tasks` response = the number of tasks summed). `service-health-watcher.service.ts` (`@Cron('*/2 * * * *')`): an app service that is `running` with
+  `running < desired` on **two consecutive ticks** → a `containerDown` notification "Service short of replicas" (+ pending tasks and their error), 30-minute cooldown — complementing container-down-notifier,
+  which is blind to tasks that never start (unschedulable, image cannot be pulled). Changes to an app service's mode/replicas/node/limits = **`kind: 'config'` deployment**
+  (`DeploymentRunnerService.queueRuntimeConfig`, rollback path without a build; 409 if another deployment exists) — not synchronous, because a rolling update can take minutes. A start-first update whose new task never runs (impossible constraint, missing image) never fails by itself → `waitConverged` times out → `engine.rollbackService(id, version, spec)`
+  (`?rollback=previous`, the body must be a valid spec even though it is ignored; an empty body = socket hang up) → the daemon restores `PreviousSpec`; `statusAfterFailure` keeps `status: 'running'`
+  while the old tasks still serve. Tested: a bogus node → deployment `failed`, service `rollback_completed`, app still 2/2 running; `docker service update --replicas 3` + an impossible constraint → the short-replicas notification. Rolling back to an older deployment is already covered by the normal rollback flow (updating the service with the old image).
+- **Node labels & constraints**: `PATCH /swarm/nodes/:id {labels}` replaces the node's full label set (key `[A-Za-z0-9_.-]`, value `[A-Za-z0-9_.:/-]`; shown in `SwarmNodeInfo.labels`).
+  `Application.swarmConstraint` (regex `SWARM_CONSTRAINT`: `node.(id|hostname|role|platform.os|arch|labels.<k>)(==|!=)<v>`) is combined with `swarmNodeId`/host pinning in `placementFor`
+  (all constraints must be satisfied). **Rolling update parameters** per app: `updateParallelism` (1–20), `updateDelaySeconds` (0–600), `updateOrder` `auto|start-first|stop-first`
+  (`serviceSpecFor.update`; start-first is **not honored** when a host port is set). Changing either in update-application = a `config` deployment. Web: the "Additional constraint" field,
+  "Rolling update" (tasks per batch + delay) and "Order" in the form when in service mode; inline label editor per node on the Swarm card (owner).
 
-## Stepper deploy, inbox notifikasi, onboarding
+## Deploy stepper, notification inbox, onboarding
 
-- **Waktu langkah deploy**: `deployments.step_times` jsonb (`{building?, pushing?, starting?}` = ISO saat langkah **pertama kali** tercapai; `deployment-steps.ts` `recordStep`, pure).
-  Ditulis di `DeploymentLog.setStatus` (runner) dan ikut tersimpan lewat `flush` yang sudah ada; `queued` = `createdAt`, selesai = `finishedAt`. Gagal di tengah → hanya langkah yang
-  sempat tercapai ada. `starting` diumumkan dua kali (health check) → yang pertama menang. Pull image memakai status `building`. `list-deployments` (select eksplisit) dan
-  `get-deployment` mengembalikan `stepTimes` (null di baris lama); event `deployment:status` membawa `at` opsional (socket `/logs`).
-- **Inbox** (`src/modules/inbox/`): semua event yang lewat `NotificationService.broadcast` dicatat dulu ke `inbox_events` (`InboxService.record`, tidak pernah melempar) **sebelum**
-  channel dipilih — tidak bergantung toggle/channel, teks sama dengan pesan channel (sudah ter-redact). Project diturunkan dari `data.applicationId|composeAppId|databaseId`
-  (`inbox-target.ts`); event tanpa project (disk, server, sertifikat…) = platform, hanya owner/admin. Baca (`InboxFeedService`: `GET /inbox?limit&before` + `unread`, `POST /inbox/read`)
-  difilter `ProjectAccessService.accessibleProjectIds`; status dibaca per user lewat `users.inbox_read_at` (default `now()` saat migrasi → tidak ada tumpukan lama). Retensi 30 hari + 1000
-  baris (`@Cron('40 3 * * *')`). **Siklus modul**: `InboxModule` (penyimpanan, hanya entity) di-import `NotificationModule`; pembaca (`InboxFeedModule`, butuh `ProjectModule`) terdaftar di `AppModule`.
-- **Onboarding** (`src/modules/onboarding/`): `GET /onboarding` (owner saja; peran lain `visible:false` tanpa query), langkah registry/proxy/panelDomain(opsional)/project/workload dihitung dari
-  state nyata dengan cek `exists`/`count`; proxy lewat `ProxyService.status()` di-cache 30 dtk (Docker mati = langkah terbuka). `POST /onboarding/dismiss` (`@Roles('owner')`, audit log) menyimpan
-  `users.onboarding_dismissed_at`. Hilang sendiri saat semua langkah wajib selesai. Migrasi `InboxAndOnboarding` (tabel + dua kolom users).
+- **Deploy step timing**: `deployments.step_times` jsonb (`{building?, pushing?, starting?}` = ISO time when each step was **first** reached; `deployment-steps.ts` `recordStep`, pure).
+  Written in `DeploymentLog.setStatus` (runner) and persisted via the existing `flush`; `queued` = `createdAt`, completion = `finishedAt`. Failure midway → only the steps reached are present. `starting` is announced twice (health check) → the first one wins. Image pulls use the `building` status. `list-deployments` (explicit select) and
+  `get-deployment` return `stepTimes` (null on old rows); the `deployment:status` event carries an optional `at` (`/logs` socket).
+- **Inbox** (`src/modules/inbox/`): every event that goes through `NotificationService.broadcast` is first recorded in `inbox_events` (`InboxService.record`, never throws) **before**
+  channels are chosen — independent of toggles/channels, with the same text as the channel message (already redacted). The project is derived from `data.applicationId|composeAppId|databaseId`
+  (`inbox-target.ts`); events without a project (disk, server, certificates…) are platform-level, visible to owner/admin only. Reads (`InboxFeedService`: `GET /inbox?limit&before` + `unread`, `POST /inbox/read`)
+  are filtered by `ProjectAccessService.accessibleProjectIds`; read status is per user via `users.inbox_read_at` (default `now()` at migration time → no old backlog). Retention 30 days + 1000
+  rows (`@Cron('40 3 * * *')`). **Module cycle**: `InboxModule` (storage, entity only) is imported by `NotificationModule`; the reader (`InboxFeedModule`, needs `ProjectModule`) is registered in `AppModule`.
+- **Onboarding** (`src/modules/onboarding/`): `GET /onboarding` (owner only; other roles get `visible:false` without a query); the registry/proxy/panelDomain (optional)/project/workload steps are computed from
+  real state with `exists`/`count` checks; the proxy comes from `ProxyService.status()`, cached for 30 seconds (Docker down = step left open). `POST /onboarding/dismiss` (`@Roles('owner')`, audit log) stores
+  `users.onboarding_dismissed_at`. It disappears by itself once all required steps are complete. Migration `InboxAndOnboarding` (tables + two users columns).
+  **`params`** (`inbox_events.params` jsonb nullable, migration `InboxEventParams`; `NotificationMessage.params`, inbox-only — never sent to channels): the structured facts behind the English `title`/`summary`,
+  so the web can compose sentences in the active language. A flat shape (`InboxParams`: string/number/boolean/null; `inboxParams()` in `inbox-target.ts` drops anything else, truncates strings to 500 characters,
+  max 20 keys), with a special `variant` key for events that have several meanings. Contract per event (the web mirrors it in `features/inbox/inbox.describe.ts` — change both together):
+  `deploymentStarted` {kind deployment|rollback, application, project, trigger, commitSha, commitMessage, triggeredBy}; `deploymentSuccess`/`deploymentFailure` {kind, application, project, durationSeconds, error};
+  `deploymentFailure` `compose` {stack, source, error}; `backupFailure` `database` {database, engine, trigger, error} / `volume` {application, volume, trigger, error} / `instance` {trigger, error};
+  `jobFailure` {job, status}; `containerDown` `application` {application, project, restarting, exitCode, server} / `task` {application, project, running, desired} / `database` {database, restarting, exitCode} /
+  `stack` {stack, service, restarting, exitCode} / `replicas` {application, project, running, desired}; `diskLow` {usedPercent, usedBytes, totalBytes, availableBytes, thresholdPercent};
+  `certificateFailure` `expired`|`expiring` {certificate, domains, notAfter} / `acme` {domain, reason}; `dnsIssue` {domain, application, project, status, since}; `appError` {application, project, count};
+  `serverDown` `down` {server, reminder, error} / `recovered` {server, downSeconds}; `httpDown` `down` {application, project, target, reminder, error, statusCode, failedChecks} / `recovered` {application, project, downSeconds}.
+  **Do not** put secrets, log excerpts, or command output into it (job: no output; appError: the count only); the only free text is the system's own error message (≤ 500 characters). New events or new variants in the API still show on the web (falling back to the English `title`/`summary`) until the web adds their sentences. Old rows (`params` null) also display as they are. Tested for real on Postgres: successful/failed deploys and a dying container fill `params` correctly; the additive migration works on an empty DB.

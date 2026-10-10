@@ -37,7 +37,7 @@ export interface UpdatePanelDomainResult {
  * Lets the owner point the panel's own `web`/`api` containers at a custom
  * domain from the running dashboard, instead of hand-editing
  * `docker-compose.domain.yml`/`.env.dist` and re-running `docker compose up`
- * over SSH (see AGENTS.md "Domain untuk panel sendiri"). Applying it recreates
+ * over SSH (see AGENTS.md "Domains for the panel itself"). Applying it recreates
  * the `web` and `api` containers themselves — including the one serving this
  * very request — so `apply()` is fired detached after the settings row is
  * saved, giving the HTTP response time to flush before the panel restarts.

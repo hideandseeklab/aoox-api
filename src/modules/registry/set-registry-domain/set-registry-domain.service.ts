@@ -9,7 +9,7 @@ import { SetRegistryDomainDto } from './set-registry-domain.dto';
  * Puts the self-hosted registry behind the built-in proxy on its own domain,
  * so `docker push`/`login` get a trusted cert instead of needing an
  * `insecure-registries` entry on every other Docker daemon (see AGENTS.md
- * "Kredensial untuk klien luar" and the Swarm registry-reachability warning).
+ * "Credentials for external clients" and the Swarm registry-reachability warning).
  */
 @Injectable()
 export class SetRegistryDomainService {

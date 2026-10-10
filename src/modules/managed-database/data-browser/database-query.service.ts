@@ -446,7 +446,7 @@ export class DatabaseQueryService {
       };
     }
     if (db.engine === 'mongodb') {
-      // Read-only for everyone in this first pass (see AGENTS.md "Belum"):
+      // Read-only for everyone in this first pass (see AGENTS.md "Not yet"):
       // no insert/update/delete/aggregate via the query box yet, only
       // `<collection>.find(<filter json>)`, mongosh shell syntax.
       const m = /^(\w+)\.find\((.*)\)\s*$/s.exec(input.trim());
@@ -987,7 +987,7 @@ export function mongoDocsToRows(docs: Record<string, unknown>[]): ResultSet {
  * actually reaches the shell is always inert data. `$`-prefixed operator
  * keys (`{"qty":{"$gt":2}}`) are plain JSON and pass through fine;
  * extended-JSON literals like `{"$oid":"..."}` for `_id` are not
- * interpreted specially in this first pass (see AGENTS.md "Belum") — they'd
+ * interpreted specially in this first pass (see AGENTS.md "Not yet") — they'd
  * just filter for a field literally named `$oid`, not error, so document
  * the limitation rather than silently doing the wrong thing.
  */
