@@ -135,7 +135,7 @@ function makeService(
     assertFree: jest.fn(() =>
       opts.portConflict
         ? Promise.reject(
-            new BadRequestException('Host port sudah dipakai: 9000'),
+            new BadRequestException('Host port already in use: 9000'),
           )
         : Promise.resolve(),
     ),

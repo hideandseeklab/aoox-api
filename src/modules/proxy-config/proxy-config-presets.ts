@@ -42,10 +42,10 @@ export type PresetId = (typeof PRESET_IDS)[number];
 
 const NAME_FIELD: PresetField = {
   key: 'name',
-  label: 'Nama middleware',
+  label: 'Middleware name',
   type: 'text',
   required: false,
-  hint: 'Huruf kecil, angka, "-". Dipakai sebagai nama berkas dan nama@file.',
+  hint: 'Lowercase letters, digits and "-". Used as the file name and as name@file.',
 };
 
 const REFERRER_POLICIES = [
@@ -60,7 +60,7 @@ export const PRESETS: PresetInfo[] = [
     id: 'basic-auth',
     label: 'Basic auth',
     description:
-      'Minta username dan password sebelum request sampai ke aplikasi.',
+      'Ask for a username and password before a request reaches the application.',
     defaultName: 'basic-auth',
     fields: [
       { ...NAME_FIELD },
@@ -70,7 +70,7 @@ export const PRESETS: PresetInfo[] = [
         label: 'Password',
         type: 'password',
         required: true,
-        hint: 'Min. 8 karakter. Hanya hash bcrypt yang disimpan di berkas.',
+        hint: 'At least 8 characters. Only the bcrypt hash is stored in the file.',
       },
     ],
   },
@@ -78,21 +78,21 @@ export const PRESETS: PresetInfo[] = [
     id: 'security-headers',
     label: 'Security headers',
     description:
-      'Header keamanan umum: HSTS, nosniff, frame deny, referrer policy.',
+      'Common security headers: HSTS, nosniff, frame deny, referrer policy.',
     defaultName: 'security-headers',
     fields: [
       { ...NAME_FIELD },
       {
         key: 'stsSeconds',
-        label: 'HSTS max-age (detik)',
+        label: 'HSTS max-age (seconds)',
         type: 'number',
         required: false,
         default: 31536000,
-        hint: '0 = tanpa HSTS. HSTS hanya dikirim lewat https.',
+        hint: '0 = no HSTS. HSTS is only sent over https.',
       },
       {
         key: 'stsIncludeSubdomains',
-        label: 'HSTS untuk subdomain',
+        label: 'HSTS for subdomains',
         type: 'boolean',
         required: false,
         default: false,
@@ -106,7 +106,7 @@ export const PRESETS: PresetInfo[] = [
       },
       {
         key: 'frameDeny',
-        label: 'Tolak ditanam di frame',
+        label: 'Refuse being embedded in a frame',
         type: 'boolean',
         required: false,
         default: true,
@@ -131,13 +131,13 @@ export const PRESETS: PresetInfo[] = [
   {
     id: 'rate-limit',
     label: 'Rate limit',
-    description: 'Batasi jumlah request per sumber IP.',
+    description: 'Limit the number of requests per source IP.',
     defaultName: 'rate-limit',
     fields: [
       { ...NAME_FIELD },
       {
         key: 'average',
-        label: 'Rata-rata request per periode',
+        label: 'Average requests per period',
         type: 'number',
         required: true,
         default: 100,
@@ -151,7 +151,7 @@ export const PRESETS: PresetInfo[] = [
       },
       {
         key: 'period',
-        label: 'Periode',
+        label: 'Period',
         type: 'select',
         required: false,
         default: '1s',
@@ -162,16 +162,17 @@ export const PRESETS: PresetInfo[] = [
   {
     id: 'ip-allowlist',
     label: 'IP allowlist',
-    description: 'Hanya izinkan alamat/CIDR tertentu; selain itu 403.',
+    description:
+      'Only allow certain addresses/CIDRs; everything else gets a 403.',
     defaultName: 'ip-allowlist',
     fields: [
       { ...NAME_FIELD },
       {
         key: 'cidrs',
-        label: 'Alamat / CIDR',
+        label: 'Address / CIDR',
         type: 'list',
         required: true,
-        hint: 'Satu per baris, mis. 203.0.113.7 atau 10.0.0.0/8. IP klien yang dilihat proxy bisa berupa IP proxy lain bila ada di depannya.',
+        hint: 'One per line, e.g. 203.0.113.7 or 10.0.0.0/8. The client IP the proxy sees can be the IP of another proxy in front of it.',
       },
     ],
   },
@@ -179,18 +180,18 @@ export const PRESETS: PresetInfo[] = [
     id: 'redirect-www',
     label: 'Redirect www',
     description:
-      'Alihkan permanen www ke non-www atau sebaliknya. Pasang ke domain yang diarahkan, bukan tujuannya.',
+      'Permanently redirect www to non-www or the other way round. Attach it to the domain being redirected, not to the destination.',
     defaultName: 'redirect-www',
     fields: [
       { ...NAME_FIELD },
       {
         key: 'direction',
-        label: 'Arah',
+        label: 'Direction',
         type: 'select',
         required: true,
         default: 'to-non-www',
         options: ['to-non-www', 'to-www'],
-        hint: 'to-non-www: pasang ke www.contoh.com. to-www: pasang ke contoh.com (tanpa www).',
+        hint: 'to-non-www: attach to www.example.com. to-www: attach to example.com (without www).',
       },
     ],
   },

@@ -4,7 +4,7 @@ export const grafana: Template = {
   id: 'grafana',
   name: 'Grafana',
   description:
-    'Dashboard dan visualisasi metrik, log, dan data dari banyak sumber (data disimpan di SQLite bawaan).',
+    'Dashboards and visualization for metrics, logs and data from many sources (data is kept in the built-in SQLite).',
   version: '13.0',
   tags: ['monitoring', 'dashboards'],
   links: {
@@ -15,12 +15,12 @@ export const grafana: Template = {
   variables: [
     {
       key: 'ROOT_URL',
-      label: 'URL publik',
-      hint: 'Mis. https://grafana.example.com — harus sama dengan domain yang dipasang.',
+      label: 'Public URL',
+      hint: 'E.g. https://grafana.example.com — must match the domain you attach.',
       required: true,
     },
-    { key: 'ADMIN_USER', label: 'Username admin', default: 'admin' },
-    { key: 'ADMIN_PASSWORD', label: 'Password admin', generate: 'password' },
+    { key: 'ADMIN_USER', label: 'Admin username', default: 'admin' },
+    { key: 'ADMIN_PASSWORD', label: 'Admin password', generate: 'password' },
   ],
   services: [{ service: 'grafana', port: 3000, label: 'Web Grafana' }],
   compose: `services:

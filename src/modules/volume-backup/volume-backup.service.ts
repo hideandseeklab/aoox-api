@@ -265,6 +265,13 @@ export class VolumeBackupService {
           ['Error', (backup.errorMessage ?? 'unknown').slice(0, 500)],
         ],
         url: origin ? `${origin}/applications/${app.id}` : undefined,
+        params: {
+          variant: 'volume',
+          application: app.name,
+          volume: mount.name ?? '',
+          trigger: backup.trigger,
+          error: (backup.errorMessage ?? '').slice(0, 500) || null,
+        },
         data: {
           event: 'volume-backup.failure',
           backupId: backup.id,

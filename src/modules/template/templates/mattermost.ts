@@ -4,7 +4,7 @@ export const mattermost: Template = {
   id: 'mattermost',
   name: 'Mattermost',
   description:
-    'Chat tim self-hosted (alternatif Slack) dengan channel, thread, dan integrasi, dengan PostgreSQL.',
+    'Self-hosted team chat (a Slack alternative) with channels, threads and integrations, with PostgreSQL.',
   version: '11.11',
   tags: ['chat', 'collaboration'],
   links: {
@@ -15,11 +15,11 @@ export const mattermost: Template = {
   variables: [
     {
       key: 'SITE_URL',
-      label: 'URL publik',
-      hint: 'Mis. https://chat.example.com — harus sama dengan domain yang dipasang.',
+      label: 'Public URL',
+      hint: 'E.g. https://chat.example.com — must match the domain you attach.',
       required: true,
     },
-    { key: 'DB_PASSWORD', label: 'Password database', generate: 'password' },
+    { key: 'DB_PASSWORD', label: 'Database password', generate: 'password' },
   ],
   services: [{ service: 'mattermost', port: 8065, label: 'Web Mattermost' }],
   compose: `services:

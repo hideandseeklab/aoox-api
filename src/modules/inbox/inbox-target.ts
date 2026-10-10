@@ -58,6 +58,31 @@ export function inboxSummary(fields: Array<[string, string]>): string {
     : text;
 }
 
+const PARAM_MAX = 500;
+const PARAMS_MAX_KEYS = 20;
+
+/**
+ * The structured facts stored with an event: flat primitives only, strings cut
+ * short, at most a few keys. Anything else is dropped so a careless caller
+ * cannot park an object or a long log in the inbox. Nothing left -> null.
+ */
+export function inboxParams(
+  params: Record<string, unknown> | undefined,
+): Record<string, string | number | boolean | null> | null {
+  if (!params) return null;
+  const out: Record<string, string | number | boolean | null> = {};
+  for (const [key, value] of Object.entries(params).slice(0, PARAMS_MAX_KEYS)) {
+    if (value === null) out[key] = null;
+    else if (typeof value === 'string')
+      out[key] =
+        value.length > PARAM_MAX ? `${value.slice(0, PARAM_MAX - 1)}…` : value;
+    else if (typeof value === 'boolean') out[key] = value;
+    else if (typeof value === 'number' && Number.isFinite(value))
+      out[key] = value;
+  }
+  return Object.keys(out).length ? out : null;
+}
+
 /** Newest events kept after the age cut. */
 export const INBOX_KEEP_DAYS = 30;
 export const INBOX_KEEP_ROWS = 1000;

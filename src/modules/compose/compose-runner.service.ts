@@ -426,6 +426,12 @@ export class ComposeRunnerService {
           ['Error', error.slice(0, 500)],
         ],
         url: origin ? `${origin}/compose/${app.id}` : undefined,
+        params: {
+          variant: 'compose',
+          stack: app.name,
+          source: app.source === 'template' ? 'template' : 'git',
+          error: error.slice(0, 500),
+        },
         data: {
           event: 'compose.deployment.failure',
           composeAppId: app.id,

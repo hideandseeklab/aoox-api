@@ -163,6 +163,12 @@ export class AppErrorWatcherService {
         level: 'failure',
         fields,
         url: origin ? `${origin}/applications/${app.id}` : undefined,
+        // Only the count: the log excerpts stay in the channel messages.
+        params: {
+          application: app.name,
+          project: app.project.name,
+          count: events.length,
+        },
         data: {
           event: 'app.error',
           applicationId: app.id,

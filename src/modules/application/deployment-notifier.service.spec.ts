@@ -105,6 +105,14 @@ describe('DeploymentNotifierService', () => {
     expect(message.fields).toContainEqual(['Error', 'pull failed ***']);
     expect(message.fields.some(([k]) => k === 'Source')).toBe(false);
     expect(message.data.error).toBe('pull failed ***');
+    expect((message as { params?: unknown }).params).toEqual(
+      expect.objectContaining({
+        kind: 'rollback',
+        application: 'My App',
+        project: 'Proj',
+        error: 'pull failed ***',
+      }),
+    );
   });
 
   it('never throws into the emitter when the lookup fails', async () => {

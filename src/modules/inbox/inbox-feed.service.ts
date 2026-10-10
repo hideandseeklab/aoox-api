@@ -10,6 +10,8 @@ export class InboxItemDto {
   level: 'success' | 'failure' | 'info';
   title: string;
   summary: string;
+  /** Structured facts for localized rendering, or null on older events. */
+  params: Record<string, string | number | boolean | null> | null;
   /** Path inside the web app, or null. */
   link: string | null;
   projectId: string | null;
@@ -78,6 +80,7 @@ export class InboxFeedService {
         level: e.level,
         title: e.title,
         summary: e.summary,
+        params: e.params ?? null,
         link: e.link,
         projectId: e.projectId,
         createdAt: e.createdAt.toISOString(),

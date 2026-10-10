@@ -3,7 +3,7 @@ import { Template } from '../template.types';
 export const n8n: Template = {
   id: 'n8n',
   name: 'n8n',
-  description: 'Otomasi workflow (alternatif Zapier), dengan PostgreSQL.',
+  description: 'Workflow automation (a Zapier alternative), with PostgreSQL.',
   version: '1.x',
   tags: ['automation', 'workflow'],
   links: {
@@ -14,16 +14,16 @@ export const n8n: Template = {
   variables: [
     {
       key: 'N8N_HOST',
-      label: 'Host publik',
-      hint: 'Sama dengan domain yang dipasang, mis. n8n.example.com (dipakai untuk URL webhook).',
+      label: 'Public host',
+      hint: 'Same as the domain you attach, e.g. n8n.example.com (used for webhook URLs).',
       required: true,
     },
-    { key: 'N8N_PROTOCOL', label: 'Protokol', default: 'https' },
+    { key: 'N8N_PROTOCOL', label: 'Protocol', default: 'https' },
     { key: 'N8N_ENCRYPTION_KEY', label: 'Encryption key', generate: 'secret' },
-    { key: 'DB_PASSWORD', label: 'Password database', generate: 'password' },
-    { key: 'GENERIC_TIMEZONE', label: 'Zona waktu', default: 'Asia/Jakarta' },
+    { key: 'DB_PASSWORD', label: 'Database password', generate: 'password' },
+    { key: 'GENERIC_TIMEZONE', label: 'Time zone', default: 'Asia/Jakarta' },
   ],
-  services: [{ service: 'n8n', port: 5678, label: 'Editor n8n' }],
+  services: [{ service: 'n8n', port: 5678, label: 'n8n editor' }],
   compose: `services:
   n8n:
     image: docker.n8n.io/n8nio/n8n:latest

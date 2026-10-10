@@ -602,6 +602,14 @@ export class HttpMonitorService {
         level: 'success',
         fields,
         ...common,
+        params: {
+          variant: 'recovered',
+          application: app.name,
+          project: project?.project?.name ?? null,
+          downSeconds: since
+            ? Math.round((now.getTime() - since.getTime()) / 1000)
+            : null,
+        },
         data: {
           ...data,
           event: 'http.recovered',
@@ -622,6 +630,16 @@ export class HttpMonitorService {
       level: 'failure',
       fields,
       ...common,
+      params: {
+        variant: 'down',
+        application: app.name,
+        project: project?.project?.name ?? null,
+        target: target.url,
+        reminder: kind === 'still-down',
+        error: error?.slice(0, 200) ?? null,
+        statusCode: monitor.lastStatusCode,
+        failedChecks: monitor.consecutiveFailures,
+      },
       data: {
         ...data,
         event: 'http.down',

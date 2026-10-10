@@ -38,7 +38,7 @@ describe('CreateDatabaseService host port', () => {
   it('rejects a taken host port up front: nothing is saved or provisioned', async () => {
     const assertFree = jest
       .fn()
-      .mockRejectedValue(new BadRequestException('Host port sudah dipakai'));
+      .mockRejectedValue(new BadRequestException('Host port already in use'));
     const t = make(assertFree);
     await expect(
       t.svc.execute('u1', { ...base, hostPort: 18081 }),

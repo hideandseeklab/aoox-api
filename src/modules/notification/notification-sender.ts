@@ -14,7 +14,17 @@ export interface NotificationMessage {
   level: 'success' | 'failure' | 'info';
   /** Machine-readable payload for the generic webhook. */
   data: Record<string, unknown>;
+  /**
+   * Structured facts for the in-app inbox only (never sent to channels): the
+   * web composes the localized sentence from the event, `variant` (when one
+   * event has several meanings) and these values. Safe values only: no
+   * secrets, raw logs or log excerpts.
+   */
+  params?: InboxParams;
 }
+
+/** Flat, JSON-safe values; `variant` is the reserved key naming the event's meaning. */
+export type InboxParams = Record<string, string | number | boolean | null>;
 
 const TIMEOUT_MS = 10_000;
 

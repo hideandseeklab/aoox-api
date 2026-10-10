@@ -3,7 +3,7 @@ import { Template } from '../template.types';
 export const uptimeKuma: Template = {
   id: 'uptime-kuma',
   name: 'Uptime Kuma',
-  description: 'Monitoring uptime self-hosted dengan halaman status.',
+  description: 'Self-hosted uptime monitoring with status pages.',
   version: '1',
   tags: ['monitoring'],
   links: {

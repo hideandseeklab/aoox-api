@@ -92,6 +92,12 @@ export class CertificateExpiryWatcherService {
             ],
           ],
           url: origin ? `${origin}/settings` : undefined,
+          params: {
+            variant: expired ? 'expired' : 'expiring',
+            certificate: c.name,
+            domains: hosts.join(', '),
+            notAfter: date,
+          },
           data: {
             event: expired ? 'certificate.expired' : 'certificate.expiring',
             certificate: c.name,

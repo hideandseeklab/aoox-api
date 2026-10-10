@@ -3,7 +3,7 @@ import { Template } from '../template.types';
 export const wordpress: Template = {
   id: 'wordpress',
   name: 'WordPress',
-  description: 'CMS & blog paling populer, dengan MariaDB.',
+  description: 'The most popular CMS and blog platform, with MariaDB.',
   version: '6.8',
   tags: ['cms', 'php'],
   links: {
@@ -12,14 +12,14 @@ export const wordpress: Template = {
   },
   logo: 'https://cdn.simpleicons.org/wordpress',
   variables: [
-    { key: 'DB_PASSWORD', label: 'Password database', generate: 'password' },
+    { key: 'DB_PASSWORD', label: 'Database password', generate: 'password' },
     {
       key: 'DB_ROOT_PASSWORD',
-      label: 'Password root database',
+      label: 'Database root password',
       generate: 'password',
     },
   ],
-  services: [{ service: 'wordpress', port: 80, label: 'Situs WordPress' }],
+  services: [{ service: 'wordpress', port: 80, label: 'WordPress site' }],
   compose: `services:
   wordpress:
     image: wordpress:6.8-apache

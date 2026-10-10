@@ -119,6 +119,13 @@ export class DatabaseBackupService {
           ['Error', (backup.errorMessage ?? 'unknown').slice(0, 500)],
         ],
         url: origin ? `${origin}/databases/${db.id}` : undefined,
+        params: {
+          variant: 'database',
+          database: db.name,
+          engine: db.engine,
+          trigger: backup.trigger,
+          error: (backup.errorMessage ?? '').slice(0, 500) || null,
+        },
         data: {
           event: 'backup.failure',
           backupId: backup.id,

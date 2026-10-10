@@ -85,6 +85,11 @@ describe('ServerHealthService', () => {
         title: 'Server unreachable: edge-1',
         level: 'failure',
         url: 'https://panel/infra/servers',
+        params: expect.objectContaining({
+          variant: 'down',
+          server: 'edge-1',
+          reminder: false,
+        }) as unknown,
         data: expect.objectContaining({
           event: 'server.down',
           server: 'edge-1',
@@ -106,6 +111,11 @@ describe('ServerHealthService', () => {
         title: 'Server reachable again: edge-1',
         level: 'success',
         fields: expect.arrayContaining([['Down for', '43m']]),
+        params: expect.objectContaining({
+          variant: 'recovered',
+          server: 'edge-1',
+          downSeconds: 2580,
+        }) as unknown,
         data: expect.objectContaining({ event: 'server.recovered' }),
       }),
     );

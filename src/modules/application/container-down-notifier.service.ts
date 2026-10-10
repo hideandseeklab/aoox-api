@@ -116,6 +116,7 @@ export class ContainerDownNotifierService implements OnModuleInit {
 
     let title: string;
     let url: string | undefined;
+    let params: NotificationMessage['params'];
     const data: Record<string, unknown> = {
       event: 'container.down',
       container: name,
@@ -140,6 +141,22 @@ export class ContainerDownNotifierService implements OnModuleInit {
         replicas = `${svc.running}/${svc.desired}`;
         Object.assign(data, { replicas });
       }
+      params = replicas
+        ? {
+            variant: 'task',
+            application: app.name,
+            project: app.project.name,
+            running: Number(replicas.split('/')[0]),
+            desired: Number(replicas.split('/')[1]),
+          }
+        : {
+            variant: 'application',
+            application: app.name,
+            project: app.project.name,
+            restarting,
+            exitCode,
+            server: serverName,
+          };
       title = replicas
         ? `Application task crashed: ${app.name} (${replicas} replicas)`
         : `Application ${restarting ? 'crashed' : 'went down'}: ${app.name}${onServer}`;
@@ -154,6 +171,7 @@ export class ContainerDownNotifierService implements OnModuleInit {
         where: { id: attrs['aoox.database'] },
       });
       if (!db || db.status === 'stopped') return null;
+      params = { variant: 'database', database: db.name, restarting, exitCode };
       title = `Database ${restarting ? 'crashed' : 'went down'}: ${db.name}`;
       url = origin ? `${origin}/databases/${db.id}` : undefined;
       Object.assign(data, { databaseId: db.id, database: db.name });
@@ -174,6 +192,7 @@ export class ContainerDownNotifierService implements OnModuleInit {
         ],
       ],
       url,
+      params,
       data,
     };
   }

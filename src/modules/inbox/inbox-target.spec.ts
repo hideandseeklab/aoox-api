@@ -1,4 +1,33 @@
-import { inboxLink, inboxResource, inboxSummary } from './inbox-target';
+import {
+  inboxLink,
+  inboxParams,
+  inboxResource,
+  inboxSummary,
+} from './inbox-target';
+
+describe('inboxParams', () => {
+  it('keeps flat primitives and drops everything else', () => {
+    expect(
+      inboxParams({
+        variant: 'down',
+        count: 3,
+        reminder: false,
+        since: null,
+        nested: { a: 1 },
+        list: [1],
+        bad: Number.NaN,
+        missing: undefined,
+      }),
+    ).toEqual({ variant: 'down', count: 3, reminder: false, since: null });
+  });
+
+  it('cuts long strings and returns null when nothing is left', () => {
+    const long = inboxParams({ error: 'x'.repeat(2000) });
+    expect(long?.error).toHaveLength(500);
+    expect(inboxParams(undefined)).toBeNull();
+    expect(inboxParams({ nested: {} })).toBeNull();
+  });
+});
 
 describe('inboxResource', () => {
   it('names the application, stack or database an event is about', () => {

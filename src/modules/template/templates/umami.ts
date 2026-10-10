@@ -4,7 +4,7 @@ export const umami: Template = {
   id: 'umami',
   name: 'Umami',
   description:
-    'Analitik web yang sederhana dan ramah privasi (alternatif Google Analytics), dengan PostgreSQL.',
+    'Simple, privacy-friendly web analytics (a Google Analytics alternative), with PostgreSQL.',
   version: '2.20',
   tags: ['analytics', 'privacy'],
   links: {
@@ -13,8 +13,8 @@ export const umami: Template = {
   },
   logo: 'https://cdn.simpleicons.org/umami',
   variables: [
-    { key: 'DB_PASSWORD', label: 'Password database', generate: 'password' },
-    { key: 'APP_SECRET', label: 'Secret aplikasi', generate: 'secret' },
+    { key: 'DB_PASSWORD', label: 'Database password', generate: 'password' },
+    { key: 'APP_SECRET', label: 'Application secret', generate: 'secret' },
   ],
   services: [{ service: 'umami', port: 3000, label: 'Dashboard Umami' }],
   compose: `services:

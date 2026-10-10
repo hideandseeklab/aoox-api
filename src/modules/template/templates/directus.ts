@@ -4,7 +4,7 @@ export const directus: Template = {
   id: 'directus',
   name: 'Directus',
   description:
-    'Headless CMS dan backend data: API REST/GraphQL di atas database SQL, dengan PostgreSQL.',
+    'Headless CMS and data backend: a REST/GraphQL API on top of a SQL database, with PostgreSQL.',
   version: '12.4',
   tags: ['cms', 'api'],
   links: {
@@ -15,20 +15,20 @@ export const directus: Template = {
   variables: [
     {
       key: 'PUBLIC_URL',
-      label: 'URL publik',
-      hint: 'Mis. https://cms.example.com — harus sama dengan domain yang dipasang.',
+      label: 'Public URL',
+      hint: 'E.g. https://cms.example.com — must match the domain you attach.',
       required: true,
     },
     {
       key: 'ADMIN_EMAIL',
-      label: 'Email admin',
-      hint: 'Akun admin pertama dibuat dengan email ini.',
+      label: 'Admin email',
+      hint: 'The first admin account is created with this email.',
       required: true,
     },
-    { key: 'ADMIN_PASSWORD', label: 'Password admin', generate: 'password' },
-    { key: 'DB_PASSWORD', label: 'Password database', generate: 'password' },
-    { key: 'KEY', label: 'Key instance', generate: 'secret' },
-    { key: 'SECRET', label: 'Secret token', generate: 'secret' },
+    { key: 'ADMIN_PASSWORD', label: 'Admin password', generate: 'password' },
+    { key: 'DB_PASSWORD', label: 'Database password', generate: 'password' },
+    { key: 'KEY', label: 'Instance key', generate: 'secret' },
+    { key: 'SECRET', label: 'Token secret', generate: 'secret' },
   ],
   services: [{ service: 'directus', port: 8055, label: 'Web Directus' }],
   compose: `services:

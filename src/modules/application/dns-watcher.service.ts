@@ -79,6 +79,13 @@ export class DnsWatcherService {
           ['Since', new Date(since).toISOString()],
         ],
         url: origin ? `${origin}/applications/${app.id}` : undefined,
+        params: {
+          domain: domain.host,
+          application: app.name,
+          project: app.project.name,
+          status: result.status,
+          since: new Date(since).toISOString(),
+        },
         data: {
           event: 'dns.issue',
           applicationId: app.id,

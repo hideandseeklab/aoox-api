@@ -87,7 +87,7 @@ export class HostPortService {
     );
     if (conflicts.length) {
       throw new BadRequestException(
-        `Host port sudah dipakai: ${conflicts.join(', ')}`,
+        `Host port already in use: ${conflicts.join(', ')}`,
       );
     }
   }

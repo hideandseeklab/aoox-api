@@ -56,7 +56,7 @@ export function hostPortConflicts(
   for (const a of data.apps) {
     if (a.id === options.excludeApplicationId) continue;
     if (seen.has(a.hostPort))
-      taken.add(`${a.hostPort} (aplikasi ${a.appName})`);
+      taken.add(`${a.hostPort} (application ${a.appName})`);
   }
   for (const d of data.dbs) {
     if (seen.has(d.hostPort)) taken.add(`${d.hostPort} (database ${d.name})`);

@@ -104,6 +104,13 @@ export class ComposeDownNotifierService implements OnModuleInit {
         ],
       ],
       url: origin ? `${origin}/compose/${app.id}` : undefined,
+      params: {
+        variant: 'stack',
+        stack: app.name,
+        service,
+        restarting,
+        exitCode,
+      },
       data: {
         event: 'compose.container.down',
         composeAppId: app.id,

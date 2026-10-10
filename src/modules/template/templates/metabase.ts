@@ -4,7 +4,7 @@ export const metabase: Template = {
   id: 'metabase',
   name: 'Metabase',
   description:
-    'Business intelligence: tanya data dan buat dashboard tanpa SQL, dengan PostgreSQL untuk data aplikasinya.',
+    'Business intelligence: ask questions of your data and build dashboards without SQL, with PostgreSQL for its application data.',
   version: '0.63',
   tags: ['analytics', 'bi'],
   links: {
@@ -15,16 +15,16 @@ export const metabase: Template = {
   variables: [
     {
       key: 'SITE_URL',
-      label: 'URL publik',
-      hint: 'Mis. https://bi.example.com — dipakai untuk tautan di email dan embed.',
+      label: 'Public URL',
+      hint: 'E.g. https://bi.example.com — used for links in emails and embeds.',
       required: true,
     },
-    { key: 'DB_PASSWORD', label: 'Password database', generate: 'password' },
+    { key: 'DB_PASSWORD', label: 'Database password', generate: 'password' },
     {
       key: 'ENCRYPTION_SECRET_KEY',
-      label: 'Kunci enkripsi kredensial',
+      label: 'Credential encryption key',
       generate: 'secret',
-      hint: 'Mengenkripsi kredensial database yang Anda sambungkan. Jangan diganti setelah dipakai.',
+      hint: 'Encrypts the database credentials you connect. Do not change it once it is in use.',
     },
   ],
   services: [{ service: 'metabase', port: 3000, label: 'Web Metabase' }],

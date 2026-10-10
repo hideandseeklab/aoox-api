@@ -33,7 +33,7 @@ describe('hostPortConflicts', () => {
       ...empty,
       apps: [{ id: 'a1', appName: 'blog', hostPort: 8080 }],
     });
-    expect(result).toEqual(['8080 (aplikasi blog)']);
+    expect(result).toEqual(['8080 (application blog)']);
   });
 
   it('reports a conflict with a managed database', () => {

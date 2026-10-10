@@ -4,7 +4,7 @@ export const odoo: Template = {
   id: 'odoo',
   name: 'Odoo Community',
   description:
-    'ERP dan bisnis all-in-one (CRM, penjualan, inventori, akuntansi, situs web), edisi Community, dengan PostgreSQL.',
+    'All-in-one ERP and business suite (CRM, sales, inventory, accounting, website), Community edition, with PostgreSQL.',
   version: '19.0',
   tags: ['erp', 'business'],
   links: {
@@ -15,11 +15,11 @@ export const odoo: Template = {
   variables: [
     {
       key: 'MASTER_PASSWORD',
-      label: 'Master password database',
+      label: 'Database master password',
       generate: 'password',
-      hint: 'Dibuat otomatis. Dibutuhkan untuk membuat, menyalin, mem-backup, atau menghapus database Odoo di /web/database/manager. Setelah deploy, lihat di halaman stack: tab Pengaturan, bagian environment, tombol Tampilkan nilai. Simpan di tempat aman.',
+      hint: 'Generated automatically. Needed to create, duplicate, back up or delete Odoo databases at /web/database/manager. After deploying, find it on the stack page: Settings tab, environment section, "Show values" button. Keep it safe.',
     },
-    { key: 'DB_PASSWORD', label: 'Password PostgreSQL', generate: 'password' },
+    { key: 'DB_PASSWORD', label: 'PostgreSQL password', generate: 'password' },
   ],
   services: [{ service: 'odoo', port: 8069, label: 'Web Odoo' }],
   compose: `services:

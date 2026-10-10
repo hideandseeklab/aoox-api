@@ -12,7 +12,7 @@ export const excalidraw: Template = {
   id: 'excalidraw',
   name: 'Excalidraw',
   description:
-    'Papan tulis virtual open source untuk sketsa dan diagram. Klien statis, tanpa kolaborasi langsung.',
+    'Open source virtual whiteboard for sketches and diagrams. Static client, no live collaboration.',
   version: '1',
   tags: ['whiteboard', 'diagrams'],
   links: {

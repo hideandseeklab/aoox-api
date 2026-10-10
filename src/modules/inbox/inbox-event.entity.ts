@@ -32,6 +32,13 @@ export class InboxEvent {
   @Column({ type: 'text', default: '' })
   summary: string;
 
+  /**
+   * Structured facts (`variant`, names, counts…) the web turns into a localized
+   * sentence; null on rows from before this existed. Never holds secrets or raw logs.
+   */
+  @Column({ type: 'jsonb', nullable: true })
+  params: Record<string, string | number | boolean | null> | null;
+
   /** Path inside the web app (never an absolute URL), or null. */
   @Column({ type: 'varchar', nullable: true })
   link: string | null;

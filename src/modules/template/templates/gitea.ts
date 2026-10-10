@@ -4,7 +4,7 @@ export const gitea: Template = {
   id: 'gitea',
   name: 'Gitea',
   description:
-    'Git hosting ringan (issues, PR, CI Actions), dengan PostgreSQL.',
+    'Lightweight Git hosting (issues, PRs, CI Actions), with PostgreSQL.',
   version: '1.24',
   tags: ['git', 'devtools'],
   links: {
@@ -15,11 +15,11 @@ export const gitea: Template = {
   variables: [
     {
       key: 'ROOT_URL',
-      label: 'URL publik',
-      hint: 'Mis. https://git.example.com — harus sama dengan domain yang dipasang.',
+      label: 'Public URL',
+      hint: 'E.g. https://git.example.com — must match the domain you attach.',
       required: true,
     },
-    { key: 'DB_PASSWORD', label: 'Password database', generate: 'password' },
+    { key: 'DB_PASSWORD', label: 'Database password', generate: 'password' },
   ],
   services: [{ service: 'gitea', port: 3000, label: 'Web Gitea' }],
   compose: `services:

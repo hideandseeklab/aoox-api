@@ -80,6 +80,7 @@ export class CertificateWatcherService {
             ],
           ],
           url: origin ? `${origin}/settings` : undefined,
+          params: { variant: 'acme', domain: f.domain, reason: f.reason },
           data: {
             event: 'certificate.failure',
             domain: f.domain,

@@ -4,7 +4,7 @@ export const vaultwarden: Template = {
   id: 'vaultwarden',
   name: 'Vaultwarden',
   description:
-    'Password manager ringan yang kompatibel dengan klien Bitwarden (web, mobile, ekstensi).',
+    'Lightweight password manager compatible with Bitwarden clients (web, mobile, extensions).',
   version: '1.37',
   tags: ['security', 'passwords'],
   links: {
@@ -15,21 +15,21 @@ export const vaultwarden: Template = {
   variables: [
     {
       key: 'DOMAIN',
-      label: 'URL publik',
-      hint: 'Mis. https://vault.example.com — harus HTTPS agar web vault bisa dipakai (kecuali localhost).',
+      label: 'Public URL',
+      hint: 'E.g. https://vault.example.com — must be HTTPS for the web vault to work (except on localhost).',
       required: true,
     },
     {
       key: 'ADMIN_TOKEN',
-      label: 'Token halaman /admin',
+      label: 'Token for the /admin page',
       generate: 'secret',
-      hint: 'Dibuat otomatis; dibutuhkan untuk membuka /admin. Simpan di tempat aman.',
+      hint: 'Generated automatically; needed to open /admin. Keep it safe.',
     },
     {
       key: 'SIGNUPS_ALLOWED',
-      label: 'Izinkan pendaftaran',
+      label: 'Allow sign-ups',
       default: 'true',
-      hint: 'Ubah ke false setelah akun Anda dibuat; undang anggota lain lewat /admin.',
+      hint: 'Set it to false once your account exists; invite other members through /admin.',
     },
   ],
   services: [{ service: 'vaultwarden', port: 80, label: 'Web Vaultwarden' }],

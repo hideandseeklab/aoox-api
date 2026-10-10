@@ -3,7 +3,7 @@ import { Template } from '../template.types';
 export const ghost: Template = {
   id: 'ghost',
   name: 'Ghost',
-  description: 'Platform publikasi & newsletter, dengan MySQL 8.',
+  description: 'Publishing and newsletter platform, with MySQL 8.',
   version: '5',
   tags: ['cms', 'blog'],
   links: {
@@ -14,13 +14,13 @@ export const ghost: Template = {
   variables: [
     {
       key: 'GHOST_URL',
-      label: 'URL publik',
-      hint: 'URL lengkap situs, mis. https://blog.example.com — harus sama dengan domain yang dipasang.',
+      label: 'Public URL',
+      hint: 'Full site URL, e.g. https://blog.example.com — must match the domain you attach.',
       required: true,
     },
-    { key: 'DB_PASSWORD', label: 'Password database', generate: 'password' },
+    { key: 'DB_PASSWORD', label: 'Database password', generate: 'password' },
   ],
-  services: [{ service: 'ghost', port: 2368, label: 'Situs Ghost' }],
+  services: [{ service: 'ghost', port: 2368, label: 'Ghost site' }],
   compose: `services:
   ghost:
     image: ghost:5-alpine

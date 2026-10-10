@@ -90,6 +90,15 @@ export class DeploymentNotifierService implements OnModuleInit {
       level: 'info',
       fields,
       url: origin ? `${origin}/applications/${app.id}` : undefined,
+      params: {
+        kind: deployment.kind === 'rollback' ? 'rollback' : 'deployment',
+        application: app.name,
+        project: app.project.name,
+        trigger: deployment.trigger,
+        commitSha: deployment.commitSha?.slice(0, 7) ?? null,
+        commitMessage: deployment.commitMessage ?? null,
+        triggeredBy: deployment.triggeredBy ?? null,
+      },
       data: {
         event: 'deployment.started',
         deploymentId: deployment.id,
@@ -138,6 +147,20 @@ export class DeploymentNotifierService implements OnModuleInit {
       level: ok ? 'success' : 'failure',
       fields,
       url: origin ? `${origin}/applications/${app.id}` : undefined,
+      params: {
+        kind: deployment.kind === 'rollback' ? 'rollback' : 'deployment',
+        application: app.name,
+        project: app.project.name,
+        durationSeconds: deployment.finishedAt
+          ? Math.round(
+              (deployment.finishedAt.getTime() -
+                deployment.createdAt.getTime()) /
+                1000,
+            )
+          : null,
+        // The system's own error text, shown as a detail and not translated.
+        error: ok ? null : (deployment.errorMessage?.slice(0, 500) ?? null),
+      },
       data: {
         event: ok ? 'deployment.success' : 'deployment.failure',
         deploymentId: deployment.id,

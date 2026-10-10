@@ -74,6 +74,11 @@ describe('ContainerDownNotifierService', () => {
         title: 'Application went down: My App',
         level: 'failure',
         url: 'https://panel/applications/a1',
+        params: expect.objectContaining({
+          variant: 'application',
+          application: 'My App',
+          restarting: false,
+        }) as unknown,
       }),
     );
   });
@@ -123,7 +128,13 @@ describe('ContainerDownNotifierService', () => {
     );
     expect(broadcast).toHaveBeenCalledWith(
       'containerDown',
-      expect.objectContaining({ title: 'Database went down: main' }),
+      expect.objectContaining({
+        title: 'Database went down: main',
+        params: expect.objectContaining({
+          variant: 'database',
+          database: 'main',
+        }) as unknown,
+      }),
     );
 
     broadcast.mockClear();
@@ -156,6 +167,10 @@ describe('ContainerDownNotifierService', () => {
         expect.objectContaining({
           title: 'Application went down: My App on server edge-1',
           fields: expect.arrayContaining([['Server', 'edge-1']]),
+          params: expect.objectContaining({
+            variant: 'application',
+            server: 'edge-1',
+          }) as unknown,
           data: expect.objectContaining({ server: 'edge-1', serverId: 's1' }),
         }),
       );

@@ -75,6 +75,13 @@ export class ServiceHealthWatcherService {
               : []),
           ],
           url: origin ? `${origin}/applications/${app.id}` : undefined,
+          params: {
+            variant: 'replicas',
+            application: app.name,
+            project: app.project.name,
+            running: svc.running,
+            desired: svc.desired,
+          },
           data: {
             event: 'service.short',
             applicationId: app.id,

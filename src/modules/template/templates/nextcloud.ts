@@ -4,7 +4,7 @@ export const nextcloud: Template = {
   id: 'nextcloud',
   name: 'Nextcloud',
   description:
-    'Penyimpanan file, sinkronisasi, dan kolaborasi pribadi, dengan PostgreSQL, Redis (cache), dan cron terpisah.',
+    'Private file storage, sync and collaboration, with PostgreSQL, Redis (cache) and a separate cron service.',
   version: '32',
   tags: ['storage', 'collaboration'],
   links: {
@@ -16,21 +16,21 @@ export const nextcloud: Template = {
     {
       key: 'DOMAIN',
       label: 'Domain',
-      hint: 'Mis. cloud.example.com (tanpa https://) — harus sama dengan domain yang dipasang.',
+      hint: 'E.g. cloud.example.com (without https://) — must match the domain you attach.',
       required: true,
     },
     {
       key: 'PROTOCOL',
-      label: 'Protokol publik',
+      label: 'Public protocol',
       default: 'https',
-      hint: 'https bila domain memakai HTTPS; http hanya untuk uji lokal.',
+      hint: 'https when the domain uses HTTPS; http only for local testing.',
     },
-    { key: 'ADMIN_USER', label: 'Username admin', default: 'admin' },
-    { key: 'ADMIN_PASSWORD', label: 'Password admin', generate: 'password' },
-    { key: 'DB_PASSWORD', label: 'Password database', generate: 'password' },
+    { key: 'ADMIN_USER', label: 'Admin username', default: 'admin' },
+    { key: 'ADMIN_PASSWORD', label: 'Admin password', generate: 'password' },
+    { key: 'DB_PASSWORD', label: 'Database password', generate: 'password' },
     {
       key: 'REDIS_PASSWORD',
-      label: 'Password Redis',
+      label: 'Redis password',
       generate: 'password',
     },
   ],

@@ -449,6 +449,11 @@ export class InstanceBackupService {
           ['Error', (backup.errorMessage ?? 'unknown').slice(0, 500)],
         ],
         url: origin ? `${origin}/settings` : undefined,
+        params: {
+          variant: 'instance',
+          trigger: backup.trigger,
+          error: (backup.errorMessage ?? '').slice(0, 500) || null,
+        },
         data: {
           event: 'instance-backup.failure',
           backupId: backup.id,

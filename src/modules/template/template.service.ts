@@ -46,10 +46,10 @@ export function renderEnv(
     if (!value && v.generate) value = generateValue(v.generate);
     if (!value && v.default !== undefined) value = v.default;
     if (!value && v.required) {
-      throw new TemplateVariableError(`${v.label} (${v.key}) wajib diisi`);
+      throw new TemplateVariableError(`${v.label} (${v.key}) is required`);
     }
     if (/[\r\n]/.test(value)) {
-      throw new TemplateVariableError(`${v.key} tidak boleh multi-baris`);
+      throw new TemplateVariableError(`${v.key} must not span multiple lines`);
     }
     lines.push(`${v.key}=${value}`);
   }

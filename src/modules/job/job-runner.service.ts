@@ -349,6 +349,8 @@ export class JobRunnerService {
           ['Output', output.slice(-500)],
         ],
         url: origin ? `${origin}${ownerPath(job)}` : undefined,
+        // The command output stays out: it is a log.
+        params: { job: job.name, status },
         data: {
           event: 'job.failure',
           jobId: job.id,

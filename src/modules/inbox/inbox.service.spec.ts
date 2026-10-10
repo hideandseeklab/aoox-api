@@ -49,10 +49,27 @@ describe('InboxService.record', () => {
         level: 'failure',
         title: 'Deployment failed: web',
         summary: 'Project: blog',
+        params: null,
         link: '/applications/a1',
         projectId: 'p1',
       },
     ]);
+  });
+
+  it('stores the structured params next to the English text, cleaned up', async () => {
+    const { svc, saved } = setup({ app: 'p1' });
+    await svc.record(
+      'serverDown',
+      message(
+        { applicationId: 'a1' },
+        { params: { variant: 'down', server: 'edge-1', reminder: false } },
+      ),
+    );
+    expect(saved[0].params).toEqual({
+      variant: 'down',
+      server: 'edge-1',
+      reminder: false,
+    });
   });
 
   it('finds the project of stacks and databases too', async () => {

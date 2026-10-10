@@ -151,6 +151,12 @@ export class ServerHealthService {
         ['Checked', now.toISOString()],
       ],
       url: this.url(),
+      params: {
+        variant: 'down',
+        server: server.name,
+        reminder,
+        error: error.slice(0, 200) || null,
+      },
       data: {
         event: 'server.down',
         serverId: server.id,
@@ -176,6 +182,11 @@ export class ServerHealthService {
         ['Down for', duration],
       ],
       url: this.url(),
+      params: {
+        variant: 'recovered',
+        server: server.name,
+        downSeconds: downMs === null ? null : Math.round(downMs / 1000),
+      },
       data: {
         event: 'server.recovered',
         serverId: server.id,

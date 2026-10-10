@@ -96,6 +96,13 @@ export class DiskWatcherService {
           ['Hint', 'Settings → Disk Docker → Bersihkan sekarang'],
         ],
         url: origin ? `${origin}/settings` : undefined,
+        params: {
+          usedPercent: space.usedPercent,
+          usedBytes: space.usedBytes,
+          totalBytes: space.totalBytes,
+          availableBytes: space.availableBytes,
+          thresholdPercent: threshold,
+        },
         data: {
           event: 'disk.low',
           usedPercent: space.usedPercent,
