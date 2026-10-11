@@ -12,7 +12,7 @@ import { OnboardingService } from '../onboarding.service';
 export class DismissOnboardingController {
   constructor(private readonly service: OnboardingService) {}
 
-  /** "Sembunyikan": persists per user and does not come back. */
+  /** "Hide": persists per user and does not come back. */
   @Post('dismiss')
   @HttpCode(204)
   async dismiss(@CurrentUser() user: JwtPayload): Promise<void> {

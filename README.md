@@ -2,7 +2,7 @@
 
 Self-hosted PaaS — deploy from Git or images on your own server, with databases, domains and monitoring in one dashboard.
 
-Website: [aoox.dev](https://aoox.dev) · Docs: [aoox.dev/docs](https://aoox.dev/docs) · Changelog: [aoox.dev/changelog](https://aoox.dev/changelog)
+Website: [aoox.dev](https://aoox.dev/en) · Docs: [aoox.dev/en/docs](https://aoox.dev/en/docs) · Changelog: [aoox.dev/en/changelog](https://aoox.dev/en/changelog)
 
 Four repos:
 
@@ -103,17 +103,17 @@ container immediately — no rebuild.
 
 ### Disk cleanup
 
-**Settings → Disk Docker** shows what images, volumes, build cache and containers use, and **Bersihkan sekarang**
+**Settings → Docker disk** shows what images, volumes, build cache and containers use, and **Clean now**
 (also nightly at 04:30, `MAINTENANCE_NIGHTLY=false` to disable) prunes old deployment images beyond each
 application's *Riwayat deployment* (default 10, the running image is always kept), dangling images, the build cache and
 the local registry's orphaned blobs. If any local volumes are named like aoox's own but no longer belong to any
 project (an app, database or compose stack deleted without its mounts, or a leftover from an older version), they are
-listed too and can be removed with the same button via an extra "Sekalian hapus volume yatim" switch — off by default
+listed too and can be removed with the same button via an extra "Also delete orphan volumes" switch — off by default
 and never included in the nightly run, since a volume can hold data nothing else backs up.
 
 ### Docker Swarm (optional)
 
-**Settings → Infrastruktur → Docker Swarm** turns the host daemon into a (single-node) swarm manager. An application
+**Settings → Infrastructure → Docker Swarm** turns the host daemon into a (single-node) swarm manager. An application
 can then choose **Mode deploy: Swarm service** with N replicas: the daemon does the rolling update (`start-first`,
 automatic rollback on failure), Traefik load-balances the tasks, stop/start scale to 0 and back, logs and metrics come
 from the tasks. Everything else (databases, compose stacks, previews) stays plain containers, and leaving the swarm is
@@ -155,7 +155,7 @@ current access — existing members are added to every existing project.
 
 ### Account security
 
-**Settings → Akun** lets every user change their password and turn on two-factor authentication (TOTP: scan the QR
+**Settings → Account** lets every user change their password and turn on two-factor authentication (TOTP: scan the QR
 with any authenticator app, keep the ten backup codes). Sign-in then asks for a code after the password. Owners can
 reset a member's password or switch off their 2FA from the Members card. **Settings → Audit log** (owner/admin) lists
 every state-changing request and sign-in attempt for 90 days: who, via session/API token/webhook, what, and the result.
@@ -192,11 +192,11 @@ identify the event and the delivery.
 
 ### Ready-made images
 
-Choose **Image siap pakai** as the source to run an existing image (`nginx:1.27`, `ghcr.io/org/app:1.2`) without a
+Choose **Ready-made image** as the source to run an existing image (`nginx:1.27`, `ghcr.io/org/app:1.2`) without a
 build: it is pulled on every deploy (so `latest` follows the registry) using the credentials of a registry from the
 Registry page for private images. Env, mounts, domains, jobs and rollback work the same as for built apps.
-Turn on **Update otomatis** to redeploy whenever the tag's digest changes in the registry (Watchtower-style: the
-manifest is compared through the registry API every N minutes, no pull), or press **Cek update image** to check now.
+Turn on **Auto update** to redeploy whenever the tag's digest changes in the registry (Watchtower-style: the
+manifest is compared through the registry API every N minutes, no pull), or press **Check image update** to check now.
 
 ### Railpack builds (with cache)
 
@@ -217,7 +217,7 @@ to `index.html` when enabled.
 
 A stack is a `docker-compose.yml` from a repository (or a template): deploy, stop, start and tear down from the panel.
 The **Riwayat** tab keeps the last 20 runs with their output — what was run, when, and whether a push triggered it —
-and the **Webhook auto-deploy** card on Pengaturan gives a URL to paste into GitHub/GitLab, with an optional shared
+and the **Webhook auto-deploy** card on Settings gives a URL to paste into GitHub/GitLab, with an optional shared
 secret that every delivery must prove. Stack containers now also show live CPU/RAM per service, and a service that
 dies outside a deploy raises the same "container down" notification applications get.
 
@@ -227,7 +227,7 @@ signature. Off by default, and GitHub.com only: GitLab does not publish a stable
 GitHub Enterprise Server sends deliveries from its own network, not GitHub's, so this would reject real pushes there.
 
 The **Mount** tab attaches a volume, a host bind (owner/admin) or a small config file to one named service in the
-stack — same three kinds an application gets, just pointed at a service instead of a single container. **Pengaturan**
+stack — same three kinds an application gets, just pointed at a service instead of a single container. **Settings**
 also has a per-service CPU/RAM cap. Both take effect on the stack's next deploy, the same as domains and ports.
 
 ### Scheduled jobs
@@ -259,10 +259,10 @@ slugs, missing references, host ports or domains already in use).
 
 ### Instance backup and restore
 
-**Settings → Infrastruktur → Backup instance** (owner) snapshots the panel's own database — projects, applications,
+**Settings → Infrastructure → Instance backup** (owner) snapshots the panel's own database — projects, applications,
 databases, users, servers, notifications, schedules — into `aoox_backups/_instance/<stamp>.json.gz`, on demand
 or on a cron, with an optional S3 copy and retention. Secrets stay encrypted. To move to a new server: install the
-same aoox version with the same `ENCRYPTION_KEY` (and `JWT_SECRET`), then **Restore dari file** with the
+same aoox version with the same `ENCRYPTION_KEY` (and `JWT_SECRET`), then **Restore from file** with the
 downloaded snapshot; running containers are untouched, and a restore never mixes versions (the migration list must
 match). App/database data itself is covered by the database, volume and S3 backups above.
 

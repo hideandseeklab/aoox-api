@@ -48,6 +48,7 @@ Versions below 1.0.0 may include breaking changes in a minor release.
 ### Changed
 
 - API messages are now English only: the host-port conflict error, template variable errors, template descriptions, variable labels and hints, the proxy config preset labels and hints, and the onboarding step titles and hints (step ids are unchanged). No response shape, id or status code changed; the web app translates the texts it shows.
+- Remaining API messages (SQL import result, disk-low hint) are now English.
 - Moving an application to another server (`PATCH /applications/:id` with a new `serverId`) now cleans the middlewares of its domains: only names defined by an enabled dynamic config file on the destination proxy are kept, the rest are dropped before the labels are rebuilt, with a warning per domain in the log. The answer gains `droppedMiddlewares: [{domain, names}]` only when something was dropped. Project export/import behavior is unchanged (files and domain middlewares are not exported; an import of a file that carries them still succeeds).
 
 - The web terminal's "SSH authentication failed" message now says which account to run the authorize command as
@@ -109,7 +110,7 @@ Versions below 1.0.0 may include breaking changes in a minor release.
   `odoo:19.0-20260926` (the `19.0` tag moves every night; 19.0 is the middle of the three majors published on Docker Hub (18.0, 19.0, 20.0), a conservative pick over the newest 20.0), configuration comes from an inline compose `configs` entry
   mounted at `/etc/odoo/odoo.conf` (Odoo has no command-line or environment option for the master password, only the config file) with `proxy_mode = True`, `workers = 0` (one process,
   small installs) and `list_db = True` so the first database can be created from the web page; the database connection uses the image's `HOST`/`USER`/`PASSWORD` variables. The master password
-  is a generated variable (`MASTER_PASSWORD`), never a default. The hint tells where to read it (stack page, Pengaturan, environment, "Tampilkan nilai"). Both services have health checks
+  is a generated variable (`MASTER_PASSWORD`), never a default. The hint tells where to read it (stack page, Settings, environment, "Show values"). Both services have health checks
   (`/web/health` for Odoo, `pg_isready` for PostgreSQL). Deployed through `POST /compose-apps/from-template` behind the local proxy: healthy in about 16 s; the generated master password was
   accepted by `/web/database/create` (a wrong one was refused and created nothing), the first database took about 23 s, admin login worked, `proxy_mode` was confirmed (forwarded client
   address honoured), and after removing the containers and redeploying the database and login were still there. Measured once right after creating the database and logging in: about
@@ -136,7 +137,7 @@ Versions below 1.0.0 may include breaking changes in a minor release.
   `API_IMAGE` to tell whether the install follows `:latest` (pinned tags get no "update available" badge) — and the
   optional `WEBHOOK_VERIFY_GITHUB_IP` and `PREVIEW_DOMAIN` (empty by default = off/unset; both readers already treat an
   empty string that way, now covered by a test). **Existing installs only receive them through `aoox reinstall`**:
-  `aoox update` and the dashboard's "Terapkan update" swap images but never rewrite the compose file, so an install
+  `aoox update` and the dashboard's "Apply update" swap images but never rewrite the compose file, so an install
   created earlier keeps its old compose (and the badge falls back to reading the container's own image reference)
   until it is reinstalled. `.env.dist.example` documents the four variables.
 
@@ -159,7 +160,7 @@ Versions below 1.0.0 may include breaking changes in a minor release.
   was created from (one Docker `inspect` per process); an exact version, another tag, a digest, or a tag
   that cannot be determined never produces a badge. `GET /auth/me` returns `updateAvailable: { version,
   applying }` **for the owner only** (from the cached row, no registry call); `GET /instance/update`
-  now includes a `version` block and every manual "Cek update" refreshes the cache, so the sidebar and
+  now includes a `version` block and every manual "Check for updates" refreshes the cache, so the sidebar and
   the Update page cannot disagree. `INSTANCE_UPDATE_REGISTRY_URL` overrides the registry base URL
   (mirrors, tests).
 - Static sites (`buildType: static`, SPA mode off) now serve the repo's own `404.html` for missing paths
@@ -173,7 +174,7 @@ Versions below 1.0.0 may include breaking changes in a minor release.
 - `instance_update_state` gets two new columns, `apply_started_at`/`apply_from_version` (migration
   `InstanceUpdateApplyState`, additive), so
   `GET /instance/update` and a new lightweight `GET /instance/update/progress` (no registry calls —
-  see below) can report `applying: boolean` for the "Terapkan update" flow on the dashboard: set by
+  see below) can report `applying: boolean` for the "Apply update" flow on the dashboard: set by
   `apply()` (the version this process was on when the restart was triggered), cleared the next time
   either endpoint runs on a process that's either on a different `currentVersion` than recorded, or
   is simply a newer OS process than `applyStartedAt` (`Date.now() - process.uptime() * 1000`, a few
@@ -206,15 +207,15 @@ Versions below 1.0.0 may include breaking changes in a minor release.
   and the request fails with a 409 saying so, rather than leaving the app without a container.
 - The web Terminal on installs made before the installer wrote `TERMINAL_SSH_USER=root` failed with
   `TERMINAL_SSH_USER is not set` even with `TERMINAL_SSH_HOST` filled in: those `.env.dist` files have
-  no such line, and `aoox update` / "Terapkan update" only swap images, never `.env.dist`. The
+  no such line, and `aoox update` / "Apply update" only swap images, never `.env.dist`. The
   SSH-to-host backend now defaults to `root` when the variable is empty (the same default the
   installers use — the install itself needs root); remote servers keep their own `username`.
   `GET /terminal/status` no longer reports that error and gains `usernameSource: 'env' | 'default'`
   (null in local mode), `GET /instance/env` gains `terminalSshUserDefault`, and the Socket.IO `error`
   event carries an optional second argument `hint` (`'environment'` for the host, `'servers'` for a
   remote server) so the web app can link to the page that fixes a failed connection.
-- The "Terapkan update" button's UX bug reported by a user upgrading a real VPS from alpha.2 to
-  alpha.3: clicking it briefly showed a red "Tidak dapat terhubung ke server" error (expected — the
+- The "Apply update" button's UX bug reported by a user upgrading a real VPS from alpha.2 to
+  alpha.3: clicking it briefly showed a red "Could not reach the server" error (expected — the
   `api`/`web` containers were mid-restart) and then just sat there on the old version number forever
   with no indication anything was happening, even though the update itself had actually succeeded.
   The fix is entirely on the web side (see its changelog) — the API changes above exist to give the
@@ -268,7 +269,7 @@ Versions below 1.0.0 may include breaking changes in a minor release.
   notification per app per check with up to 3 example snippets and a link to the app. Cooldown 15
   minutes per app, except a never-seen-before error shape always gets through. Env values that look
   like secrets (key contains PASSWORD/SECRET/TOKEN/KEY) and resolved database passwords are redacted
-  from the snippets. New per-application switch **Ignore error logs** (`ignoreErrorLogs`, Pengaturan
+  from the snippets. New per-application switch **Ignore error logs** (`ignoreErrorLogs`, Settings
   tab) opts an app out entirely, for apps whose normal output just looks like errors.
 - Managed database: new engine **Valkey** (`valkey/valkey`, drop-in Redis replacement — same
   `--requirepass`/AOF setup, `redis-cli`/`redis://` compatible, verified the image ships both

@@ -93,7 +93,7 @@ export class DiskWatcherService {
           ['Used', `${gb(space.usedBytes)} of ${gb(space.totalBytes)}`],
           ['Free', gb(space.availableBytes)],
           ['Threshold', `${threshold}%`],
-          ['Hint', 'Settings → Disk Docker → Bersihkan sekarang'],
+          ['Hint', 'Settings → Docker disk → Clean now'],
         ],
         url: origin ? `${origin}/settings` : undefined,
         params: {

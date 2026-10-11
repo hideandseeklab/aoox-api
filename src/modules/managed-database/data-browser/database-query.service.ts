@@ -585,7 +585,7 @@ export class DatabaseQueryService {
     }
     void stdout; // dumps echo results of their own set_config SELECTs — noise
     return {
-      message: `Import selesai (${(sql.length / 1024).toFixed(0)} KB SQL)`,
+      message: `Import finished (${(sql.length / 1024).toFixed(0)} KB SQL)`,
     };
   }
 
