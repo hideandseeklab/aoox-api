@@ -2,7 +2,7 @@
 
 Self-hosted PaaS — deploy from Git or images on your own server, with databases, domains and monitoring in one dashboard.
 
-Website: [aoox.dev](https://aoox.dev/en) · Docs: [aoox.dev/en/docs](https://aoox.dev/en/docs) · Changelog: [aoox.dev/en/changelog](https://aoox.dev/en/changelog)
+Website: [aoox.dev](https://aoox.dev) · Docs: [aoox.dev/docs](https://aoox.dev/docs) · Changelog: [aoox.dev/changelog](https://aoox.dev/changelog)
 
 Four repos:
 

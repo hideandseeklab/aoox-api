@@ -3,7 +3,7 @@ import { Template } from '../template.types';
 export const minio: Template = {
   id: 'minio',
   name: 'MinIO',
-  description: 'Object storage kompatibel S3 — cocok sebagai tujuan backup.',
+  description: 'S3-compatible object storage, suitable as a backup destination.',
   version: 'latest',
   tags: ['storage', 's3'],
   links: {
@@ -21,7 +21,7 @@ export const minio: Template = {
   ],
   services: [
     { service: 'minio', port: 9001, label: 'Console (UI)' },
-    { service: 'minio', port: 9000, label: 'API S3' },
+    { service: 'minio', port: 9000, label: 'S3 API' },
   ],
   compose: `services:
   minio:
