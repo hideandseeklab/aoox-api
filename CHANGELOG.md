@@ -8,6 +8,15 @@ Versions below 1.0.0 may include breaking changes in a minor release.
 
 ## [Unreleased]
 
+### Added
+
+- **Warning when the Container port is not an exposed port.** A deployment (build, pull, rollback, config, PR preview) reads the image's `EXPOSE` ports from the app's daemon and, when the image exposes TCP ports but not the Container port, writes one note to the deployment log (`==> Note: the image exposes 80/tcp but the container port is 3000 ...`). Never fails the deployment; nothing is written when the image exposes nothing. `GET /applications/:id` adds `exposedPorts: number[] | null` (read live, 2 second limit, `null` when unknown).
+
+### Fixed
+
+- **Changing the Container port of a running application now takes effect.** It used to be saved only, so the proxy kept routing to the old port ("Bad Gateway") until the next deploy. A running container is now recreated from its current image like a host port change (a swarm service gets a `config` deployment); a failed apply restores the previous port; 409 while a deployment is in progress.
+- **Starting a stopped application after its Container port changed uses the new port.** `start-application` now also compares the Traefik target port in the stopped container's labels (`…loadbalancer.server.port`) with the Container port and recreates the container when they differ, instead of starting the old one that still routes to the old port.
+
 ## [0.1.0-alpha.8] - 2026-10-12
 
 ### Added

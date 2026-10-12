@@ -4,6 +4,7 @@ import { Application } from '../application.entity';
 import { ApplicationService, containerNameFor } from '../application.service';
 import { ProjectAccessService } from '../../project/project-access.service';
 import type { ProjectRole } from '../../project/project-member.entity';
+import { readExposedPorts } from '../exposed-ports';
 import { ServiceStatus, SwarmDeployService } from '../swarm-deploy.service';
 import { SecretSourceService } from '../../secret-source/secret-source.service';
 import {
@@ -20,6 +21,12 @@ export interface ApplicationDetail extends Application {
   projectRole: ProjectRole;
   /** External secret source (never any credential or value), or null. */
   secretSource: SecretSourceView | null;
+  /**
+   * TCP ports the image in `currentImage` declares with EXPOSE (read live from
+   * the app's daemon); null when unknown: no current image, image not on the
+   * daemon, daemon unreachable or slow. [] = the image exposes nothing.
+   */
+  exposedPorts: number[] | null;
 }
 
 @Injectable()
@@ -62,18 +69,41 @@ export class GetApplicationService {
             status: `${service.running}/${service.desired} replicas`,
           }
         : null;
-      return { ...app, container, service, projectRole, secretSource };
+      const exposedPorts = await this.exposedPortsOf(app);
+      return {
+        ...app,
+        container,
+        service,
+        projectRole,
+        secretSource,
+        exposedPorts,
+      };
     }
     const docker = await this.remote.forServer(app.serverId);
-    const c = await docker
-      .findContainerByName(containerNameFor(app))
-      .catch(() => null);
+    const [c, exposedPorts] = await Promise.all([
+      docker.findContainerByName(containerNameFor(app)).catch(() => null),
+      app.currentImage
+        ? readExposedPorts(docker.engine, app.currentImage)
+        : Promise.resolve(null),
+    ]);
     return {
       ...app,
       container: c ? { id: c.Id, state: c.State, status: c.Status } : null,
       service: null,
       projectRole,
       secretSource,
+      exposedPorts,
     };
+  }
+
+  /** Swarm apps: the host daemon holds the image the service was deployed from. */
+  private async exposedPortsOf(app: Application): Promise<number[] | null> {
+    if (!app.currentImage) return null;
+    try {
+      const docker = await this.remote.forServer(app.serverId);
+      return await readExposedPorts(docker.engine, app.currentImage);
+    } catch {
+      return null;
+    }
   }
 }

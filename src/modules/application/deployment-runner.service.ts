@@ -10,6 +10,7 @@ import { resourceLimits } from '../docker/resource-limits';
 import { HEALTHCHECK_WAIT_MS, healthcheckFor } from './healthcheck';
 import { dnsRouting } from './cert-mode';
 import { bindsFor, prepareMounts } from './mounts';
+import { exposedPortsNote, readExposedPorts } from './exposed-ports';
 import { GitCredentialService } from '../git-credential/git-credential.service';
 import {
   APP_NETWORK,
@@ -524,6 +525,14 @@ export class DeploymentRunnerService {
       env.push(`PORT=${app.containerPort}`);
     }
     const docker = await this.remote.forServer(app.serverId);
+    // Explain a likely "Bad Gateway" up front; informational, never fails the deploy.
+    if (log?.note) {
+      const note = exposedPortsNote(
+        (await readExposedPorts(docker.engine, imageRef)) ?? [],
+        app.containerPort,
+      );
+      if (note) await log.note(note).catch(() => undefined);
+    }
     const existing = await docker.findContainerByName(name);
 
     // Every app joins the proxy network so Traefik can reach it by name.
@@ -794,6 +803,8 @@ export interface BuildLog {
   step(status: DeploymentStatus, line: string): Promise<void>;
   progress(m: BuildProgress): void;
   flush(force?: boolean): Promise<void>;
+  /** Informational line that does not change the status (optional sinks). */
+  note?(line: string): Promise<void>;
 }
 
 /** Buffers progress lines and persists them to the deployment row in batches. */

@@ -32,15 +32,18 @@ export class StartApplicationService {
       throw new NotFoundException(
         'Application has no container; deploy it first',
       );
-    // The host port may have been changed while the app was stopped (the
-    // stopped container keeps its old publishing): recreate it instead of
-    // just starting it, after re-checking the port is still free — the
-    // recreate removes the old container first.
+    // The host port or the container port may have been changed while the
+    // app was stopped (the stopped container keeps its old publishing and its
+    // old Traefik target port): recreate it instead of just starting it, after
+    // re-checking the host port is still free — the recreate removes the old
+    // container first.
     const inspected = await docker.engine.inspectContainer(c.Id);
+    const routed = inspected ? routedPort(inspected) : null;
     if (
       app.currentImage &&
       inspected &&
-      publishedPort(app, inspected) !== (app.hostPort ?? null)
+      (publishedPort(app, inspected) !== (app.hostPort ?? null) ||
+        (routed !== null && routed !== app.containerPort))
     ) {
       if (app.hostPort != null) {
         await this.hostPorts.assertFree([app.hostPort], docker, {
@@ -55,6 +58,24 @@ export class StartApplicationService {
     app.status = 'running';
     return this.applications.repo.save(app);
   }
+}
+
+/**
+ * Port Traefik was told to reach in this container (the
+ * `traefik.http.services.<router>.loadbalancer.server.port` label written by
+ * `ProxyService.buildLabels`); null when the container has no domain labels.
+ */
+export function routedPort(inspected: ContainerInspect): number | null {
+  const labels = inspected.Config?.Labels ?? {};
+  for (const [key, value] of Object.entries(labels)) {
+    if (
+      /^traefik\.http\.services\.[^.]+\.loadbalancer\.server\.port$/.test(key)
+    ) {
+      const port = Number(value);
+      if (Number.isInteger(port) && port > 0) return port;
+    }
+  }
+  return null;
 }
 
 /** Host port a (possibly stopped) container was created to publish for the app's container port. */

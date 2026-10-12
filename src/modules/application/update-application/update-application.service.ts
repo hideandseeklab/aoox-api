@@ -64,6 +64,7 @@ export class UpdateApplicationService {
   > {
     const app = await this.applications.findOwnedOrFail(id, ownerId);
     const hostPortBefore = app.hostPort;
+    const containerPortBefore = app.containerPort;
     const serverIdBefore = app.serverId;
     // The maintenance page lives on the proxy of the current server only.
     if (
@@ -208,13 +209,19 @@ export class UpdateApplicationService {
       }
     }
     const hostPortChanged = app.hostPort !== hostPortBefore;
+    // The container port lives in the proxy labels (and the Railpack PORT
+    // env) of the running container, so it is applied like a host port.
+    const containerPortChanged = app.containerPort !== containerPortBefore;
     // Refuse rather than race a running deployment: it holds its own copy of
     // the app (loaded when it was queued) and would create its container with
     // the old port — and its final save would write that old port back over
     // this change.
-    if (hostPortChanged && (await this.hasActiveDeployment(app.id))) {
+    if (
+      (hostPortChanged || containerPortChanged) &&
+      (await this.hasActiveDeployment(app.id))
+    ) {
       throw new ConflictException(
-        'A deployment is in progress; change the host port after it finishes',
+        `A deployment is in progress; change the ${hostPortChanged ? 'host' : 'container'} port after it finishes`,
       );
     }
     // A moved server needs the new daemon re-checked even for an unchanged
@@ -266,8 +273,17 @@ export class UpdateApplicationService {
     }
     // A stopped app keeps its container (and its old ports): the next start
     // notices the drift and recreates it (see StartApplicationService).
-    if (hostPortChanged && saved.currentImage && saved.status === 'running') {
-      await this.applyHostPort(saved, hostPortBefore, actorEmail);
+    if (
+      (hostPortChanged || containerPortChanged) &&
+      saved.currentImage &&
+      saved.status === 'running'
+    ) {
+      await this.applyHostPort(
+        saved,
+        { hostPort: hostPortBefore, containerPort: containerPortBefore },
+        hostPortChanged ? 'host port' : 'container port',
+        actorEmail,
+      );
       return saved;
     }
     // Limits apply now rather than at the next
@@ -404,7 +420,8 @@ export class UpdateApplicationService {
    */
   private async applyHostPort(
     saved: Application,
-    hostPortBefore: number | null,
+    before: { hostPort: number | null; containerPort: number },
+    label: string,
     actorEmail: string,
   ): Promise<void> {
     if (saved.deployMode === 'service') {
@@ -415,7 +432,8 @@ export class UpdateApplicationService {
       await this.runner.applyRuntimeConfig(saved);
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
-      saved.hostPort = hostPortBefore;
+      saved.hostPort = before.hostPort;
+      saved.containerPort = before.containerPort;
       await this.applications.repo.save(saved);
       try {
         await this.runner.applyRuntimeConfig(saved);
@@ -425,11 +443,11 @@ export class UpdateApplicationService {
         const restore =
           restoreErr instanceof Error ? restoreErr.message : String(restoreErr);
         throw new ConflictException(
-          `Could not apply the new host port (${reason}) and restoring the previous one failed (${restore}); redeploy the application`,
+          `Could not apply the new ${label} (${reason}) and restoring the previous one failed (${restore}); redeploy the application`,
         );
       }
       throw new ConflictException(
-        `Could not apply the new host port (${reason}); the previous port was restored`,
+        `Could not apply the new ${label} (${reason}); the previous port was restored`,
       );
     }
   }

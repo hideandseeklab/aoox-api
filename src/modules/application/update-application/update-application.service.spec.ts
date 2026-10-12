@@ -210,6 +210,43 @@ describe('UpdateApplicationService host port', () => {
   });
 });
 
+describe('UpdateApplicationService container port', () => {
+  const setPort = (h: ReturnType<typeof harness>, containerPort: number) =>
+    h.svc.execute('owner', 'app-1', { containerPort }, 'me@x.y');
+
+  it('recreates the running container so the proxy labels follow the port', async () => {
+    const h = harness({ containerPort: 3000 });
+    await setPort(h, 80);
+    expect(h.runner.applyRuntimeConfig).toHaveBeenCalledWith(
+      expect.objectContaining({ containerPort: 80 }),
+    );
+  });
+
+  it('does nothing extra when the port is unchanged', async () => {
+    const h = harness({ containerPort: 80 });
+    await setPort(h, 80);
+    expect(h.runner.applyRuntimeConfig).not.toHaveBeenCalled();
+  });
+
+  it('refuses while a deployment is in progress', async () => {
+    const h = harness({ containerPort: 3000 }, 1);
+    await expect(setPort(h, 80)).rejects.toThrow(
+      /change the container port after it finishes/,
+    );
+  });
+
+  it('restores the previous port when applying fails', async () => {
+    const h = harness({ containerPort: 3000 });
+    h.runner.applyRuntimeConfig
+      .mockRejectedValueOnce(new Error('boom'))
+      .mockResolvedValueOnce(undefined);
+    await expect(setPort(h, 80)).rejects.toThrow(
+      /Could not apply the new container port \(boom\)/,
+    );
+    expect(h.app.containerPort).toBe(3000);
+  });
+});
+
 describe('UpdateApplicationService moving to another proxy', () => {
   const dom = (host: string, middlewares: string[]): DomainRow => ({
     id: host,

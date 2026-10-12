@@ -1,16 +1,22 @@
 import {
   publishedPort,
+  routedPort,
   StartApplicationService,
 } from './start-application.service';
 
 type Bindings = Record<string, { HostPort: string }[] | null> | undefined;
 
-function harness(app: Record<string, unknown>, bindings: Bindings) {
+function harness(
+  app: Record<string, unknown>,
+  bindings: Bindings,
+  labels: Record<string, string> = {},
+) {
   const engine = {
     startContainer: jest.fn().mockResolvedValue(undefined),
-    inspectContainer: jest
-      .fn()
-      .mockResolvedValue({ HostConfig: { PortBindings: bindings } }),
+    inspectContainer: jest.fn().mockResolvedValue({
+      Config: { Image: 'img', Labels: labels },
+      HostConfig: { PortBindings: bindings },
+    }),
   };
   const docker = {
     engine,
@@ -41,7 +47,34 @@ function harness(app: Record<string, unknown>, bindings: Bindings) {
   return { svc, engine, runner, hostPorts, full };
 }
 
+const ROUTED = 'traefik.http.services.web.loadbalancer.server.port';
+
 describe('StartApplicationService', () => {
+  it('recreates when the container port changed while stopped (domain routing)', async () => {
+    const h = harness({ containerPort: 80 }, {}, { [ROUTED]: '3000' });
+    await h.svc.execute('o', 'a1');
+    expect(h.runner.applyRuntimeConfig).toHaveBeenCalled();
+    expect(h.engine.startContainer).not.toHaveBeenCalled();
+  });
+
+  it('just starts when the routed port still matches the container port', async () => {
+    const h = harness({ containerPort: 3000 }, {}, { [ROUTED]: '3000' });
+    await h.svc.execute('o', 'a1');
+    expect(h.engine.startContainer).toHaveBeenCalledWith('c1');
+    expect(h.runner.applyRuntimeConfig).not.toHaveBeenCalled();
+  });
+
+  it('routedPort reads the Traefik service port label, null without one', () => {
+    expect(
+      routedPort({
+        Config: { Image: 'i', Labels: { [ROUTED]: '8080' } },
+      } as never),
+    ).toBe(8080);
+    expect(routedPort({ Config: { Image: 'i', Labels: {} } } as never)).toBe(
+      null,
+    );
+  });
+
   it('just starts the container when its published port still matches', async () => {
     const h = harness(
       { hostPort: 5434 },
