@@ -4,6 +4,7 @@ import { IsNull, Not } from 'typeorm';
 import { RemoteDockerService } from '../../server/remote-docker.service';
 import { ApplicationService, containerNameFor } from '../application.service';
 import { MetricRetentionService } from '../../monitoring/metric-retention.service';
+import { MaintenanceModeService } from '../../maintenance-mode/maintenance-mode.service';
 import { PreviewService } from '../preview.service';
 import { SwarmDeployService } from '../swarm-deploy.service';
 
@@ -19,6 +20,7 @@ export class DeleteApplicationService {
     private readonly retention: MetricRetentionService,
     private readonly previews: PreviewService,
     private readonly certSync: CertificateSyncService,
+    private readonly maintenance: MaintenanceModeService,
   ) {}
 
   async execute(ownerId: string, id: string): Promise<void> {
@@ -33,6 +35,12 @@ export class DeleteApplicationService {
     if (app.deployMode === 'service') {
       await this.swarmDeploy.remove(app).catch(() => undefined);
     }
+    // Routers and the page file would otherwise outlive the application.
+    await this.maintenance
+      .deactivate(app.id)
+      .catch((err) =>
+        this.logger.warn(`Maintenance cleanup failed: ${String(err)}`),
+      );
     await this.retention.forget('application', app.id);
     // Domains go with the row (FK cascade): remember whether any used an
     // uploaded certificate so its files can be dropped from the proxy volume.

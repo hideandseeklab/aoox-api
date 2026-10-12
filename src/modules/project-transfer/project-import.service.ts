@@ -13,6 +13,7 @@ import { ComposeService } from '../compose/compose.service';
 import { BackupSchedulerService } from '../database-backup/backup-scheduler.service';
 import { GitCredentialService } from '../git-credential/git-credential.service';
 import { HttpMonitorService } from '../http-monitor/http-monitor.service';
+import { ResourceAlertService } from '../resource-alert/resource-alert.service';
 import { JobSchedulerService } from '../job/job-scheduler.service';
 import { Job } from '../job/job.entity';
 import { JobService } from '../job/job.service';
@@ -71,6 +72,7 @@ export class ProjectImportService {
     private readonly servers: ServerService,
     private readonly httpMonitors: HttpMonitorService,
     private readonly secretSources: SecretSourceService,
+    private readonly resourceAlerts: ResourceAlertService,
   ) {}
 
   async import(file: unknown, options: ImportOptions): Promise<ImportReport> {
@@ -208,6 +210,13 @@ export class ProjectImportService {
           where,
           warnings,
         );
+      if (a.resourceAlerts)
+        await this.resourceAlerts.importConfig(
+          { kind: 'application', id: app.id },
+          a.resourceAlerts,
+          where,
+          warnings,
+        );
       for (const d of a.domains ?? []) {
         if (
           await this.applications.domains.findOne({ where: { host: d.host } })
@@ -298,6 +307,13 @@ export class ProjectImportService {
         }),
       );
       created.databases++;
+      if (d.resourceAlerts)
+        await this.resourceAlerts.importConfig(
+          { kind: 'database', id: db.id },
+          d.resourceAlerts,
+          where,
+          warnings,
+        );
       created.mounts += await this.importMounts(
         this.databases.mounts,
         { databaseId: db.id },

@@ -30,6 +30,7 @@ function channel(name: string, toggles: Partial<Notification>): Notification {
     onAppError: false,
     onServerDown: false,
     onHttpDown: false,
+    onResourceAlert: false,
     createdAt: new Date(),
     ...toggles,
   };

@@ -76,6 +76,7 @@ function make(
     certs as never,
     certSync as never,
     proxyConfig as never,
+    { refresh: jest.fn().mockResolvedValue(undefined) } as never,
   );
   return {
     svc,

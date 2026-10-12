@@ -145,4 +145,8 @@ export class CreateNotificationDto {
   @IsOptional()
   @IsBoolean()
   onHttpDown?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  onResourceAlert?: boolean;
 }

@@ -6,6 +6,7 @@ import { DatabaseBackupModule } from '../database-backup/database-backup.module'
 import { GitCredentialModule } from '../git-credential/git-credential.module';
 import { SecretSourceModule } from '../secret-source/secret-source.module';
 import { HttpMonitorModule } from '../http-monitor/http-monitor.module';
+import { ResourceAlertModule } from '../resource-alert/resource-alert.module';
 import { JobModule } from '../job/job.module';
 import { ManagedDatabaseModule } from '../managed-database/managed-database.module';
 import { ProjectModule } from '../project/project.module';
@@ -35,6 +36,7 @@ import { ProjectImportService } from './project-import.service';
     BackupDestinationModule,
     ServerModule,
     HttpMonitorModule,
+    ResourceAlertModule,
   ],
   controllers: [ExportProjectController, ImportProjectController],
   providers: [

@@ -55,6 +55,10 @@ function makeService(opts: {
     servers as never,
     certs as never,
     certSync as never,
+    {
+      refresh: jest.fn().mockResolvedValue(undefined),
+      deactivate: jest.fn().mockResolvedValue(undefined),
+    } as never,
   );
   return {
     certs,

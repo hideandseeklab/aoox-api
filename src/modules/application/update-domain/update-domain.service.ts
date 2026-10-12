@@ -12,6 +12,7 @@ import { ProxyService } from '../../proxy/proxy.service';
 import { RemoteDockerService } from '../../server/remote-docker.service';
 import { proxySettingsOf } from '../../server/server.entity';
 import { ServerService } from '../../server/server.service';
+import { MaintenanceModeService } from '../../maintenance-mode/maintenance-mode.service';
 import { ApplicationService } from '../application.service';
 import { DeploymentRunnerService } from '../deployment-runner.service';
 import { DomainDto, toDomainDto } from '../domain-dto';
@@ -30,6 +31,7 @@ export class UpdateDomainService {
     private readonly certs: CertificateService,
     private readonly certSync: CertificateSyncService,
     private readonly proxyConfig: ProxyConfigService,
+    private readonly maintenance: MaintenanceModeService,
   ) {}
 
   /**
@@ -123,6 +125,14 @@ export class UpdateDomainService {
       }
     }
 
+    // Certificate or middleware change: the maintenance routers follow it.
+    await this.maintenance
+      .refresh(app.id)
+      .catch((err) =>
+        this.logger.warn(
+          `Maintenance page for ${domain.host} failed: ${String(err)}`,
+        ),
+      );
     // The router labels change (secure vs secure-custom): recreate, no rebuild.
     await this.runner.applyRuntimeConfig(app);
     // Not `domain.certificateId`: TypeORM nulls that field on the entity after

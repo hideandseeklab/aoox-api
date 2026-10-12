@@ -239,6 +239,18 @@ export class Application {
   @Column({ name: 'preview_domain', type: 'varchar', nullable: true })
   previewDomain: string | null;
 
+  /**
+   * Maintenance mode: every domain answers 503 with a static page instead of
+   * the application (routing only, the container keeps running). Written with
+   * `update`, never through a whole-entity save. See maintenance-mode module.
+   */
+  @Column({ name: 'maintenance_enabled', default: false })
+  maintenanceEnabled: boolean;
+
+  /** Plain text shown on the page; null = the default message. */
+  @Column({ name: 'maintenance_message', type: 'varchar', nullable: true })
+  maintenanceMessage: string | null;
+
   @ManyToOne(() => Server, { onDelete: 'RESTRICT' })
   @JoinColumn({ name: 'server_id' })
   server: Server | null;

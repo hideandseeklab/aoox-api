@@ -1,4 +1,5 @@
 import { Application } from '../application/application.entity';
+import { MAINTENANCE_VOLUME } from '../maintenance-mode/maintenance-dynamic';
 import {
   filesVolumeFor,
   MountOwner,
@@ -29,6 +30,7 @@ const FIXED_VOLUMES = [
   REGISTRY_DATA_VOLUME,
   REGISTRY_AUTH_VOLUME,
   BACKUPS_VOLUME,
+  MAINTENANCE_VOLUME,
 ];
 
 /**

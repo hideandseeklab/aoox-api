@@ -3,7 +3,8 @@ import { Template } from '../template.types';
 export const minio: Template = {
   id: 'minio',
   name: 'MinIO',
-  description: 'S3-compatible object storage, suitable as a backup destination.',
+  description:
+    'S3-compatible object storage, suitable as a backup destination.',
   version: 'latest',
   tags: ['storage', 's3'],
   links: {

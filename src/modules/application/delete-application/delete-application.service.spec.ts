@@ -64,6 +64,10 @@ describe('DeleteApplicationService previews', () => {
       { forget: jest.fn() } as unknown as MetricRetentionService,
       previews,
       { syncServer: jest.fn().mockResolvedValue(undefined) } as never,
+      {
+        refresh: jest.fn().mockResolvedValue(undefined),
+        deactivate: jest.fn().mockResolvedValue(undefined),
+      } as never,
     );
     return { svc, forServer, removed, rows, appRepo };
   };

@@ -11,6 +11,7 @@ import { ProxyService } from '../../proxy/proxy.service';
 import { RemoteDockerService } from '../../server/remote-docker.service';
 import { proxySettingsOf } from '../../server/server.entity';
 import { ServerService } from '../../server/server.service';
+import { MaintenanceModeService } from '../../maintenance-mode/maintenance-mode.service';
 import { ApplicationService } from '../application.service';
 import { DeploymentRunnerService } from '../deployment-runner.service';
 import { DomainDto, toDomainDto } from '../domain-dto';
@@ -40,6 +41,7 @@ export class AddDomainService {
     private readonly servers: ServerService,
     private readonly certs: CertificateService,
     private readonly certSync: CertificateSyncService,
+    private readonly maintenance: MaintenanceModeService,
   ) {}
 
   async execute(
@@ -101,6 +103,12 @@ export class AddDomainService {
       }
     }
 
+    // A host added while the app is in maintenance must show the page too.
+    await this.maintenance
+      .refresh(app.id)
+      .catch((err) =>
+        this.logger.warn(`Maintenance page for ${host} failed: ${String(err)}`),
+      );
     // Labels live on the container, so apply by recreating it (no rebuild).
     await this.runner.applyRuntimeConfig(app);
     return {

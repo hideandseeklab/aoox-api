@@ -25,6 +25,7 @@ export class CreateNotificationService {
       onAppError: dto.onAppError ?? false,
       onServerDown: dto.onServerDown ?? true,
       onHttpDown: dto.onHttpDown ?? true,
+      onResourceAlert: dto.onResourceAlert ?? true,
     });
     const saved = await this.notifications.repo.save(entity);
     return this.notifications.toDto(saved, config);

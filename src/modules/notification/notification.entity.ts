@@ -94,6 +94,11 @@ export class Notification {
   @Column({ name: 'on_http_down', default: true })
   onHttpDown: boolean;
 
+  /** An application or database stayed above a CPU or memory threshold (or
+   * came back). On by default: the rules themselves are opt-in. */
+  @Column({ name: 'on_resource_alert', default: true })
+  onResourceAlert: boolean;
+
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;
 }

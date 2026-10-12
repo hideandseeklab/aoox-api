@@ -5,6 +5,7 @@ import { BackupDestinationService } from '../backup-destination/backup-destinati
 import { ComposeService } from '../compose/compose.service';
 import { GitCredentialService } from '../git-credential/git-credential.service';
 import { HttpMonitorService } from '../http-monitor/http-monitor.service';
+import { ResourceAlertService } from '../resource-alert/resource-alert.service';
 import { Job } from '../job/job.entity';
 import { JobService } from '../job/job.service';
 import { ManagedDatabaseService } from '../managed-database/managed-database.service';
@@ -34,6 +35,7 @@ export class ProjectExportService {
     private readonly servers: ServerService,
     private readonly httpMonitors: HttpMonitorService,
     private readonly secretSources: SecretSourceService,
+    private readonly resourceAlerts: ResourceAlertService,
   ) {}
 
   async export(
@@ -86,6 +88,10 @@ export class ProjectExportService {
         healthcheckPath: a.healthcheckPath,
         ignoreErrorLogs: a.ignoreErrorLogs,
         httpMonitor: await this.httpMonitors.exportConfig(a.id),
+        resourceAlerts: await this.resourceAlerts.exportConfig({
+          kind: 'application',
+          id: a.id,
+        }),
         deploymentKeep: a.deploymentKeep,
         backupCron: a.backupCron,
         backupKeep: a.backupKeep,
@@ -151,6 +157,10 @@ export class ProjectExportService {
         backupCron: d.backupCron,
         backupKeep: d.backupKeep,
         backupAllDatabases: d.backupAllDatabases,
+        resourceAlerts: await this.resourceAlerts.exportConfig({
+          kind: 'database',
+          id: d.id,
+        }),
         references: {
           backupDestination: ref(destinationNames, d.backupDestinationId),
         },

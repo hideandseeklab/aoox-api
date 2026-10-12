@@ -107,7 +107,7 @@ describe('expectedVolumes', () => {
         },
       ],
     });
-    expect(expected.size).toBe(6); // just the fixed singletons
+    expect(expected.size).toBe(7); // just the fixed singletons
   });
 });
 

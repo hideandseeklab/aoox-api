@@ -50,6 +50,8 @@ export interface ExportedApplication {
   buildArgs: string;
   healthcheckPath: string | null;
   ignoreErrorLogs?: boolean;
+  /** CPU / memory alert rules (config only, no state); absent in older files. */
+  resourceAlerts?: ExportedResourceAlerts | null;
   /** HTTP monitor settings only (no state or history); absent in older files. */
   httpMonitor?: {
     enabled: boolean;
@@ -102,6 +104,8 @@ export interface ExportedDatabase {
   backupCron: string | null;
   backupKeep: number;
   backupAllDatabases: boolean;
+  /** CPU / memory alert rules (config only, no state); absent in older files. */
+  resourceAlerts?: ExportedResourceAlerts | null;
   references: { backupDestination: string | null };
   mounts: ExportedMount[];
   jobs: ExportedJob[];
@@ -152,4 +156,15 @@ export interface ImportReport {
   };
   /** Renamed slugs, unresolved references, skipped items. */
   warnings: string[];
+}
+
+export interface ExportedResourceAlertRule {
+  enabled: boolean;
+  thresholdPercent: number;
+  durationMinutes: number;
+}
+
+export interface ExportedResourceAlerts {
+  cpu: ExportedResourceAlertRule;
+  memory: ExportedResourceAlertRule;
 }

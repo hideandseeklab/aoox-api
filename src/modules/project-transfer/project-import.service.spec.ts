@@ -74,6 +74,7 @@ function build(
     { repo: fakeRepo(opts.servers) } as never,
     { importConfig: importMonitor } as never,
     { repo: fakeRepo(opts.secretConnections) } as never,
+    { importConfig: jest.fn().mockResolvedValue(undefined) } as never,
   );
   return {
     service,

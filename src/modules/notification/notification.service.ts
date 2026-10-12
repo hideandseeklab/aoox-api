@@ -26,6 +26,7 @@ export interface NotificationDto {
   onAppError: boolean;
   onServerDown: boolean;
   onHttpDown: boolean;
+  onResourceAlert: boolean;
   createdAt: Date;
 }
 
@@ -41,7 +42,8 @@ export type NotificationEvent =
   | 'dnsIssue'
   | 'appError'
   | 'serverDown'
-  | 'httpDown';
+  | 'httpDown'
+  | 'resourceAlert';
 
 export const EVENT_TOGGLE: Record<NotificationEvent, keyof Notification> = {
   deploymentStarted: 'onDeploymentStarted',
@@ -56,6 +58,7 @@ export const EVENT_TOGGLE: Record<NotificationEvent, keyof Notification> = {
   appError: 'onAppError',
   serverDown: 'onServerDown',
   httpDown: 'onHttpDown',
+  resourceAlert: 'onResourceAlert',
 };
 
 @Injectable()
@@ -90,6 +93,7 @@ export class NotificationService {
       onAppError: n.onAppError,
       onServerDown: n.onServerDown,
       onHttpDown: n.onHttpDown,
+      onResourceAlert: n.onResourceAlert,
       createdAt: n.createdAt,
     };
   }

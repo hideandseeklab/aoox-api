@@ -12,6 +12,7 @@ import { CurrentUser } from '../../auth/current-user.decorator';
 import { JwtAuthGuard } from '../../auth/jwt-auth.guard';
 import { CertificateSyncService } from '../../certificate/certificate-sync.service';
 import type { JwtPayload } from '../../auth/jwt.strategy';
+import { MaintenanceModeService } from '../../maintenance-mode/maintenance-mode.service';
 import { ApplicationService } from '../application.service';
 import { DeploymentRunnerService } from '../deployment-runner.service';
 import { DeleteDomainParamsDto } from './delete-domain.dto';
@@ -25,6 +26,7 @@ export class DeleteDomainController {
     private readonly applications: ApplicationService,
     private readonly runner: DeploymentRunnerService,
     private readonly certSync: CertificateSyncService,
+    private readonly maintenance: MaintenanceModeService,
   ) {}
 
   @Delete(':id/domains/:domainId')
@@ -40,6 +42,11 @@ export class DeleteDomainController {
     if (!domain) throw new NotFoundException('Domain not found');
     const hadCertificate = !!domain.certificateId;
     await this.applications.domains.remove(domain);
+    await this.maintenance
+      .refresh(app.id)
+      .catch((err) =>
+        this.logger.warn(`Maintenance page cleanup failed: ${String(err)}`),
+      );
     await this.runner.applyRuntimeConfig(app);
     if (hadCertificate) {
       // Drop the certificate files no domain uses any more (a key must not

@@ -6,6 +6,9 @@ import { DockerModule } from '../docker/docker.module';
 import { GitCredentialModule } from '../git-credential/git-credential.module';
 import { CertificateModule } from '../certificate/certificate.module';
 import { ProxyConfigModule } from '../proxy-config/proxy-config.module';
+import { MaintenanceModeModule } from '../maintenance-mode/maintenance-mode.module';
+import { SetMaintenanceController } from './set-maintenance/set-maintenance.controller';
+import { SetMaintenanceService } from './set-maintenance/set-maintenance.service';
 import { SecretSourceModule } from '../secret-source/secret-source.module';
 import { SecretSourceAppController } from './secret-source/secret-source-app.controller';
 import { SecretSourceAppService } from './secret-source/secret-source-app.service';
@@ -111,6 +114,7 @@ import { UpdateApplicationService } from './update-application/update-applicatio
     SecretSourceModule,
     CertificateModule,
     ProxyConfigModule,
+    MaintenanceModeModule,
     ProjectModule,
     RegistryModule,
     ProxyModule,
@@ -155,6 +159,7 @@ import { UpdateApplicationService } from './update-application/update-applicatio
     ApplicationMetricsController,
     ListPreviewsController,
     DeletePreviewController,
+    SetMaintenanceController,
   ],
   providers: [
     ApplicationService,
@@ -195,6 +200,7 @@ import { UpdateApplicationService } from './update-application/update-applicatio
     ServiceHealthWatcherService,
     ImageUpdateWatcherService,
     CheckImageUpdateService,
+    SetMaintenanceService,
     LogsGateway,
     ConsoleGateway,
   ],

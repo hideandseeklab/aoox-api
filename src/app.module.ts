@@ -24,6 +24,7 @@ import { DatabaseModule } from './modules/database/database.module';
 import { GitCredentialModule } from './modules/git-credential/git-credential.module';
 import { SecretSourceModule } from './modules/secret-source/secret-source.module';
 import { HttpMonitorModule } from './modules/http-monitor/http-monitor.module';
+import { ResourceAlertModule } from './modules/resource-alert/resource-alert.module';
 import { MonitoringModule } from './modules/monitoring/monitoring.module';
 import { NotificationModule } from './modules/notification/notification.module';
 import { JobModule } from './modules/job/job.module';
@@ -61,6 +62,7 @@ import { VolumeBackupModule } from './modules/volume-backup/volume-backup.module
     NotificationModule,
     MonitoringModule,
     HttpMonitorModule,
+    ResourceAlertModule,
     ComposeModule,
     TemplateModule,
     JobModule,

@@ -31,6 +31,7 @@ describe('certificate files are dropped when their last domain goes', () => {
           return Promise.resolve();
         }),
       } as never,
+      { refresh: jest.fn().mockResolvedValue(undefined) } as never,
     );
     await controller.remove({ sub: 'u' } as never, {
       id: 'app1',
@@ -54,6 +55,10 @@ describe('certificate files are dropped when their last domain goes', () => {
         } as never,
         { applyRuntimeConfig: jest.fn().mockResolvedValue(undefined) } as never,
         { syncServer: sync } as never,
+        {
+          refresh: jest.fn().mockResolvedValue(undefined),
+          deactivate: jest.fn().mockResolvedValue(undefined),
+        } as never,
       );
     await make(null).remove({ sub: 'u' } as never, {
       id: 'app1',
@@ -92,6 +97,10 @@ describe('certificate files are dropped when their last domain goes', () => {
       { forget: jest.fn() } as never,
       { destroyAll: jest.fn().mockResolvedValue(undefined) } as never,
       { syncServer: sync } as never,
+      {
+        refresh: jest.fn().mockResolvedValue(undefined),
+        deactivate: jest.fn().mockResolvedValue(undefined),
+      } as never,
     );
     return { svc, sync };
   }

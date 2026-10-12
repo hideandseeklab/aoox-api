@@ -63,6 +63,16 @@ export class UpdateApplicationService {
     const app = await this.applications.findOwnedOrFail(id, ownerId);
     const hostPortBefore = app.hostPort;
     const serverIdBefore = app.serverId;
+    // The maintenance page lives on the proxy of the current server only.
+    if (
+      app.maintenanceEnabled &&
+      dto.serverId !== undefined &&
+      (dto.serverId || null) !== serverIdBefore
+    ) {
+      throw new ConflictException(
+        'Turn maintenance mode off before moving the application to another server',
+      );
+    }
     let digestReset = false;
     if (dto.name !== undefined) app.name = dto.name.trim();
     if (dto.sourceType !== undefined) app.sourceType = dto.sourceType;
