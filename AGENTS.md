@@ -53,6 +53,7 @@ NestJS 11 backend for aoox (self-hosted PaaS).
 - Onboarding: `setup-status/` (`GET /auth/setup-status`) and `setup/` (`POST /auth/setup`, only while the `users` table is empty, SERIALIZABLE transaction) create the first owner.
   `me/` (`GET /auth/me`) is used by the web app to verify the session **and** carries `version` (the running API version from `package.json`, `me/app-version.ts`, read once) for all roles —
   the web sidebar shows it below the logo with no extra call (the dashboard layout already calls `/auth/me`); `GET /instance/update` remains owner-only.
+  `GET /` (public, `app.controller.ts`) answers `{description: 'aoox api', version}` from the same `appVersion()`, so opening the API address in a browser shows what is running.
 - `AdminBootstrapService` (user module): if `ADMIN_EMAIL`+`ADMIN_PASSWORD` are set and no user exists yet, create an owner at boot. Idempotent — it never overwrites existing users.
   Dev: `.env` contains `admin@gmail.com` / `admin` for this (there is no seed migration anymore).
 - Password hashing via `src/modules/user/password.util.ts` (bcryptjs).

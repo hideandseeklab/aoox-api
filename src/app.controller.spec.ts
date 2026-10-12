@@ -15,8 +15,10 @@ describe('AppController', () => {
   });
 
   describe('root', () => {
-    it('should return "Hello World!"', () => {
-      expect(appController.getHello()).toBe('Hello World!');
+    it('describes the API and its running version', () => {
+      const info = appController.info();
+      expect(info.description).toBe('aoox api');
+      expect(info.version).toMatch(/^\d+\.\d+\.\d+/);
     });
   });
 

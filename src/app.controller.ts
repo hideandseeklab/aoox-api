@@ -1,14 +1,15 @@
 import { Controller, Get, Header } from '@nestjs/common';
-import { AppService } from './app.service';
+import { ApiInfo, AppService } from './app.service';
 import { FAVICON_SVG } from './favicon';
 
 @Controller()
 export class AppController {
   constructor(private readonly appService: AppService) {}
 
+  /** Direct access to the API base URL: name and running version as JSON. */
   @Get()
-  getHello(): string {
-    return this.appService.getHello();
+  info(): ApiInfo {
+    return this.appService.info();
   }
 
   /** Same icon as the web app; `/favicon.ico` is what browsers request by default. */

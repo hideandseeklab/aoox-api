@@ -8,6 +8,10 @@ Versions below 1.0.0 may include breaking changes in a minor release.
 
 ## [Unreleased]
 
+### Changed
+
+- `GET /` (opening the API address directly) now answers JSON `{"description": "aoox api", "version": "<running version>"}` instead of the placeholder "Hello World!" text.
+
 ## [0.1.0-alpha.7] - 2026-10-12
 
 ### Added
