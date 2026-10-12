@@ -8,6 +8,8 @@ Versions below 1.0.0 may include breaking changes in a minor release.
 
 ## [Unreleased]
 
+## [0.1.0-alpha.7] - 2026-10-12
+
 ### Added
 
 - **Cloudflare DNS integration.** New `dns-provider` module: Cloudflare API tokens are registered as DNS connections (`POST/GET/DELETE /dns-connections`, `POST /dns-connections/:id/test` verifies the token through `/user/tokens/verify` (or the account endpoint when an account ID is set) and lists the accessible zones). The token is encrypted with `ENCRYPTION_KEY`, never returned and redacted in the audit log; a connection that a domain or a proxy still uses cannot be deleted (409). Migration `DnsProviders`, additive.
@@ -527,7 +529,8 @@ Versions below 1.0.0 may include breaking changes in a minor release.
 - Monitoring with metrics history, disk cleanup tooling, and project/instance export-import for
   backup and migration between hosts.
 
-[Unreleased]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-alpha.6...HEAD
+[Unreleased]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-alpha.7...HEAD
+[0.1.0-alpha.7]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-alpha.6...v0.1.0-alpha.7
 [0.1.0-alpha.6]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-alpha.5...v0.1.0-alpha.6
 [0.1.0-alpha.5]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-alpha.4...v0.1.0-alpha.5
 [0.1.0-alpha.4]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-alpha.3...v0.1.0-alpha.4
