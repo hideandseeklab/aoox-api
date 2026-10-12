@@ -1,5 +1,5 @@
 import { Controller, Get, Header } from '@nestjs/common';
-import { ApiInfo, AppService } from './app.service';
+import { AppService, type ApiInfo } from './app.service';
 import { FAVICON_SVG } from './favicon';
 
 @Controller()

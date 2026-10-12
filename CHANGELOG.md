@@ -8,6 +8,15 @@ Versions below 1.0.0 may include breaking changes in a minor release.
 
 ## [Unreleased]
 
+### Added
+
+- **Change your own name or email.** `PATCH /users/me` `{name?, email?, currentPassword?}` for any role (session only; API tokens get 403, throttled 10/minute). The name is trimmed (max 100, empty clears it); a new email is normalised to lowercase and needs `currentPassword` (400 when missing, 401 when wrong). It must not belong to another account or to a pending invitation (409). Returns the updated profile; an unchanged email never asks for the password.
+- **Owner edits another user's name or email.** `PATCH /users/:id` `{name?, email?}` (owner only, no password; not for owners or yourself, 403) with the same email checks. `currentPassword` is redacted in the audit log like every password key.
+
+### Fixed
+
+- `npm run build` failed on `src/app.controller.ts` (TS1272, type imported without `import type`).
+
 ### Changed
 
 - `GET /` (opening the API address directly) now answers JSON `{"description": "aoox api", "version": "<running version>"}` instead of the placeholder "Hello World!" text.

@@ -1,6 +1,7 @@
 import { ConflictException, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { IsNull, MoreThan, Repository } from 'typeorm';
+import { Invitation } from '../invitation/invitation.entity';
 import { Project } from '../project/project.entity';
 import { User, UserRole } from './user.entity';
 
@@ -50,6 +51,52 @@ export class UserService {
       ])
       .where('user.id = :id', { id })
       .getOne();
+  }
+
+  static normalizeEmail(email: string): string {
+    return email.toLowerCase().trim();
+  }
+
+  /** Trimmed; empty or null clears the name. */
+  static cleanName(name: string | null): string | null {
+    return name?.trim() || null;
+  }
+
+  /**
+   * An email may belong to one account and must not be reserved by a pending
+   * (not accepted, not expired) invitation. `email` must already be normalised.
+   */
+  async assertEmailAvailable(
+    email: string,
+    exceptUserId?: string,
+  ): Promise<void> {
+    const existing = await this.repo.findOne({ where: { email } });
+    if (existing && existing.id !== exceptUserId) {
+      throw new ConflictException('A user with this email already exists');
+    }
+    const pending = await this.repo.manager.findOne(Invitation, {
+      where: { email, acceptedAt: IsNull(), expiresAt: MoreThan(new Date()) },
+    });
+    if (pending) {
+      throw new ConflictException(
+        'A pending invitation already uses this email; revoke it first',
+      );
+    }
+  }
+
+  /** Writes name/email; a unique-index race surfaces as the same 409. */
+  async updateProfile(
+    id: string,
+    patch: { name?: string | null; email?: string },
+  ): Promise<void> {
+    try {
+      await this.repo.update(id, patch);
+    } catch (e) {
+      if ((e as { code?: string }).code === '23505') {
+        throw new ConflictException('A user with this email already exists');
+      }
+      throw e;
+    }
   }
 
   create(input: CreateUserInput): Promise<User> {

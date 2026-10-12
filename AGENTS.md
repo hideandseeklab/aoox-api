@@ -59,6 +59,9 @@ NestJS 11 backend for aoox (self-hosted PaaS).
 - Password hashing via `src/modules/user/password.util.ts` (bcryptjs).
 - **`JwtStrategy.validate` reloads the user from the DB on every request** (role & existence): changing a role or deleting a user takes effect on the next request, not when the 7-day token expires.
   The 60-second terminal ticket still carries `role` from its payload.
+- **Profile (name/email)**: `update-own-profile/` `PATCH /users/me` (any role, session only: `tokenId` → 403; throttle 10/min; registered **before** `update-user-profile/` so `me` is not read as `:id`) and `update-user-profile/` `PATCH /users/:id` (owner only, non-owner targets, not yourself, no password).
+  Shared rules live in `UserService`: `normalizeEmail` (lowercase/trim, DTO `@Transform` trims first), `cleanName` (trim, empty → null), `assertEmailAvailable` (409 for another user **or** a pending invitation: `accepted_at IS NULL` and not expired — `UserModule` reads the `Invitation` entity directly, never `InvitationModule`), `updateProfile` (unique-index race → 409).
+  Changing the email needs `currentPassword` (400 missing, 401 wrong); an unchanged email never does. Sessions are unaffected: `JwtStrategy.validate` re-reads the email from the DB, so the old token keeps working (the old email in the token payload is never trusted). `currentPassword` is redacted by `redact.ts`.
 - **Members & invitations**: `src/modules/invitation/` — entity `Invitation` (`invitations`: email, role, `token_hash` SHA-256 unique, `invited_by_id`, `expires_at` 7 days, `accepted_at`).
   `create-invitation` (owner/admin; only an owner may invite an owner; replaces the pending invitation for the same email; the token is returned only once +
   `acceptUrl` = `${WEB_ORIGIN}/invite/<token>`), `list/revoke-invitation`, **public** `GET /invitations/by-token/:token` (preview) and `POST /invitations/accept`

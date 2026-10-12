@@ -19,6 +19,12 @@ describe('redactBody', () => {
     });
   });
 
+  it('redacts currentPassword in profile changes but keeps name and email', () => {
+    expect(
+      redactBody({ name: 'A', email: 'a@b.co', currentPassword: 'hunter22' }),
+    ).toEqual({ name: 'A', email: 'a@b.co', currentPassword: '[redacted]' });
+  });
+
   it('cuts long strings, wraps non-objects and truncates huge bodies', () => {
     const long = 'a'.repeat(500);
     expect((redactBody({ s: long }) as { s: string }).s).toHaveLength(201);
