@@ -12,6 +12,7 @@ import { ManagedDatabaseService } from '../managed-database/managed-database.ser
 import { Project } from '../project/project.entity';
 import { RegistryService } from '../registry/registry.service';
 import { ServerService } from '../server/server.service';
+import { DnsProviderService } from '../dns-provider/dns-provider.service';
 import { SecretSourceService } from '../secret-source/secret-source.service';
 import {
   EXPORT_FORMAT,
@@ -36,6 +37,7 @@ export class ProjectExportService {
     private readonly httpMonitors: HttpMonitorService,
     private readonly secretSources: SecretSourceService,
     private readonly resourceAlerts: ResourceAlertService,
+    private readonly dnsProviders: DnsProviderService,
   ) {}
 
   async export(
@@ -52,12 +54,14 @@ export class ProjectExportService {
       destinationNames,
       serverNames,
       secretConnectionNames,
+      dnsConnectionNames,
     ] = await Promise.all([
       nameOf(this.registries.repo.find()),
       nameOf(this.credentials.repo.find()),
       nameOf(this.destinations.repo.find()),
       nameOf(this.servers.repo.find()),
       nameOf(this.secretSources.repo.find()),
+      nameOf(this.dnsProviders.repo.find()),
     ]);
     const ref = (map: Map<string, string>, id: string | null) =>
       id ? (map.get(id) ?? null) : null;
@@ -98,6 +102,7 @@ export class ProjectExportService {
         cpuMillicores: a.cpuMillicores,
         memoryMb: a.memoryMb,
         previewsEnabled: a.previewsEnabled,
+        previewWildcardCert: a.previewWildcardCert,
         previewDomain: a.previewDomain,
         secretSource:
           a.secretConnectionId &&
@@ -121,7 +126,18 @@ export class ProjectExportService {
           await this.applications.domains.find({
             where: { applicationId: a.id },
           })
-        ).map((d) => ({ host: d.host, https: d.https })),
+        ).map((d) => ({
+          host: d.host,
+          https: d.https,
+          certMode: d.certMode ?? 'http',
+          dns:
+            d.dnsConnectionId && dnsConnectionNames.has(d.dnsConnectionId)
+              ? {
+                  connection: dnsConnectionNames.get(d.dnsConnectionId)!,
+                  proxied: d.dnsProxied,
+                }
+              : null,
+        })),
         mounts: (
           await this.applications.mounts.find({
             where: { applicationId: a.id },

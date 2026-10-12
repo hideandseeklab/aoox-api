@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { In } from 'typeorm';
 import { CertificateSyncService } from '../../certificate/certificate-sync.service';
+import { ProxyDnsBindingService } from '../../dns-provider/proxy-dns-binding.service';
 import { limitsRemoved, resourceLimits } from '../../docker/resource-limits';
 import { HostPortService } from '../../host-port/host-port.service';
 import { ProxyConfigService } from '../../proxy-config/proxy-config.service';
@@ -47,6 +48,7 @@ export class UpdateApplicationService {
     private readonly hostPorts: HostPortService,
     private readonly proxyConfig: ProxyConfigService,
     private readonly certSync: CertificateSyncService,
+    private readonly dnsBindings: ProxyDnsBindingService,
   ) {}
 
   async execute(
@@ -150,6 +152,18 @@ export class UpdateApplicationService {
       app.previewsEnabled = dto.previewsEnabled;
     if (dto.previewDomain !== undefined)
       app.previewDomain = dto.previewDomain?.trim() || null;
+    if (dto.previewWildcardCert !== undefined) {
+      if (
+        dto.previewWildcardCert &&
+        !app.previewWildcardCert &&
+        !(await this.dnsBindings.get(dto.serverId ?? app.serverId ?? null))
+      ) {
+        throw new BadRequestException(
+          'Enable DNS-01 on this proxy first (Infrastructure, Proxy, DNS-01 certificates)',
+        );
+      }
+      app.previewWildcardCert = dto.previewWildcardCert;
+    }
     if (dto.serverId !== undefined) {
       if (dto.serverId) await this.servers.findOrFail(dto.serverId);
       app.serverId = dto.serverId;

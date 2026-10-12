@@ -4,6 +4,7 @@ import { BackupDestinationModule } from '../backup-destination/backup-destinatio
 import { ComposeModule } from '../compose/compose.module';
 import { DatabaseBackupModule } from '../database-backup/database-backup.module';
 import { GitCredentialModule } from '../git-credential/git-credential.module';
+import { DnsProviderModule } from '../dns-provider/dns-provider.module';
 import { SecretSourceModule } from '../secret-source/secret-source.module';
 import { HttpMonitorModule } from '../http-monitor/http-monitor.module';
 import { ResourceAlertModule } from '../resource-alert/resource-alert.module';
@@ -33,6 +34,7 @@ import { ProjectImportService } from './project-import.service';
     RegistryModule,
     GitCredentialModule,
     SecretSourceModule,
+    DnsProviderModule,
     BackupDestinationModule,
     ServerModule,
     HttpMonitorModule,

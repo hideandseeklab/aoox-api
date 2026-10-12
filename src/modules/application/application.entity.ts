@@ -240,6 +240,14 @@ export class Application {
   previewDomain: string | null;
 
   /**
+   * Serve previews with one wildcard certificate (`*.<preview domain>`) via
+   * ACME DNS-01 instead of one HTTP-01 certificate per PR host. Needs DNS-01
+   * enabled on the app's proxy; otherwise previews keep the per-host flow.
+   */
+  @Column({ name: 'preview_wildcard_cert', default: false })
+  previewWildcardCert: boolean;
+
+  /**
    * Maintenance mode: every domain answers 503 with a static page instead of
    * the application (routing only, the container keeps running). Written with
    * `update`, never through a whole-entity save. See maintenance-mode module.

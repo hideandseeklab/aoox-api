@@ -57,7 +57,10 @@ describe('DeleteApplicationService previews', () => {
       {
         findOwnedOrFail: () => Promise.resolve(app),
         repo: appRepo,
-        domains: { count: jest.fn().mockResolvedValue(0) },
+        domains: {
+          count: jest.fn().mockResolvedValue(0),
+          find: jest.fn().mockResolvedValue([]),
+        },
       } as unknown as ApplicationService,
       remote,
       { remove: jest.fn() } as unknown as SwarmDeployService,
@@ -68,6 +71,7 @@ describe('DeleteApplicationService previews', () => {
         refresh: jest.fn().mockResolvedValue(undefined),
         deactivate: jest.fn().mockResolvedValue(undefined),
       } as never,
+      { cleanup: jest.fn().mockResolvedValue(null) } as never,
     );
     return { svc, forServer, removed, rows, appRepo };
   };

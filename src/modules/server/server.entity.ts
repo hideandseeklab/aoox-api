@@ -83,8 +83,10 @@ export function proxySettingsOf(server: Server): {
   httpsPort: number;
   acmeEmail: string | null;
   acmeStaging: boolean;
+  serverId: string;
 } {
   return {
+    serverId: server.id,
     httpPort: server.proxyHttpPort,
     httpsPort: server.proxyHttpsPort,
     acmeEmail: server.acmeEmail,

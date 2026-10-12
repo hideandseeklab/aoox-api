@@ -47,6 +47,10 @@ function makeService(opts: {
     assertCovers: jest.fn(),
   };
   const certSync = { sync: jest.fn().mockResolvedValue(undefined) };
+  const domainDns = {
+    connectionName: jest.fn().mockResolvedValue('cf'),
+    sync: jest.fn().mockResolvedValue(null),
+  };
   const service = new AddDomainService(
     applications as never,
     runner as never,
@@ -59,11 +63,14 @@ function makeService(opts: {
       refresh: jest.fn().mockResolvedValue(undefined),
       deactivate: jest.fn().mockResolvedValue(undefined),
     } as never,
+    { get: jest.fn().mockResolvedValue(null) } as never,
+    domainDns as never,
   );
   return {
     certs,
     certSync,
     service,
+    domainDns,
     applications,
     runner,
     proxy,

@@ -8,6 +8,7 @@ import {
 } from '../docker/docker.service';
 import { resourceLimits } from '../docker/resource-limits';
 import { HEALTHCHECK_WAIT_MS, healthcheckFor } from './healthcheck';
+import { dnsRouting } from './cert-mode';
 import { bindsFor, prepareMounts } from './mounts';
 import { GitCredentialService } from '../git-credential/git-credential.service';
 import {
@@ -542,10 +543,23 @@ export class DeploymentRunnerService {
           customCert: !!d.certificateId,
           // Operator middlewares (name@file) for this host.
           middlewares: d.middlewares ?? [],
+          // DNS-01 certificate (honoured only if the proxy has the resolver).
+          dns: dnsRouting(d.host, d.certMode),
         }));
-    const proxySettings = app.serverId
+    let proxySettings = app.serverId
       ? proxySettingsOf(await this.servers.findOrFail(app.serverId))
       : this.proxy.localSettings;
+    // Only ask the proxy whether it has the DNS-01 resolver when a host wants it
+    // (the container is the truth: labels naming a missing resolver break TLS).
+    if (domains.some((d) => d.dns)) {
+      const dnsChallenge = await this.proxy.dnsChallengeActive(docker);
+      if (!dnsChallenge) {
+        this.logger.warn(
+          `${app.appName}: a domain asks for DNS-01 but the proxy has no DNS resolver; using HTTP-01`,
+        );
+      }
+      proxySettings = { ...proxySettings, dnsChallenge };
+    }
     const routerName = override?.routerName ?? app.appName;
     const hostPort = override ? override.hostPort : app.hostPort;
     // Previews never get the app's mounts: sharing its data volume with an

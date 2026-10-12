@@ -7,6 +7,7 @@ import {
 } from '../certificate/certs-config';
 import { tarFiles } from '../application/nixpacks-builder.service';
 import { Application } from '../application/application.entity';
+import { dnsRouting } from '../application/cert-mode';
 import { Domain } from '../application/domain.entity';
 import { composeLabels, DockerService } from '../docker/docker.service';
 import { APP_NETWORK, ProxyService } from '../proxy/proxy.service';
@@ -104,8 +105,14 @@ export class MaintenanceModeService {
           https: d.https,
           customCert: d.certificateId !== null,
           middlewares: d.middlewares ?? [],
+          dns: dnsRouting(d.host, d.certMode),
         })),
-        { acme: settings.acmeEmail !== null },
+        {
+          acme: settings.acmeEmail !== null,
+          dns: domains.some((d) => d.certMode && d.certMode !== 'http')
+            ? await this.proxy.dnsChallengeActive(this.docker)
+            : false,
+        },
       ) ?? {};
     await this.writeFiles(PROXY_CERTS_VOLUME, PROXY_CERTS_DIR, [
       [MAINTENANCE_SHARED_FILE, toDynamicYaml(sharedDynamicConfig()), 0o644],

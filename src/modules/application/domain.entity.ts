@@ -8,7 +8,10 @@ import {
   PrimaryGeneratedColumn,
 } from 'typeorm';
 import { CustomCertificate } from '../certificate/certificate.entity';
+import { ManagedRecord } from '../dns-provider/dns-records';
 import { Application } from './application.entity';
+
+export type DomainCertMode = 'http' | 'dns' | 'dns-wildcard';
 
 /** A hostname routed by the proxy to an application container. */
 @Entity({ name: 'domains' })
@@ -54,6 +57,35 @@ export class Domain {
    */
   @Column({ type: 'jsonb', default: () => "'[]'" })
   middlewares: string[];
+
+  /**
+   * How the ACME certificate is obtained (https, no uploaded certificate):
+   * `http` = HTTP-01 per host (default), `dns` = DNS-01 per host,
+   * `dns-wildcard` = one DNS-01 wildcard for the parent domain. The DNS
+   * modes need DNS-01 enabled on the application's proxy.
+   */
+  @Column({ name: 'cert_mode', type: 'varchar', default: 'http' })
+  certMode: DomainCertMode;
+
+  /** DNS connection that manages this host's record; null = DNS is up to the user. */
+  @Index('IDX_domains_dns_connection_id')
+  @Column({ name: 'dns_connection_id', type: 'uuid', nullable: true })
+  dnsConnectionId: string | null;
+
+  /** Cloudflare "proxied" (orange cloud) flag for the managed record. */
+  @Column({ name: 'dns_proxied', default: false })
+  dnsProxied: boolean;
+
+  /** Records aoox created for this host: the only ones it may delete. */
+  @Column({ name: 'dns_records', type: 'jsonb', default: () => "'[]'" })
+  dnsRecords: ManagedRecord[];
+
+  /** Result of the last record sync: ok | warning | error. */
+  @Column({ name: 'dns_status', type: 'varchar', nullable: true })
+  dnsStatus: 'ok' | 'warning' | 'error' | null;
+
+  @Column({ name: 'dns_message', type: 'text', nullable: true })
+  dnsMessage: string | null;
 
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;

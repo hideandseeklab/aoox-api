@@ -31,6 +31,12 @@ export interface MaintenanceDomain {
   customCert: boolean;
   /** Operator middlewares (`name@file`), kept in front of the maintenance page. */
   middlewares: string[];
+  /** Certificate through the DNS-01 resolver (used only when the proxy has it). */
+  dns?: { main?: string };
+}
+
+function shortHash(v: string): string {
+  return createHash('sha1').update(v).digest('hex').slice(0, 8);
 }
 
 export function appDynamicFileName(appId: string): string {
@@ -74,16 +80,22 @@ export function sharedDynamicConfig(): object {
 export function appDynamicConfig(
   appId: string,
   domains: MaintenanceDomain[],
-  opts: { acme: boolean },
+  opts: { acme: boolean; dns?: boolean },
 ): object | null {
   const hosts = domains.filter((d) => HOST.test(d.host));
   if (hosts.length === 0) return null;
   const base = `aoox-maint-${appId}`;
   const hdr = `${base}-hdr`;
-  const acmeSecure = hosts.filter((d) => opts.acme && d.https && !d.customCert);
+  const dnsSecure = hosts.filter(
+    (d) => opts.acme && opts.dns && d.https && !d.customCert && d.dns,
+  );
+  const acmeSecure = hosts.filter(
+    (d) => opts.acme && d.https && !d.customCert && !dnsSecure.includes(d),
+  );
   const custom = hosts.filter((d) => d.https && d.customCert);
   const plain = hosts.filter(
-    (d) => !acmeSecure.includes(d) && !custom.includes(d),
+    (d) =>
+      !acmeSecure.includes(d) && !dnsSecure.includes(d) && !custom.includes(d),
   );
 
   const routers: Record<string, object> = {};
@@ -107,6 +119,21 @@ export function appDynamicConfig(
   };
   addGroups(plain, 'web', 'web', null);
   addGroups(acmeSecure, 'secure', 'websecure', { certResolver: 'le' });
+  // DNS-01 hosts: one router per wildcard base so each carries its tls.domains.
+  const dnsBases = new Set(dnsSecure.map((d) => d.dns?.main ?? ''));
+  for (const main of dnsBases) {
+    addGroups(
+      dnsSecure.filter((d) => (d.dns?.main ?? '') === main),
+      main === '' ? 'secure-dns' : `secure-dns-${shortHash(main)}`,
+      'websecure',
+      main === ''
+        ? { certResolver: 'le-dns' }
+        : {
+            certResolver: 'le-dns',
+            domains: [{ main, sans: [`*.${main}`] }],
+          },
+    );
+  }
   addGroups(custom, 'secure-custom', 'websecure', {});
 
   return {

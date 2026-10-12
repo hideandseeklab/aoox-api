@@ -15,6 +15,7 @@ import type { JwtPayload } from '../../auth/jwt.strategy';
 import { MaintenanceModeService } from '../../maintenance-mode/maintenance-mode.service';
 import { ApplicationService } from '../application.service';
 import { DeploymentRunnerService } from '../deployment-runner.service';
+import { DomainDnsService } from '../domain-dns.service';
 import { DeleteDomainParamsDto } from './delete-domain.dto';
 
 @Controller('applications')
@@ -27,6 +28,7 @@ export class DeleteDomainController {
     private readonly runner: DeploymentRunnerService,
     private readonly certSync: CertificateSyncService,
     private readonly maintenance: MaintenanceModeService,
+    private readonly dns: DomainDnsService,
   ) {}
 
   @Delete(':id/domains/:domainId')
@@ -41,6 +43,8 @@ export class DeleteDomainController {
     });
     if (!domain) throw new NotFoundException('Domain not found');
     const hadCertificate = !!domain.certificateId;
+    // Only records aoox created are removed; a failure never blocks the delete.
+    await this.dns.cleanup(domain);
     await this.applications.domains.remove(domain);
     await this.maintenance
       .refresh(app.id)

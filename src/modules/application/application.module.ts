@@ -4,6 +4,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuthModule } from '../auth/auth.module';
 import { DockerModule } from '../docker/docker.module';
 import { GitCredentialModule } from '../git-credential/git-credential.module';
+import { DnsProviderModule } from '../dns-provider/dns-provider.module';
 import { CertificateModule } from '../certificate/certificate.module';
 import { ProxyConfigModule } from '../proxy-config/proxy-config.module';
 import { MaintenanceModeModule } from '../maintenance-mode/maintenance-mode.module';
@@ -29,6 +30,9 @@ import { UpdateMountController } from './update-mount/update-mount.controller';
 import { AddDomainService } from './add-domain/add-domain.service';
 import { CheckDomainDnsController } from './check-domain-dns/check-domain-dns.controller';
 import { CheckDomainDnsService } from './check-domain-dns/check-domain-dns.service';
+import { DomainDnsOptionsController } from './domain-dns-options/domain-dns-options.controller';
+import { DomainDnsService } from './domain-dns.service';
+import { SyncDomainDnsController } from './sync-domain-dns/sync-domain-dns.controller';
 import { DeleteDomainController } from './delete-domain/delete-domain.controller';
 import { UpdateDomainController } from './update-domain/update-domain.controller';
 import { UpdateDomainService } from './update-domain/update-domain.service';
@@ -113,6 +117,7 @@ import { UpdateApplicationService } from './update-application/update-applicatio
     GitCredentialModule,
     SecretSourceModule,
     CertificateModule,
+    DnsProviderModule,
     ProxyConfigModule,
     MaintenanceModeModule,
     ProjectModule,
@@ -150,6 +155,8 @@ import { UpdateApplicationService } from './update-application/update-applicatio
     DeleteDomainController,
     UpdateDomainController,
     CheckDomainDnsController,
+    SyncDomainDnsController,
+    DomainDnsOptionsController,
     CreateLogTicketController,
     CreateConsoleTicketController,
     GetWebhookController,
@@ -184,6 +191,7 @@ import { UpdateApplicationService } from './update-application/update-applicatio
     CreateConsoleTicketService,
     GetWebhookService,
     CheckDomainDnsService,
+    DomainDnsService,
     WebhookDeployService,
     DeploymentEventsService,
     DeploymentNotifierService,

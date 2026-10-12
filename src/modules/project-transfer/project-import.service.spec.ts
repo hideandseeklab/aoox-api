@@ -30,6 +30,8 @@ function build(
     servers?: Array<Record<string, unknown>>;
     domains?: Array<Record<string, unknown>>;
     secretConnections?: Array<Record<string, unknown>>;
+    dnsConnections?: Array<Record<string, unknown>>;
+    dnsBinding?: boolean;
   } = {},
 ) {
   const projects = fakeRepo();
@@ -75,6 +77,8 @@ function build(
     { importConfig: importMonitor } as never,
     { repo: fakeRepo(opts.secretConnections) } as never,
     { importConfig: jest.fn().mockResolvedValue(undefined) } as never,
+    { repo: fakeRepo(opts.dnsConnections) } as never,
+    { get: jest.fn().mockResolvedValue(opts.dnsBinding ? {} : null) } as never,
   );
   return {
     service,
@@ -259,6 +263,62 @@ describe('ProjectImportService', () => {
     expect(domains.save).toHaveBeenCalledTimes(1);
     const created = JSON.stringify(domains.create.mock.calls[0][0]);
     expect(created).not.toContain('middlewares');
+  });
+
+  describe('DNS settings of a domain', () => {
+    const file = (dns: unknown, certMode?: string) => ({
+      ...base,
+      applications: [
+        {
+          name: 'api',
+          appName: 'api-dns1',
+          domains: [{ host: 'd.example.com', https: true, certMode, dns }],
+        },
+      ],
+    });
+
+    it('matches the connection by name and carries only the proxied flag, never a token', async () => {
+      const { service, domains } = build({
+        dnsConnections: [{ id: 'cf-1', name: 'main-cf' }],
+      });
+      const report = await service.import(
+        file({ connection: 'main-cf', proxied: true }),
+        options,
+      );
+      expect(report.warnings).toEqual([]);
+      expect(domains.create.mock.calls[0][0]).toMatchObject({
+        dnsConnectionId: 'cf-1',
+        dnsProxied: true,
+        dnsRecords: [],
+      });
+    });
+
+    it('warns and leaves DNS unmanaged when the connection is missing', async () => {
+      const { service, domains } = build({});
+      const report = await service.import(
+        file({ connection: 'gone', proxied: true }),
+        options,
+      );
+      expect(report.warnings.join(' ')).toContain('DNS connection "gone"');
+      expect(domains.create.mock.calls[0][0]).toMatchObject({
+        dnsConnectionId: null,
+        dnsProxied: false,
+      });
+    });
+
+    it('keeps a DNS-01 mode only when the proxy has the resolver, else warns', async () => {
+      const withDns = build({ dnsBinding: true });
+      await withDns.service.import(file(null, 'dns-wildcard'), options);
+      expect(withDns.domains.create.mock.calls[0][0]).toMatchObject({
+        certMode: 'dns-wildcard',
+      });
+      const without = build({});
+      const report = await without.service.import(file(null, 'dns'), options);
+      expect(without.domains.create.mock.calls[0][0]).toMatchObject({
+        certMode: 'http',
+      });
+      expect(report.warnings.join(' ')).toContain('DNS-01');
+    });
   });
 
   it('renames a slug that already exists and skips taken domains', async () => {

@@ -1,5 +1,7 @@
 import {
   ArrayMaxSize,
+  IsBoolean,
+  IsIn,
   IsArray,
   IsOptional,
   IsString,
@@ -8,6 +10,8 @@ import {
   ValidateIf,
 } from 'class-validator';
 import { MIDDLEWARE_REF } from '../../proxy/middleware-ref';
+import { CERT_MODES } from '../cert-mode';
+import type { DomainCertMode } from '../domain.entity';
 
 export { DeleteDomainParamsDto as UpdateDomainParamsDto } from '../delete-domain/delete-domain.dto';
 
@@ -37,4 +41,25 @@ export class UpdateDomainDto {
     message: 'each middleware must look like name@file (lowercase, digits, -)',
   })
   middlewares?: string[];
+
+  /** ACME mode (`http` | `dns` | `dns-wildcard`); the DNS modes need DNS-01 on the proxy. Omit to leave it. */
+  @IsOptional()
+  @IsIn(CERT_MODES)
+  certMode?: DomainCertMode;
+
+  /** DNS connection that manages the record; null/"" detaches it (aoox-created records are deleted). Omit to leave it. */
+  @ValidateIf(
+    (_: unknown, v: unknown) => v !== undefined && v !== null && v !== '',
+  )
+  @IsUUID()
+  dnsConnectionId?: string | null;
+
+  @IsOptional()
+  @IsBoolean()
+  dnsProxied?: boolean;
+
+  /** Replace an existing record that has different content (otherwise only a warning). */
+  @IsOptional()
+  @IsBoolean()
+  dnsOverwrite?: boolean;
 }

@@ -16,7 +16,9 @@ import { ComposeMountModule } from './modules/compose-mount/compose-mount.module
 import { InstanceBackupModule } from './modules/instance-backup/instance-backup.module';
 import { InstanceEnvModule } from './modules/instance-env/instance-env.module';
 import { InstanceUpdateModule } from './modules/instance-update/instance-update.module';
+import { DnsProviderModule } from './modules/dns-provider/dns-provider.module';
 import { InboxFeedModule } from './modules/inbox/inbox-feed.module';
+import { ProxyDnsModule } from './modules/proxy-dns/proxy-dns.module';
 import { OnboardingModule } from './modules/onboarding/onboarding.module';
 import { InvitationModule } from './modules/invitation/invitation.module';
 import { DatabaseMountModule } from './modules/database-mount/database-mount.module';
@@ -73,6 +75,8 @@ import { VolumeBackupModule } from './modules/volume-backup/volume-backup.module
     ComposeMountModule,
     InvitationModule,
     InboxFeedModule,
+    DnsProviderModule,
+    ProxyDnsModule,
     OnboardingModule,
     InstanceBackupModule,
     InstanceUpdateModule,

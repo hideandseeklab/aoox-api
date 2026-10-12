@@ -185,7 +185,11 @@ describe('ProxyService custom certificate support', () => {
           inspect === null ? null : { Id: 'proxy1', State: state },
         ),
     };
-    const proxy = new ProxyService({} as never, { get: jest.fn() } as never);
+    const proxy = new ProxyService(
+      {} as never,
+      { get: jest.fn() } as never,
+      { credentialsFor: jest.fn().mockResolvedValue(null) } as never,
+    );
     const provisionOn = jest
       .spyOn(proxy, 'provisionOn')
       .mockResolvedValue(undefined);
@@ -268,6 +272,7 @@ describe('ProxyService custom certificate support', () => {
     const proxy = new ProxyService(
       { logConfig: undefined } as never,
       { get: jest.fn() } as never,
+      { credentialsFor: jest.fn().mockResolvedValue(null) } as never,
     );
     await proxy.provisionOn(docker as never, settings);
     expect(engine.createVolume).toHaveBeenCalledWith('aoox_proxy_certs');

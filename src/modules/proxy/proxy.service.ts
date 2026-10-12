@@ -10,6 +10,7 @@ import {
   DockerHandle,
   DockerService,
 } from '../docker/docker.service';
+import { ProxyDnsBindingService } from '../dns-provider/proxy-dns-binding.service';
 import { MIDDLEWARE_REF } from './middleware-ref';
 
 /**
@@ -25,12 +26,26 @@ export const APP_NETWORK = 'aoox';
 /** Attachable overlay for swarm services (created by SwarmService.init). */
 export const SWARM_NETWORK = 'aoox-swarm';
 export const CERT_RESOLVER = 'le';
+/**
+ * Second ACME resolver (DNS-01 through the DNS provider), only present on
+ * proxies that have a DNS connection bound. Own storage file: two resolvers
+ * must not share one acme.json.
+ */
+export const DNS_CERT_RESOLVER = 'le-dns';
+const DNS_ACME_STORAGE = '/letsencrypt/acme-dns.json';
+const DNS_RESOLVER_PROVIDER_FLAG = `--certificatesresolvers.${DNS_CERT_RESOLVER}.acme.dnschallenge.provider=cloudflare`;
 
 /** A host routed to a container. `customCert`: serve an uploaded certificate, not ACME. */
 export interface RoutedDomain {
   host: string;
   https: boolean;
   customCert?: boolean;
+  /**
+   * Obtain the certificate through the DNS-01 resolver (only honoured when the
+   * proxy has it, see `buildLabels` `dnsResolver`). `main` set = one wildcard
+   * certificate for `main` + `*.main` shared by every host under it.
+   */
+  dns?: { main?: string };
   /**
    * `name@file` middlewares (from the operator dynamic config files) in front
    * of this host, applied in this order. Entries that are not `name@file`
@@ -54,6 +69,8 @@ export interface ProxyStatus {
    * assigned. Meaningless (false) while not installed.
    */
   customCerts: boolean;
+  /** The running container has the DNS-01 resolver (`le-dns`). False while not installed. */
+  dnsChallenge: boolean;
 }
 
 /** Ports and ACME for one proxy: env for the aoox host, a row for remote servers. */
@@ -62,6 +79,10 @@ export interface ProxySettings {
   httpsPort: number;
   acmeEmail: string | null;
   acmeStaging: boolean;
+  /** Server the proxy belongs to (null/undefined = the aoox host); selects its DNS binding. */
+  serverId?: string | null;
+  /** Set by callers that built labels for a proxy that really has `le-dns`. */
+  dnsChallenge?: boolean;
 }
 
 /** Valid middleware refs of a domain, in order, without repeats. */
@@ -109,6 +130,7 @@ export class ProxyService {
   constructor(
     private readonly docker: DockerService,
     private readonly config: ConfigService,
+    private readonly dnsBindings: ProxyDnsBindingService,
   ) {}
 
   get httpPort(): number {
@@ -130,6 +152,7 @@ export class ProxyService {
       httpsPort: this.httpsPort,
       acmeEmail: this.acmeEmail,
       acmeStaging: this.config.get<string>('PROXY_ACME_STAGING') === 'true',
+      serverId: null,
     };
   }
 
@@ -160,7 +183,25 @@ export class ProxyService {
       httpsPort: settings.httpsPort,
       acmeEmail: settings.acmeEmail,
       customCerts: inspect ? ProxyService.supportsCustomCerts(inspect) : false,
+      dnsChallenge: inspect
+        ? ProxyService.supportsDnsChallenge(inspect)
+        : false,
     };
+  }
+
+  /** Pure: was this proxy container created with the DNS-01 resolver? */
+  static supportsDnsChallenge(inspect: {
+    Config: { Cmd?: string[] | null };
+  }): boolean {
+    return (inspect.Config.Cmd ?? []).includes(DNS_RESOLVER_PROVIDER_FLAG);
+  }
+
+  /** Does the proxy on `docker` really run the DNS-01 resolver? (Truth = the container, not the DB.) */
+  async dnsChallengeActive(docker: DockerHandle): Promise<boolean> {
+    const c = await docker.findContainerByName(PROXY_CONTAINER);
+    if (!c) return false;
+    const inspect = await docker.engine.inspectContainer(c.Id);
+    return !!inspect && ProxyService.supportsDnsChallenge(inspect);
   }
 
   /** Pure: does this proxy container have the file provider and the cert volume? */
@@ -204,6 +245,7 @@ export class ProxyService {
       httpsPort: port('443/tcp', fallback.httpsPort),
       acmeEmail: email ? email.slice(`${prefix}email=`.length) : null,
       acmeStaging: !!caserver && caserver.includes('staging'),
+      serverId: fallback.serverId,
     };
   }
 
@@ -281,12 +323,37 @@ export class ProxyService {
       }
     }
 
+    // DNS-01: a second resolver when this proxy has a DNS connection bound.
+    // The token travels in the container env (visible to `docker inspect`
+    // on the host, like every other secret aoox hands to a container).
+    const dns = await this.dnsBindings.credentialsFor(settings.serverId);
+    const dnsEnabled = !!dns && !!email;
+    if (dns && !email) {
+      this.logger.warn(
+        `DNS-01 is configured for the proxy on ${docker.engine.target} but it has no ACME email: skipped`,
+      );
+    }
+    if (dns && email) {
+      const r = `--certificatesresolvers.${DNS_CERT_RESOLVER}.acme.`;
+      cmd.push(
+        `${r}email=${email}`,
+        `${r}storage=${DNS_ACME_STORAGE}`,
+        DNS_RESOLVER_PROVIDER_FLAG,
+      );
+      if (settings.acmeStaging) {
+        cmd.push(
+          `${r}caserver=https://acme-staging-v02.api.letsencrypt.org/directory`,
+        );
+      }
+    }
+
     const existing = await docker.findContainerByName(PROXY_CONTAINER);
     if (existing) await docker.engine.removeContainer(existing.Id, true);
     const id = await docker.engine.createContainer(
       {
         Image: PROXY_IMAGE,
         Cmd: cmd,
+        ...(dnsEnabled ? { Env: [`CF_DNS_API_TOKEN=${dns.token}`] } : {}),
         Labels: {
           'aoox.component': 'proxy',
           ...composeLabels('proxy'),
@@ -312,7 +379,7 @@ export class ProxyService {
     if (swarm) await docker.engine.connectNetwork(SWARM_NETWORK, id);
     await docker.engine.startContainer(id);
     this.logger.log(
-      `Proxy started on ${docker.engine.target} :${settings.httpPort}/:${settings.httpsPort} (acme: ${email ? 'on' : 'off'}, swarm: ${swarm ? 'on' : 'off'})`,
+      `Proxy started on ${docker.engine.target} :${settings.httpPort}/:${settings.httpsPort} (acme: ${email ? 'on' : 'off'}, dns-01: ${dnsEnabled ? 'on' : 'off'}, swarm: ${swarm ? 'on' : 'off'})`,
     );
   }
 
@@ -336,6 +403,7 @@ export class ProxyService {
     return ProxyService.buildLabels(routerName, port, domains, {
       httpsPort: settings.httpsPort,
       acme: settings.acmeEmail !== null,
+      dnsResolver: settings.dnsChallenge === true,
     });
   }
 
@@ -357,7 +425,7 @@ export class ProxyService {
     routerName: string,
     port: number,
     domains: RoutedDomain[],
-    opts: { httpsPort: number; acme: boolean },
+    opts: { httpsPort: number; acme: boolean; dnsResolver?: boolean },
   ): Record<string, string> {
     if (domains.length === 0) return {};
     const rule = (hosts: string[]) =>
@@ -370,6 +438,12 @@ export class ProxyService {
     const secure = domains
       .filter((d) => d.https && !d.customCert)
       .map((d) => d.host);
+    // https hosts that ask for DNS-01 and whose proxy has the resolver; with
+    // no resolver they silently keep the HTTP-01 behaviour below.
+    const dnsDomains = opts.dnsResolver
+      ? domains.filter((d) => d.https && !d.customCert && d.dns)
+      : [];
+    const dnsHosts = new Set(dnsDomains.map((d) => d.host));
     // Custom-certificate hosts always redirect (they are https for certain,
     // the certificate is ours); ACME hosts only once a resolver exists.
     const redirectHosts = [...(opts.acme ? secure : []), ...custom];
@@ -412,7 +486,7 @@ export class ProxyService {
       );
     }
     for (const g of byMiddlewares(
-      domains.filter((d) => d.https && !d.customCert),
+      domains.filter((d) => d.https && !d.customCert && !dnsHosts.has(d.host)),
     )) {
       const name = `${routerName}-secure${g.suffix}`;
       labels[`traefik.http.routers.${name}.rule`] = rule(g.hosts);
@@ -423,6 +497,36 @@ export class ProxyService {
       if (g.middlewares.length > 0) {
         labels[`traefik.http.routers.${name}.middlewares`] =
           g.middlewares.join(',');
+      }
+    }
+    // DNS-01 routers: one per distinct wildcard base (and middleware list).
+    const byMain = new Map<string, RoutedDomain[]>();
+    for (const d of dnsDomains) {
+      const main = d.dns?.main ?? '';
+      byMain.set(main, [...(byMain.get(main) ?? []), d]);
+    }
+    for (const [main, group] of byMain) {
+      const mainSuffix =
+        main === ''
+          ? '-dns'
+          : `-dns-${createHash('sha1').update(main).digest('hex').slice(0, 8)}`;
+      for (const g of byMiddlewares(group)) {
+        const name = `${routerName}-secure${mainSuffix}${g.suffix}`;
+        labels[`traefik.http.routers.${name}.rule`] = rule(g.hosts);
+        labels[`traefik.http.routers.${name}.entrypoints`] = 'websecure';
+        labels[`traefik.http.routers.${name}.service`] = routerName;
+        labels[`traefik.http.routers.${name}.tls`] = 'true';
+        labels[`traefik.http.routers.${name}.tls.certresolver`] =
+          DNS_CERT_RESOLVER;
+        if (main !== '') {
+          labels[`traefik.http.routers.${name}.tls.domains[0].main`] = main;
+          labels[`traefik.http.routers.${name}.tls.domains[0].sans`] =
+            `*.${main}`;
+        }
+        if (g.middlewares.length > 0) {
+          labels[`traefik.http.routers.${name}.middlewares`] =
+            g.middlewares.join(',');
+        }
       }
     }
     for (const g of byMiddlewares(

@@ -1,5 +1,8 @@
+import { CERT_MODES } from '../cert-mode';
+import type { DomainCertMode } from '../domain.entity';
 import {
   IsBoolean,
+  IsIn,
   IsOptional,
   IsString,
   IsUUID,
@@ -30,4 +33,26 @@ export class AddDomainDto {
   )
   @IsUUID()
   certificateId?: string | null;
+
+  /** ACME mode: `http` (default), `dns` (DNS-01 per host) or `dns-wildcard`. Needs DNS-01 on the proxy. */
+  @IsOptional()
+  @IsIn(CERT_MODES)
+  certMode?: DomainCertMode;
+
+  /** DNS connection that should create this host's record; `""`/null = manage DNS yourself. */
+  @ValidateIf(
+    (_: unknown, v: unknown) => v !== undefined && v !== null && v !== '',
+  )
+  @IsUUID()
+  dnsConnectionId?: string | null;
+
+  /** Cloudflare proxied (orange cloud) flag for the record. */
+  @IsOptional()
+  @IsBoolean()
+  dnsProxied?: boolean;
+
+  /** Replace an existing record with different content instead of only warning. */
+  @IsOptional()
+  @IsBoolean()
+  dnsOverwrite?: boolean;
 }

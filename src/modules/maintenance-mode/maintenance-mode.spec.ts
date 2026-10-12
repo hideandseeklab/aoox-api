@@ -223,3 +223,38 @@ describe('maintenance Traefik routing', () => {
     expect(toDynamicYaml({ a: 1 })).toBe('{\n  "a": 1\n}\n');
   });
 });
+
+describe('appDynamicConfig with DNS-01 hosts', () => {
+  const domains = [
+    {
+      host: 'a.example.com',
+      https: true,
+      customCert: false,
+      middlewares: [],
+      dns: { main: 'example.com' },
+    },
+    { host: 'b.example.com', https: true, customCert: false, middlewares: [] },
+  ];
+  type Cfg = {
+    http: { routers: Record<string, { tls?: Record<string, unknown> }> };
+  };
+
+  it('keeps the le resolver for everything when the proxy has no DNS-01', () => {
+    const cfg = appDynamicConfig('app1', domains, { acme: true }) as Cfg;
+    const tls = Object.values(cfg.http.routers).map((r) => r.tls);
+    expect(tls).toEqual([{ certResolver: 'le' }]);
+  });
+
+  it('routes a DNS-01 host through le-dns with its wildcard domains', () => {
+    const cfg = appDynamicConfig('app1', domains, {
+      acme: true,
+      dns: true,
+    }) as Cfg;
+    const tls = Object.values(cfg.http.routers).map((r) => r.tls);
+    expect(tls).toContainEqual({ certResolver: 'le' });
+    expect(tls).toContainEqual({
+      certResolver: 'le-dns',
+      domains: [{ main: 'example.com', sans: ['*.example.com'] }],
+    });
+  });
+});

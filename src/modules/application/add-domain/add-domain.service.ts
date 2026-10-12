@@ -7,13 +7,16 @@ import {
 } from '@nestjs/common';
 import { CertificateSyncService } from '../../certificate/certificate-sync.service';
 import { CertificateService } from '../../certificate/certificate.service';
+import { ProxyDnsBindingService } from '../../dns-provider/proxy-dns-binding.service';
 import { ProxyService } from '../../proxy/proxy.service';
 import { RemoteDockerService } from '../../server/remote-docker.service';
 import { proxySettingsOf } from '../../server/server.entity';
 import { ServerService } from '../../server/server.service';
 import { MaintenanceModeService } from '../../maintenance-mode/maintenance-mode.service';
 import { ApplicationService } from '../application.service';
+import { assertCertMode } from '../cert-mode';
 import { DeploymentRunnerService } from '../deployment-runner.service';
+import { DomainDnsService } from '../domain-dns.service';
 import { DomainDto, toDomainDto } from '../domain-dto';
 import { AddDomainDto } from './add-domain.dto';
 
@@ -27,6 +30,12 @@ export interface AddDomainResult {
    * listening on 80/443. A proxy that's already running is left untouched.
    */
   proxyAutoProvisioned: boolean;
+  /**
+   * Set when the domain has a DNS connection but the record could not be
+   * created as asked (existing record, no zone, provider error). The domain
+   * itself was added regardless. Null when all is well or DNS is not managed.
+   */
+  dnsWarning: string | null;
 }
 
 @Injectable()
@@ -42,6 +51,8 @@ export class AddDomainService {
     private readonly certs: CertificateService,
     private readonly certSync: CertificateSyncService,
     private readonly maintenance: MaintenanceModeService,
+    private readonly dnsBindings: ProxyDnsBindingService,
+    private readonly domainDns: DomainDnsService,
   ) {}
 
   async execute(
@@ -69,12 +80,33 @@ export class AddDomainService {
       }
       this.certs.assertCovers([host], certificate.domains);
     }
+    const certMode = dto.certMode ?? 'http';
+    assertCertMode(certMode, {
+      host,
+      https: dto.https ?? false,
+      hasCustomCertificate: !!certificate,
+      proxyHasDns:
+        certMode === 'http' || !!(await this.dnsBindings.get(app.serverId)),
+    });
+    const dnsConnectionId = dto.dnsConnectionId || null;
+    const dnsConnection = dnsConnectionId
+      ? await this.domainDns.connectionName(dnsConnectionId)
+      : null;
+    if (dnsConnectionId && !dnsConnection) {
+      throw new BadRequestException('DNS connection not found');
+    }
     const domain = await this.applications.domains.save(
       this.applications.domains.create({
         applicationId: app.id,
         host,
         https: dto.https ?? false,
         certificateId: certificate?.id ?? null,
+        certMode,
+        dnsConnectionId,
+        dnsProxied: dto.dnsProxied ?? false,
+        dnsRecords: [],
+        dnsStatus: null,
+        dnsMessage: null,
       }),
     );
 
@@ -103,6 +135,14 @@ export class AddDomainService {
       }
     }
 
+    // The record goes in before the container gets its labels, so the first
+    // certificate request already finds the name. Never fails the request.
+    const dns = await this.domainDns.sync(
+      app,
+      domain,
+      dto.dnsOverwrite === true,
+    );
+
     // A host added while the app is in maintenance must show the page too.
     await this.maintenance
       .refresh(app.id)
@@ -112,8 +152,9 @@ export class AddDomainService {
     // Labels live on the container, so apply by recreating it (no rebuild).
     await this.runner.applyRuntimeConfig(app);
     return {
-      domain: toDomainDto(domain, certificate?.name ?? null),
+      domain: toDomainDto(domain, certificate?.name ?? null, dnsConnection),
       proxyAutoProvisioned,
+      dnsWarning: dns && dns.status !== 'ok' ? dns.message : null,
     };
   }
 }

@@ -69,6 +69,8 @@ export interface ExportedApplication {
   memoryMb: number | null;
   previewsEnabled: boolean;
   previewDomain: string | null;
+  /** One wildcard DNS-01 certificate for previews. Optional in older files. */
+  previewWildcardCert?: boolean;
   /** External secret source: the connection by NAME and where to read; never credentials or values. Optional in older files. */
   secretSource?: {
     connection: string;
@@ -83,7 +85,14 @@ export interface ExportedApplication {
     backupDestination: string | null;
     server: string | null;
   };
-  domains: Array<{ host: string; https: boolean }>;
+  domains: Array<{
+    host: string;
+    https: boolean;
+    /** ACME mode; optional in older files (default http). */
+    certMode?: 'http' | 'dns' | 'dns-wildcard';
+    /** DNS provider connection by NAME (never a token); optional in older files. */
+    dns?: { connection: string; proxied: boolean } | null;
+  }>;
   mounts: ExportedMount[];
   jobs: ExportedJob[];
 }

@@ -86,6 +86,7 @@ function harness(
     hostPorts as never,
     proxyConfig as never,
     certSync as never,
+    { get: jest.fn().mockResolvedValue(null) } as never,
   );
   return {
     svc,

@@ -252,6 +252,11 @@ export class UpdateApplicationDto {
   })
   previewDomain?: string | null;
 
+  /** One wildcard certificate (DNS-01) for all previews; needs DNS-01 on the proxy. */
+  @IsOptional()
+  @IsBoolean()
+  previewWildcardCert?: boolean;
+
   /** Successful deployments kept for rollback (1–100). */
   @IsOptional()
   @IsInt()

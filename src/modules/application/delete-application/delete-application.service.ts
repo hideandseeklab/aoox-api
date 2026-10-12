@@ -5,6 +5,7 @@ import { RemoteDockerService } from '../../server/remote-docker.service';
 import { ApplicationService, containerNameFor } from '../application.service';
 import { MetricRetentionService } from '../../monitoring/metric-retention.service';
 import { MaintenanceModeService } from '../../maintenance-mode/maintenance-mode.service';
+import { DomainDnsService } from '../domain-dns.service';
 import { PreviewService } from '../preview.service';
 import { SwarmDeployService } from '../swarm-deploy.service';
 
@@ -21,6 +22,7 @@ export class DeleteApplicationService {
     private readonly previews: PreviewService,
     private readonly certSync: CertificateSyncService,
     private readonly maintenance: MaintenanceModeService,
+    private readonly domainDns: DomainDnsService,
   ) {}
 
   async execute(ownerId: string, id: string): Promise<void> {
@@ -48,6 +50,13 @@ export class DeleteApplicationService {
       (await this.applications.domains.count({
         where: { applicationId: app.id, certificateId: Not(IsNull()) },
       })) > 0;
+    // DNS records aoox created for the domains (best effort, never blocks the delete).
+    const domains = await this.applications.domains.find({
+      where: { applicationId: app.id },
+    });
+    for (const d of domains) {
+      await this.domainDns.cleanup(d);
+    }
     await this.applications.repo.remove(app);
     if (usedCertificate) {
       await this.certSync

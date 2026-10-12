@@ -27,6 +27,8 @@ import {
   SECRET_ENVIRONMENT_PATTERN,
   SECRET_PROJECT_PATTERN,
 } from '../secret-source/secret-selection';
+import { DnsProviderService } from '../dns-provider/dns-provider.service';
+import { ProxyDnsBindingService } from '../dns-provider/proxy-dns-binding.service';
 import { SecretSourceService } from '../secret-source/secret-source.service';
 import type { ExportedApplication } from './project-export.types';
 import { VolumeBackupSchedulerService } from '../volume-backup/volume-backup-scheduler.service';
@@ -73,6 +75,8 @@ export class ProjectImportService {
     private readonly httpMonitors: HttpMonitorService,
     private readonly secretSources: SecretSourceService,
     private readonly resourceAlerts: ResourceAlertService,
+    private readonly dnsProviders: DnsProviderService,
+    private readonly dnsBindings: ProxyDnsBindingService,
   ) {}
 
   async import(file: unknown, options: ImportOptions): Promise<ImportReport> {
@@ -97,12 +101,14 @@ export class ProjectImportService {
       destinationIds,
       serverIds,
       secretConnectionIds,
+      dnsConnectionIds,
     ] = await Promise.all([
       idOf(this.registries.repo.find()),
       idOf(this.credentials.repo.find()),
       idOf(this.destinations.repo.find()),
       idOf(this.servers.repo.find()),
       idOf(this.secretSources.repo.find()),
+      idOf(this.dnsProviders.repo.find()),
     ]);
     const resolve = (
       kind: string,
@@ -179,6 +185,7 @@ export class ProjectImportService {
           memoryMb: a.memoryMb ?? null,
           previewsEnabled: a.previewsEnabled ?? false,
           previewDomain: a.previewDomain ?? null,
+          previewWildcardCert: false,
           ...importedSecretSource(
             a.secretSource,
             secretConnectionIds,
@@ -217,6 +224,11 @@ export class ProjectImportService {
           where,
           warnings,
         );
+      if (a.previewWildcardCert) {
+        warnings.push(
+          `${where}: wildcard preview certificate is not imported; enable it again after DNS-01 is set up on the proxy`,
+        );
+      }
       for (const d of a.domains ?? []) {
         if (
           await this.applications.domains.findOne({ where: { host: d.host } })
@@ -224,11 +236,41 @@ export class ProjectImportService {
           warnings.push(`${where}: domain ${d.host} already in use, skipped`);
           continue;
         }
+        // DNS settings travel by connection name; a missing connection, or a
+        // DNS-01 mode on a proxy that has no DNS-01 resolver here, is dropped
+        // with a warning. No record is created by an import: run the sync.
+        let dnsConnectionId: string | null = null;
+        if (d.dns?.connection) {
+          dnsConnectionId = dnsConnectionIds.get(d.dns.connection) ?? null;
+          if (!dnsConnectionId) {
+            warnings.push(
+              `${where}: DNS connection "${d.dns.connection}" not found for ${d.host}, DNS left unmanaged`,
+            );
+          }
+        }
+        let certMode: 'http' | 'dns' | 'dns-wildcard' = 'http';
+        if (d.certMode && d.certMode !== 'http') {
+          if (
+            (d.certMode === 'dns' || d.certMode === 'dns-wildcard') &&
+            (d.https ?? false) &&
+            (await this.dnsBindings.get(app.serverId ?? null))
+          ) {
+            certMode = d.certMode;
+          } else {
+            warnings.push(
+              `${where}: DNS-01 certificate for ${d.host} needs https and DNS-01 enabled on the proxy, using the automatic certificate`,
+            );
+          }
+        }
         await this.applications.domains.save(
           this.applications.domains.create({
             applicationId: app.id,
             host: d.host,
             https: d.https ?? false,
+            certMode,
+            dnsConnectionId,
+            dnsProxied: dnsConnectionId ? (d.dns?.proxied ?? false) : false,
+            dnsRecords: [],
           }),
         );
         created.domains++;

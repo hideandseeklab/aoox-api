@@ -47,11 +47,16 @@ export class PreviewService {
 
   /** `<appName>-pr<N>.<domain>`; null when no preview domain is configured. */
   hostFor(app: Application, prNumber: number): string | null {
-    const base =
+    const base = this.baseDomain(app);
+    return base ? `${app.appName}-pr${prNumber}.${base}` : null;
+  }
+
+  private baseDomain(app: Application): string | null {
+    return (
       app.previewDomain?.trim() ||
       this.config.get<string>('PREVIEW_DOMAIN')?.trim() ||
-      null;
-    return base ? `${app.appName}-pr${prNumber}.${base}` : null;
+      null
+    );
   }
 
   /** Creates or refreshes the row and queues a build. Returns null when capped. */
@@ -117,7 +122,17 @@ export class PreviewService {
         name: PreviewService.containerName(app, preview.prNumber),
         routerName: `${app.appName}-pr${preview.prNumber}`,
         domains: preview.host
-          ? [{ host: preview.host, https: this.proxy.acmeEmail !== null }]
+          ? [
+              {
+                host: preview.host,
+                https: this.proxy.acmeEmail !== null,
+                // One wildcard certificate for every preview (DNS-01), when
+                // the proxy has the resolver; otherwise labels fall back to HTTP-01.
+                ...(app.previewWildcardCert && this.baseDomain(app)
+                  ? { dns: { main: this.baseDomain(app)! } }
+                  : {}),
+              },
+            ]
           : [],
         labels: { 'aoox.preview': preview.id },
         hostPort: null,

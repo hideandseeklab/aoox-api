@@ -84,7 +84,8 @@ export class CheckDomainDnsService {
     return { addresses: [...a, ...aaaa], cname: cname[0] ?? null };
   }
 
-  private async expectedIp(
+  /** Where traffic for this app must land (also used to create DNS records). */
+  async expectedIp(
     app: Application,
   ): Promise<{ ip: string; source: DnsCheckDto['expectedSource'] } | null> {
     if (app.serverId) {
