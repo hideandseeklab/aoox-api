@@ -7,7 +7,7 @@ export const INSTANCE_UPDATE_STATE_ID = 'default';
  * images, captured via the same registry-digest-only comparison
  * `ImageDigestService` uses for application auto-update (never compare a
  * remote digest against a local `docker inspect` value — see AGENTS.md
- * "Update otomatis image" — different representations of "the same" digest
+ * "Automatic image updates" — different representations of "the same" digest
  * can disagree and cause a false "update available" forever).
  */
 @Entity({ name: 'instance_update_state' })
