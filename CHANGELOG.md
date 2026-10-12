@@ -53,6 +53,7 @@ Versions below 1.0.0 may include breaking changes in a minor release.
 
 ### Changed
 
+- `GET /compose-apps/:id` also returns `projectRole` (the caller's role in the owning project), like applications and databases, so the dashboard can hide actions from viewers.
 - API messages are now English only: the host-port conflict error, template variable errors, template descriptions, variable labels and hints, the proxy config preset labels and hints, and the onboarding step titles and hints (step ids are unchanged). No response shape, id or status code changed; the web app translates the texts it shows.
 - Remaining API messages (SQL import result, disk-low hint) are now English.
 - Moving an application to another server (`PATCH /applications/:id` with a new `serverId`) now cleans the middlewares of its domains: only names defined by an enabled dynamic config file on the destination proxy are kept, the rest are dropped before the labels are rebuilt, with a warning per domain in the log. The answer gains `droppedMiddlewares: [{domain, names}]` only when something was dropped. Project export/import behavior is unchanged (files and domain middlewares are not exported; an import of a file that carries them still succeeds).

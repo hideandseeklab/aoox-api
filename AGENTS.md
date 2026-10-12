@@ -755,7 +755,7 @@ NestJS 11 backend for aoox (self-hosted PaaS).
 - `src/modules/compose/` — entity `ComposeApp` (`compose_apps`, under `Project`; `slug` unique, `git_url`/`git_branch`/`git_credential_id`, `compose_path`, `env`,
   `status` idle→deploying→running|stopped|error, `logs` = output of the last action, `deployed_at`). It does not use `Application`/`Deployment`: one stack = N containers,
   so `containerNameFor`, ports, domains, rollback, and deployment history do not apply. Flow `create/list/get/update/delete-compose-app`, `deploy/stop/start-compose-app` (202 + poll `GET /compose-apps/:id`,
-  which also returns the stack's containers via the `com.docker.compose.project` label).
+  which also returns the stack's containers via the `com.docker.compose.project` label, plus `projectRole` so the web hides actions from viewers).
 - Compose is **not in the Engine API** (it is a client-side tool). `compose-runner.service.ts` runs `docker compose` in a one-shot helper container `docker:29-cli`
   (docker CLI + compose plugin + git) with the **host daemon socket** (`DockerService.hostDockerSocket` = `PROXY_DOCKER_SOCKET`, also used by Traefik) and a checkout volume
   `aoox_compose_<slug>`. That volume is mounted **at its own mountpoint path** (`inspectVolume().Mountpoint`, `/var/lib/docker/volumes/<name>/_data`) so that relative paths resolved by compose inside the helper (bind mount `./nginx.conf`, build context) also exist on the daemon side — with a plain `/work` mount, bind mounts fail (`not a directory`).
