@@ -8,14 +8,12 @@ Versions below 1.0.0 may include breaking changes in a minor release.
 
 ## [Unreleased]
 
+## [0.1.0-alpha.8] - 2026-10-12
+
 ### Added
 
 - **Change your own name or email.** `PATCH /users/me` `{name?, email?, currentPassword?}` for any role (session only; API tokens get 403, throttled 10/minute). The name is trimmed (max 100, empty clears it); a new email is normalised to lowercase and needs `currentPassword` (400 when missing, 401 when wrong). It must not belong to another account or to a pending invitation (409). Returns the updated profile; an unchanged email never asks for the password.
 - **Owner edits another user's name or email.** `PATCH /users/:id` `{name?, email?}` (owner only, no password; not for owners or yourself, 403) with the same email checks. `currentPassword` is redacted in the audit log like every password key.
-
-### Fixed
-
-- `npm run build` failed on `src/app.controller.ts` (TS1272, type imported without `import type`).
 
 ### Changed
 
@@ -542,7 +540,8 @@ Versions below 1.0.0 may include breaking changes in a minor release.
 - Monitoring with metrics history, disk cleanup tooling, and project/instance export-import for
   backup and migration between hosts.
 
-[Unreleased]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-alpha.7...HEAD
+[Unreleased]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-alpha.8...HEAD
+[0.1.0-alpha.8]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-alpha.7...v0.1.0-alpha.8
 [0.1.0-alpha.7]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-alpha.6...v0.1.0-alpha.7
 [0.1.0-alpha.6]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-alpha.5...v0.1.0-alpha.6
 [0.1.0-alpha.5]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-alpha.4...v0.1.0-alpha.5
