@@ -41,7 +41,7 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
       if (!resolved) {
         throw new UnauthorizedException('Invalid or expired API token');
       }
-      const { readOnly, projectIds } = resolved.token;
+      const { readOnly, projectIds, environments } = resolved.token;
       if (readOnly && isWriteRequest()) {
         throw new ForbiddenException('This API token is read-only');
       }
@@ -59,7 +59,7 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
           'This API token is limited to projects and cannot use platform settings',
         );
       }
-      setTokenScope({ readOnly, projectIds });
+      setTokenScope({ readOnly, projectIds, environments });
       req.user = {
         sub: resolved.user.id,
         email: resolved.user.email,

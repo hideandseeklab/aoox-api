@@ -197,6 +197,11 @@ export class CreateApplicationDto {
   @MaxLength(20_000)
   env?: string;
 
+  /** Environment of the same project whose variables the container receives (default: production). */
+  @IsOptional()
+  @IsUUID()
+  environmentId?: string;
+
   @IsOptional()
   @IsString()
   @MaxLength(5_000)

@@ -6,6 +6,7 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  Matches,
   Length,
   Max,
   Min,
@@ -37,4 +38,17 @@ export class CreateApiTokenDto {
   @ArrayMaxSize(50)
   @IsUUID('4', { each: true })
   projectIds?: string[];
+
+  /**
+   * Limit the token to the variables of these environments (by name, e.g.
+   * `development`); omitted/empty = every environment its user may reach.
+   */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(20)
+  @Matches(/^[a-z0-9-]{1,32}$/, {
+    each: true,
+    message: 'environments must be environment names (lowercase, digits, -)',
+  })
+  environments?: string[];
 }

@@ -11,6 +11,38 @@ describe('isWriteRequest', () => {
     ).toBe(false);
   });
 
+  it('treats only the environment reveal POST as a read, not PUT or deletes', () => {
+    const base = '/projects/11111111-1111/environments/22222222-2222';
+    expect(isWriteRequest({ method: 'POST', path: base + '/reveal' })).toBe(
+      false,
+    );
+    for (const [method, path] of [
+      ['PUT', base],
+      ['DELETE', base],
+      ['POST', '/projects/1/environments'],
+      ['POST', base + '/reveal/x'],
+    ]) {
+      expect(isWriteRequest({ method, path })).toBe(true);
+    }
+  });
+
+  it('treats the version reveal as a read, but restore and promote as writes', () => {
+    const base = '/projects/1/environments/2';
+    expect(
+      isWriteRequest({ method: 'POST', path: base + '/versions/3/reveal' }),
+    ).toBe(false);
+    for (const path of [
+      base + '/versions/3/restore',
+      base + '/promote',
+      base + '/versions/3/reveal/x',
+    ]) {
+      expect(isWriteRequest({ method: 'POST', path })).toBe(true);
+    }
+    expect(isWriteRequest({ method: 'GET', path: base + '/versions' })).toBe(
+      false,
+    );
+  });
+
   it('treats every other method as a write', () => {
     for (const [method, path] of [
       ['POST', '/applications/1/deploy'],

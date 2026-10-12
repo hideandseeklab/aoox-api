@@ -6,6 +6,7 @@ import {
   EnvResolverService,
 } from '../../application/env-resolver.service';
 import { GitCredentialService } from '../../git-credential/git-credential.service';
+import { ProjectEnvironmentService } from '../../project/project-environment.service';
 import { ProjectService } from '../../project/project.service';
 import { ComposeApp } from '../compose-app.entity';
 import { ComposeService } from '../compose.service';
@@ -18,6 +19,7 @@ export class CreateComposeAppService {
     private readonly projects: ProjectService,
     private readonly credentials: GitCredentialService,
     private readonly envResolver: EnvResolverService,
+    private readonly environments: ProjectEnvironmentService,
   ) {}
 
   async execute(
@@ -31,6 +33,11 @@ export class CreateComposeAppService {
     const app = this.compose.repo.create({
       projectId: project.id,
       project,
+      environmentId: await this.environments.resolveLink(
+        project.id,
+        dto.environmentId,
+        { userId: ownerId },
+      ),
       name: dto.name.trim(),
       slug: ComposeService.slugify(dto.name),
       gitUrl: dto.gitUrl.trim(),

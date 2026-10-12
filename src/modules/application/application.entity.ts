@@ -12,6 +12,7 @@ import { GitCredential } from '../git-credential/git-credential.entity';
 import { Server } from '../server/server.entity';
 import { BackupDestination } from '../backup-destination/backup-destination.entity';
 import { Project } from '../project/project.entity';
+import { ProjectEnvironment } from '../project/project-environment.entity';
 import { Registry } from '../registry/registry.entity';
 
 /** Runtime status as last observed/set by aoox. */
@@ -38,6 +39,21 @@ export class Application {
   @ManyToOne(() => Project, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'project_id' })
   project: Project;
+
+  /**
+   * The project environment whose variables this application receives
+   * (`${{project.KEY}}` resolves from it). NO ACTION: an environment still
+   * linked cannot be deleted, and a project delete still cascades.
+   */
+  @Column({ name: 'environment_id', type: 'uuid' })
+  environmentId: string;
+
+  @ManyToOne(() => ProjectEnvironment, { onDelete: 'NO ACTION' })
+  @JoinColumn({
+    name: 'environment_id',
+    foreignKeyConstraintName: 'FK_applications_environment',
+  })
+  environment: ProjectEnvironment;
 
   @Column()
   name: string;

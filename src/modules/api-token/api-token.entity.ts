@@ -51,6 +51,14 @@ export class ApiToken {
   @Column({ name: 'project_ids', type: 'jsonb', nullable: true })
   projectIds: string[] | null;
 
+  /**
+   * Names of the project environments whose values this token may reveal or
+   * change (`development`, ...); `null` = every environment its user may.
+   * Enforced by ProjectEnvironmentService; only narrows.
+   */
+  @Column({ type: 'jsonb', nullable: true })
+  environments: string[] | null;
+
   @Column({ name: 'expires_at', type: 'timestamptz', nullable: true })
   expiresAt: Date | null;
 

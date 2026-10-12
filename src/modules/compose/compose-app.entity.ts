@@ -10,6 +10,7 @@ import {
 } from 'typeorm';
 import { GitCredential } from '../git-credential/git-credential.entity';
 import { Project } from '../project/project.entity';
+import { ProjectEnvironment } from '../project/project-environment.entity';
 
 export type ComposeAppStatus =
   'idle' | 'deploying' | 'running' | 'stopped' | 'error';
@@ -67,6 +68,21 @@ export class ComposeApp {
   @ManyToOne(() => Project, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'project_id' })
   project: Project;
+
+  /**
+   * The project environment whose variables this stack receives
+   * (`${{project.KEY}}` resolves from it). NO ACTION: an environment still
+   * linked cannot be deleted, and a project delete still cascades.
+   */
+  @Column({ name: 'environment_id', type: 'uuid' })
+  environmentId: string;
+
+  @ManyToOne(() => ProjectEnvironment, { onDelete: 'NO ACTION' })
+  @JoinColumn({
+    name: 'environment_id',
+    foreignKeyConstraintName: 'FK_compose_apps_environment',
+  })
+  environment: ProjectEnvironment;
 
   @Column()
   name: string;

@@ -41,7 +41,11 @@ export class ApiTokenService {
     userId: string,
     name: string,
     expiresAt: Date | null,
-    scope: { readOnly?: boolean; projectIds?: string[] | null } = {},
+    scope: {
+      readOnly?: boolean;
+      projectIds?: string[] | null;
+      environments?: string[] | null;
+    } = {},
   ): Promise<{ token: ApiToken; plaintext: string }> {
     const plaintext = generateToken();
     const token = await this.repo.save(
@@ -54,6 +58,7 @@ export class ApiTokenService {
         expiresAt,
         readOnly: scope.readOnly ?? false,
         projectIds: scope.projectIds?.length ? scope.projectIds : null,
+        environments: scope.environments?.length ? scope.environments : null,
       }),
     );
     delete (token as Partial<ApiToken>).tokenHash;

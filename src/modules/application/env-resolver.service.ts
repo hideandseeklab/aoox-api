@@ -1,4 +1,11 @@
 import { Injectable } from '@nestjs/common';
+import {
+  DATABASE_FIELDS,
+  isSecretValue,
+  parseEnvLines,
+  REFERENCE,
+} from '../project/env-text';
+import { ProjectEnvironmentService } from '../project/project-environment.service';
 import { ENGINES } from '../managed-database/engines';
 import { ManagedDatabaseService } from '../managed-database/managed-database.service';
 import { SecretSourceError } from '../secret-source/infisical.client';
@@ -6,37 +13,8 @@ import { ENV_KEY_PATTERN } from '../secret-source/secret-selection';
 import { SecretSourceService } from '../secret-source/secret-source.service';
 import { Application } from './application.entity';
 
-/** Parsed `KEY=VALUE` lines; blank lines and `#` comments are ignored. */
-export function parseEnvLines(
-  text: string,
-): Array<[key: string, value: string]> {
-  const out: Array<[string, string]> = [];
-  for (const raw of text.split(/\r?\n/)) {
-    const line = raw.trim();
-    if (!line || line.startsWith('#')) continue;
-    const eq = line.indexOf('=');
-    if (eq <= 0) continue;
-    out.push([line.slice(0, eq).trim(), line.slice(eq + 1)]);
-  }
-  return out;
-}
+export { parseEnvLines };
 
-/**
- * `${{project.KEY}}`, `${{secret.KEY}}` (external secret source),
- * `${{database.<slug>.<field>}}`, or `${{database.<slug>.<field>:<name>}}`
- * for another database on the same server.
- */
-const REFERENCE =
-  /\$\{\{\s*([a-z]+)\.([A-Za-z0-9_-]+)(?:\.([a-z]+))?(?::([A-Za-z0-9_$-]+))?\s*\}\}/g;
-
-const DATABASE_FIELDS = [
-  'url',
-  'host',
-  'port',
-  'username',
-  'password',
-  'database',
-] as const;
 type DatabaseField = (typeof DATABASE_FIELDS)[number];
 
 export interface ResolvedEnv {
@@ -67,7 +45,7 @@ const MIN_REDACT_LENGTH = 6;
 export class EnvReferenceError extends Error {}
 
 /**
- * Builds a container's env from the project's shared env plus the app's own
+ * Builds a container's env from the app's linked project environment plus its own
  * (the app wins on duplicate keys), expanding references to project vars
  * and to managed databases of the same project. Runs at container create so
  * a rotated password or new database is picked up on the next deploy
@@ -84,16 +62,25 @@ export class EnvResolverService {
   constructor(
     private readonly databases: ManagedDatabaseService,
     private readonly secretSource: SecretSourceService,
+    private readonly environments: ProjectEnvironmentService,
   ) {}
 
   async resolve(
     app: Application,
     opts: ResolveOptions = {},
   ): Promise<ResolvedEnv> {
-    const project = new Map(parseEnvLines(app.project.env ?? ''));
+    // The linked environment replaces the old `Project.env`.
+    const { text: environmentText, flags } =
+      await this.environments.variablesAndFlagsFor(app);
+    const project = new Map(parseEnvLines(environmentText));
     const appEnv = parseEnvLines(app.env);
     const secrets = new Set<string>();
     const dbCache = new Map<string, Record<DatabaseField, string>>();
+    // A secret flag always masks (any non-empty length); an explicit "not
+    // secret" never does; unmarked keys use the length heuristic.
+    for (const [k, v] of project) {
+      if (isSecretValue(k, v, flags)) secrets.add(v);
+    }
 
     // ---- external secret source ----
     const sourceActive =
@@ -200,6 +187,16 @@ export class EnvResolverService {
       }
       resolved += value.slice(last);
       env.push(`${key}=${resolved}`);
+      // A flagged variable can hold references (a database password, a source
+      // secret): the expanded value is what reaches the container and the logs.
+      if (
+        flags[key] === true &&
+        project.has(key) &&
+        !appEnv.some(([k]) => k === key) &&
+        resolved.length > 0
+      ) {
+        secrets.add(resolved);
+      }
     }
     return { env, secrets: [...secrets] };
   }

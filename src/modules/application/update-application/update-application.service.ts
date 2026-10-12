@@ -12,6 +12,7 @@ import { HostPortService } from '../../host-port/host-port.service';
 import { ProxyConfigService } from '../../proxy-config/proxy-config.service';
 import { RemoteDockerService } from '../../server/remote-docker.service';
 import { ServerService } from '../../server/server.service';
+import { ProjectEnvironmentService } from '../../project/project-environment.service';
 import { GitCredentialService } from '../../git-credential/git-credential.service';
 import { Application } from '../application.entity';
 import { Domain } from '../domain.entity';
@@ -41,6 +42,7 @@ export class UpdateApplicationService {
     private readonly applications: ApplicationService,
     private readonly credentials: GitCredentialService,
     private readonly envResolver: EnvResolverService,
+    private readonly environments: ProjectEnvironmentService,
     private readonly servers: ServerService,
     private readonly remote: RemoteDockerService,
     private readonly runner: DeploymentRunnerService,
@@ -130,9 +132,23 @@ export class UpdateApplicationService {
     const limitsChanged =
       before.cpuMillicores !== app.cpuMillicores ||
       before.memoryMb !== app.memoryMb;
-    if (dto.env !== undefined) {
-      app.env = dto.env;
-      // Catch a bad ${{...}} reference now rather than at the next deploy.
+    let environmentChanged = false;
+    if (dto.environmentId) {
+      const id = await this.environments.resolveLink(
+        app.projectId,
+        dto.environmentId,
+        {
+          userId: ownerId,
+          currentId: app.environmentId,
+        },
+      );
+      environmentChanged = id !== app.environmentId;
+      app.environmentId = id;
+    }
+    if (dto.env !== undefined || environmentChanged) {
+      if (dto.env !== undefined) app.env = dto.env;
+      // Catch a bad ${{...}} reference now rather than at the next deploy
+      // (also when the app moves to an environment that lacks a variable).
       try {
         await this.envResolver.resolve(app, { lenient: true });
       } catch (err) {

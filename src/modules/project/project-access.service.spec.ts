@@ -198,7 +198,7 @@ describe('API token project scope', () => {
       {
         method: 'GET',
         path: '/x',
-        tokenScope: { readOnly: false, projectIds },
+        tokenScope: { readOnly: false, projectIds, environments: null },
       },
       fn,
     );

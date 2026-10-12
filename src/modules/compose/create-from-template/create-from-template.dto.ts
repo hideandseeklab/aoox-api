@@ -19,6 +19,11 @@ export class CreateFromTemplateDto {
   @Matches(/^[a-z0-9-]+$/)
   templateId: string;
 
+  /** Environment of the project (default: production). */
+  @IsOptional()
+  @IsUUID()
+  environmentId?: string;
+
   /** Defaults to the template name. */
   @IsOptional()
   @IsString()

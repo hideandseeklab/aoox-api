@@ -56,7 +56,13 @@ export class CreateApiTokenController {
       user.sub,
       dto.name.trim(),
       expiresAt,
-      { readOnly: dto.readOnly, projectIds },
+      {
+        readOnly: dto.readOnly,
+        projectIds,
+        environments: dto.environments?.length
+          ? [...new Set(dto.environments)]
+          : null,
+      },
     );
     return { ...token, token: plaintext };
   }

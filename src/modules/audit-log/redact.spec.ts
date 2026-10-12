@@ -36,3 +36,43 @@ describe('redactBody', () => {
     expect(redactBody(huge)).toMatchObject({ _truncated: true });
   });
 });
+
+describe('redactBody for environments', () => {
+  it('never keeps the variables text of an environment write', () => {
+    expect(
+      redactBody({ variables: 'DB_PASSWORD=hunter2\nTOKEN=abc', name: 'qa' }),
+    ).toEqual({ variables: '[redacted]', name: 'qa' });
+  });
+
+  it('keeps names-only bodies of promote, restore and flag changes, but never the text', () => {
+    expect(
+      redactBody({
+        from: 'e1',
+        keys: ['DB_URL', 'API_TOKEN'],
+        expectedUpdatedAt: '2026-10-13T00:00:00.000Z',
+      }),
+    ).toEqual({
+      from: 'e1',
+      keys: ['DB_URL', 'API_TOKEN'],
+      expectedUpdatedAt: '2026-10-13T00:00:00.000Z',
+    });
+    expect(
+      redactBody({
+        variables: 'API_TOKEN=abc',
+        flags: { API_TOKEN: true },
+        action: 'set',
+      }),
+    ).toEqual({
+      variables: '[redacted]',
+      flags: { API_TOKEN: '[redacted]' }, // secret-looking names are cut
+      action: 'set',
+    });
+  });
+
+  it('keeps the environment link of an application', () => {
+    expect(redactBody({ environmentId: 'e1', env: 'A=1' })).toEqual({
+      environmentId: 'e1',
+      env: '[redacted]',
+    });
+  });
+});

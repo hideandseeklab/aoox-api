@@ -45,6 +45,19 @@ function build(
   const scheduler = { reschedule: jest.fn() };
   const provision = jest.fn<void, [unknown, string]>();
   const importMonitor = jest.fn().mockResolvedValue(undefined);
+  const importAll = jest.fn<
+    Promise<Map<string, string>>,
+    [string, unknown[], string | undefined, string[]]
+  >(() =>
+    Promise.resolve(
+      new Map([
+        ['development', 'env-dev'],
+        ['staging', 'env-stg'],
+        ['production', 'env-prod'],
+      ]),
+    ),
+  );
+  const environments = { importAll };
   const service = new ProjectImportService(
     { repo: projects } as never,
     { repo: apps, domains, mounts: appMounts } as never,
@@ -79,6 +92,7 @@ function build(
     { importConfig: jest.fn().mockResolvedValue(undefined) } as never,
     { repo: fakeRepo(opts.dnsConnections) } as never,
     { get: jest.fn().mockResolvedValue(opts.dnsBinding ? {} : null) } as never,
+    environments as never,
   );
   return {
     service,
@@ -92,6 +106,7 @@ function build(
     provision,
     scheduler,
     importMonitor,
+    importAll,
   };
 }
 
@@ -122,14 +137,39 @@ describe('ProjectImportService', () => {
     ).rejects.toThrow(/needs a name/);
   });
 
-  it('creates the project for the importing user with the file env', async () => {
-    const { service, projects } = build();
+  it('creates the project for the importing user and imports an old file env into production', async () => {
+    const { service, projects, importAll } = build();
     const report = await service.import(base, { ...options, name: ' Copy ' });
     expect(projects.save).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'Copy', env: 'A=1', ownerId: 'user-1' }),
+      expect.objectContaining({ name: 'Copy', ownerId: 'user-1' }),
     );
+    // A file from before environments: project.env goes to production.
+    expect(importAll).toHaveBeenCalledWith('id-1', [], 'A=1', []);
     expect(report.projectId).toBe('id-1');
     expect(report.warnings).toEqual([]);
+  });
+
+  it('links applications and stacks to environments by name, production when absent or unknown', async () => {
+    const { service, apps } = build();
+    const file = {
+      ...base,
+      environments: [{ name: 'staging', protected: false }],
+      applications: [
+        { name: 'A', appName: 'a-1', environment: 'staging' },
+        { name: 'B', appName: 'b-1' },
+        { name: 'C', appName: 'c-1', environment: 'gone' },
+      ],
+    };
+    const report = await service.import(file, options);
+    const saved = apps.save.mock.calls.map(
+      (c: unknown[]) => c[0] as { name: string; environmentId: string },
+    );
+    expect(saved.map((a) => [a.name, a.environmentId])).toEqual([
+      ['A', 'env-stg'],
+      ['B', 'env-prod'],
+      ['C', 'env-prod'],
+    ]);
+    expect(report.warnings.join(' | ')).toMatch(/environment "gone" not found/);
   });
 
   it('matches the secret connection by name, without any credential, and warns when it is missing', async () => {

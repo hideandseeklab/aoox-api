@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { randomBytes } from 'crypto';
+import { ProjectEnvironmentService } from '../../project/project-environment.service';
 import { ProjectService } from '../../project/project.service';
 import {
   renderEnv,
@@ -22,6 +23,7 @@ export class CreateFromTemplateService {
   constructor(
     private readonly compose: ComposeService,
     private readonly projects: ProjectService,
+    private readonly environments: ProjectEnvironmentService,
     private readonly templates: TemplateService,
     private readonly runner: ComposeRunnerService,
   ) {}
@@ -58,6 +60,11 @@ export class CreateFromTemplateService {
     const draft = this.compose.repo.create({
       projectId: project.id,
       project,
+      environmentId: await this.environments.resolveLink(
+        project.id,
+        dto.environmentId,
+        { userId: ownerId },
+      ),
       name,
       slug: ComposeService.slugify(name),
       source: 'template',

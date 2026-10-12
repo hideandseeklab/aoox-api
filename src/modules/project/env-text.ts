@@ -1,0 +1,295 @@
+/**
+ * Pure helpers for `KEY=VALUE` env text. Kept free of Nest and TypeORM
+ * imports so migrations and specs can use them.
+ */
+
+/** Parsed `KEY=VALUE` lines; blank lines and `#` comments are ignored. */
+export function parseEnvLines(
+  text: string,
+): Array<[key: string, value: string]> {
+  const out: Array<[string, string]> = [];
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith('#')) continue;
+    const eq = line.indexOf('=');
+    if (eq <= 0) continue;
+    out.push([line.slice(0, eq).trim(), line.slice(eq + 1)]);
+  }
+  return out;
+}
+
+/** Valid environment variable name. */
+export const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/**
+ * `${{project.KEY}}`, `${{secret.KEY}}` (external secret source),
+ * `${{database.<slug>.<field>}}`, or `${{database.<slug>.<field>:<name>}}`
+ * for another database on the same server.
+ */
+export const REFERENCE =
+  /\$\{\{\s*([a-z]+)\.([A-Za-z0-9_-]+)(?:\.([a-z]+))?(?::([A-Za-z0-9_$-]+))?\s*\}\}/g;
+
+export const DATABASE_FIELDS = [
+  'url',
+  'host',
+  'port',
+  'username',
+  'password',
+  'database',
+] as const;
+
+/** Max size of one environment's text (same limit `Project.env` had). */
+export const ENV_TEXT_MAX = 20_000;
+
+/** Names of the variables in `text`, in order, without duplicates. */
+export function keysOf(text: string): string[] {
+  return [...new Set(parseEnvLines(text).map(([k]) => k))];
+}
+
+/**
+ * Strict validation for text written through the environments API: every
+ * non-blank, non-comment line must be `NAME=value` with a valid name, names
+ * must be unique, and `${{...}}` references must be well-formed (`project.`
+ * references must exist in the same text). Returns a message or null.
+ * Whether a secret source or database exists is not checked here: they are
+ * resolved at deploy time, like application env.
+ */
+export function validateEnvironmentText(text: string): string | null {
+  if (text.length > ENV_TEXT_MAX) {
+    return `Variables are limited to ${ENV_TEXT_MAX} characters`;
+  }
+  const seen = new Set<string>();
+  const values: string[] = [];
+  const lines = text.split(/\r?\n/);
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line || line.startsWith('#')) continue;
+    const eq = line.indexOf('=');
+    if (eq <= 0) {
+      return `Line ${i + 1}: expected NAME=value`;
+    }
+    const key = line.slice(0, eq).trim();
+    if (!ENV_NAME.test(key)) {
+      return `Line ${i + 1}: "${key.slice(0, 40)}" is not a valid variable name (letters, digits and _, not starting with a digit)`;
+    }
+    if (seen.has(key)) return `Line ${i + 1}: ${key} is defined twice`;
+    seen.add(key);
+    values.push(line.slice(eq + 1));
+  }
+  for (const value of values) {
+    const opens = (value.match(/\$\{\{/g) ?? []).length;
+    const good = [...value.matchAll(REFERENCE)].length;
+    if (opens !== good) {
+      return 'A ${{...}} reference is malformed; use ${{project.KEY}}, ${{secret.KEY}} or ${{database.<slug>.<field>}}';
+    }
+    for (const m of value.matchAll(REFERENCE)) {
+      const [whole, scope, name, field] = m;
+      if (scope === 'project' || scope === 'secret') {
+        if (field !== undefined) return `${whole} is not a valid reference`;
+        if (scope === 'project' && !seen.has(name)) {
+          return `${whole}: no variable "${name}" in this environment`;
+        }
+      } else if (scope === 'database') {
+        if (!(DATABASE_FIELDS as readonly string[]).includes(field ?? '')) {
+          return `${whole}: use ${DATABASE_FIELDS.join(', ')}`;
+        }
+      } else {
+        return `${whole}: unknown scope "${scope}"`;
+      }
+    }
+  }
+  return null;
+}
+
+/** Values shorter than this are never registered for log redaction. */
+export const MIN_REDACT_LENGTH = 8;
+
+/**
+ * Whether a value from an environment should be masked in logs. Short values
+ * and plain words (`production`, `true`, `debug`) are skipped: masking them
+ * would mangle ordinary log text such as `npm install --production`.
+ */
+export function shouldRedactValue(value: string): boolean {
+  if (value.length < MIN_REDACT_LENGTH) return false;
+  if (/^[A-Za-z]+$/.test(value)) return false; // one plain word (production)
+  if (/^\d+$/.test(value)) return false; // numbers
+  return true;
+}
+
+/**
+ * Lenient clean-up for text from an untrusted file (project import): lines
+ * with a valid name only, last definition wins, comments dropped.
+ */
+export function normalizeEnvText(text: string): string {
+  const map = new Map<string, string>();
+  for (const [k, v] of parseEnvLines(text)) {
+    if (ENV_NAME.test(k)) map.set(k, v);
+  }
+  return [...map].map(([k, v]) => `${k}=${v}`).join('\n');
+}
+
+// ---------------------------------------------------------------------------
+// Secret flags
+// ---------------------------------------------------------------------------
+
+/**
+ * Per-key secret flag: `true` = secret, `false` = explicitly not secret,
+ * absent = unmarked. Names only, never values.
+ */
+export type SecretFlags = Record<string, boolean>;
+
+/** Names that look like a secret; used to flag keys at migration time and when a key is first added. */
+export const SECRET_NAME = /password|secret|token|key|private|credential/i;
+
+export function looksSecretName(name: string): boolean {
+  return SECRET_NAME.test(name);
+}
+
+/**
+ * Whether a value must be masked in logs and other redaction paths. An
+ * explicit flag wins (`true` masks any non-empty value, `false` never masks);
+ * an unmarked key falls back to the length heuristic of `shouldRedactValue`.
+ */
+export function isSecretValue(
+  key: string,
+  value: string,
+  flags: SecretFlags,
+): boolean {
+  const flag = flags[key];
+  if (flag === true) return value.length > 0;
+  if (flag === false) return false;
+  return shouldRedactValue(value);
+}
+
+/**
+ * The flags after a write: keys no longer in `keys` are dropped; `patch`
+ * entries set (`true`/`false`) or clear (`null`) a flag; a key that is new
+ * to the environment, has no flag and no patch entry is flagged secret when
+ * its name looks secret. Everything else keeps its flag.
+ */
+export function nextFlags(
+  previous: SecretFlags,
+  previousKeys: string[],
+  keys: string[],
+  patch: Record<string, boolean | null> = {},
+): SecretFlags {
+  const known = new Set(previousKeys);
+  const out: SecretFlags = {};
+  for (const key of keys) {
+    const requested = Object.prototype.hasOwnProperty.call(patch, key)
+      ? patch[key]
+      : undefined;
+    if (requested === true || requested === false) out[key] = requested;
+    else if (requested === null) continue;
+    else if (previous[key] !== undefined) out[key] = previous[key];
+    else if (!known.has(key) && looksSecretName(key)) out[key] = true;
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// Change summary, comparison and key-wise writes
+// ---------------------------------------------------------------------------
+
+/** Variables as an ordered map; when a key repeats the last definition wins. */
+export function envMap(text: string): Map<string, string> {
+  return new Map(parseEnvLines(text));
+}
+
+/** Key-level result of a change. Names only. */
+export interface ChangeSummary {
+  added: string[];
+  changed: string[];
+  removed: string[];
+  /** Keys whose secret flag changed (and still exist). */
+  flags: string[];
+}
+
+/** What changed between two texts (and, optionally, two flag sets), by key name. */
+export function summarizeChange(
+  oldText: string,
+  newText: string,
+  oldFlags: SecretFlags = {},
+  newFlags: SecretFlags = {},
+): ChangeSummary {
+  const before = envMap(oldText);
+  const after = envMap(newText);
+  const added: string[] = [];
+  const changed: string[] = [];
+  const flags: string[] = [];
+  for (const [key, value] of after) {
+    if (!before.has(key)) added.push(key);
+    else if (before.get(key) !== value) changed.push(key);
+    if (before.has(key) && oldFlags[key] !== newFlags[key]) flags.push(key);
+  }
+  const removed = [...before.keys()].filter((k) => !after.has(k));
+  return { added, changed, removed, flags };
+}
+
+export function isEmptySummary(s: ChangeSummary): boolean {
+  return (
+    s.added.length + s.changed.length + s.removed.length + s.flags.length === 0
+  );
+}
+
+/** Key-level comparison of two environments. */
+export interface EnvComparison {
+  onlyInFrom: string[];
+  onlyInTo: string[];
+  different: string[];
+  same: string[];
+}
+
+export function compareEnvTexts(
+  fromText: string,
+  toText: string,
+): EnvComparison {
+  const from = envMap(fromText);
+  const to = envMap(toText);
+  const out: EnvComparison = {
+    onlyInFrom: [],
+    onlyInTo: [],
+    different: [],
+    same: [],
+  };
+  for (const [key, value] of from) {
+    if (!to.has(key)) out.onlyInFrom.push(key);
+    else if (to.get(key) === value) out.same.push(key);
+    else out.different.push(key);
+  }
+  for (const key of to.keys()) if (!from.has(key)) out.onlyInTo.push(key);
+  return out;
+}
+
+function definesKey(line: string, key: string): boolean {
+  const t = line.trim();
+  if (!t || t.startsWith('#')) return false;
+  const eq = t.indexOf('=');
+  return eq > 0 && t.slice(0, eq).trim() === key;
+}
+
+/**
+ * Sets values key by key while keeping comments, blank lines and order: an
+ * existing variable is replaced in place (a repeated definition below it is
+ * dropped), a new one is appended at the end. Used by promote, which must not
+ * go through `normalizeEnvText` (that drops comments).
+ */
+export function setValues(
+  text: string,
+  entries: Array<[key: string, value: string]>,
+): string {
+  let lines = text === '' ? [] : text.split(/\r?\n/);
+  for (const [key, value] of entries) {
+    const at = lines.findIndex((l) => definesKey(l, key));
+    if (at === -1) {
+      while (lines.length > 0 && lines[lines.length - 1].trim() === '') {
+        lines.pop();
+      }
+      lines.push(`${key}=${value}`);
+    } else {
+      lines = lines.filter((l, i) => i <= at || !definesKey(l, key));
+      lines[at] = `${key}=${value}`;
+    }
+  }
+  return lines.join('\n');
+}

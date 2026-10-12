@@ -19,6 +19,7 @@ import { Job } from '../job/job.entity';
 import { JobService } from '../job/job.service';
 import { defaultTagFor, ENGINES } from '../managed-database/engines';
 import { ManagedDatabaseService } from '../managed-database/managed-database.service';
+import { ProjectEnvironmentService } from '../project/project-environment.service';
 import { ProjectService } from '../project/project.service';
 import { RegistryService } from '../registry/registry.service';
 import { ServerService } from '../server/server.service';
@@ -77,6 +78,7 @@ export class ProjectImportService {
     private readonly resourceAlerts: ResourceAlertService,
     private readonly dnsProviders: DnsProviderService,
     private readonly dnsBindings: ProxyDnsBindingService,
+    private readonly environments: ProjectEnvironmentService,
   ) {}
 
   async import(file: unknown, options: ImportOptions): Promise<ImportReport> {
@@ -127,10 +129,31 @@ export class ProjectImportService {
       this.projects.repo.create({
         name: (options.name ?? file.project.name).trim(),
         description: file.project.description ?? null,
-        env: file.project.env ?? '',
         ownerId: options.ownerId,
       }),
     );
+    // Environments by name; an old file's project.env lands in production.
+    const environmentIds = await this.environments.importAll(
+      project.id,
+      Array.isArray(file.environments) ? file.environments : [],
+      typeof file.project.env === 'string' ? file.project.env : undefined,
+      warnings,
+    );
+    const environmentFor = (
+      name: string | null | undefined,
+      where: string,
+    ): string => {
+      const production = environmentIds.get('production')!;
+      if (!name) return production;
+      const id = environmentIds.get(name);
+      if (!id) {
+        warnings.push(
+          `${where}: environment "${name}" not found, using production`,
+        );
+        return production;
+      }
+      return id;
+    };
 
     for (const a of file.applications ?? []) {
       const where = `application "${a.name}"`;
@@ -153,6 +176,7 @@ export class ProjectImportService {
       const app = await this.applications.repo.save(
         this.applications.repo.create({
           projectId: project.id,
+          environmentId: environmentFor(a.environment, where),
           name: a.name,
           appName,
           sourceType: a.sourceType ?? 'git',
@@ -388,8 +412,10 @@ export class ProjectImportService {
       const stack = await this.compose.repo.save(
         this.compose.repo.create({
           projectId: project.id,
+          environmentId: environmentFor(c.environment, where),
           name: c.name,
           slug,
+          webhookToken: randomBytes(24).toString('base64url'),
           source: c.source ?? 'git',
           templateId: c.templateId ?? null,
           composeContent: c.composeContent ?? null,

@@ -22,10 +22,12 @@ export class Project {
   description: string | null;
 
   /**
-   * Shared `KEY=VALUE` lines inherited by every application in the project
-   * (an application's own env wins). Referenced as `${{project.KEY}}`.
+   * Deprecated: the project's shared env now lives in `project_environments`
+   * (migration ProjectEnvironments copied it into `production`). The column is
+   * kept, no longer written or selected, so a downgrade still finds the old
+   * values.
    */
-  @Column({ type: 'text', default: '' })
+  @Column({ type: 'text', default: '', select: false })
   env: string;
 
   @Column({ name: 'owner_id', type: 'uuid' })

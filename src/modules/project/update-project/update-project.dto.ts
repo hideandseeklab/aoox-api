@@ -21,10 +21,4 @@ export class UpdateProjectDto {
   @IsString()
   @MaxLength(500)
   description?: string;
-
-  /** Shared `KEY=VALUE` lines for every application in the project. */
-  @IsOptional()
-  @IsString()
-  @MaxLength(20_000)
-  env?: string;
 }

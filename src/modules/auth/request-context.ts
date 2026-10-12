@@ -8,9 +8,18 @@ export interface TokenScope {
   readOnly: boolean;
   /** Projects the token may touch; null = whatever the user may see. */
   projectIds: string[] | null;
+  /**
+   * Environment names whose values the token may reveal or change; null =
+   * every environment its user may. Only narrows (see ProjectEnvironmentService).
+   */
+  environments: string[] | null;
 }
 
-export const FULL_SCOPE: TokenScope = { readOnly: false, projectIds: null };
+export const FULL_SCOPE: TokenScope = {
+  readOnly: false,
+  projectIds: null,
+  environments: null,
+};
 
 export interface RequestContext {
   method: string;
@@ -34,8 +43,17 @@ export function currentRequest(): RequestContext | undefined {
  * POSTs that only read. A ticket is the browser's way to open a websocket
  * it cannot authenticate with a header, so it must stay available to
  * viewers; everything else with a body changes something.
+ *
+ * `.../environments/:envId/reveal` (and the same under `versions/:versionId`) is a POST only so that it is audited; it
+ * changes nothing, so a read-only token (CI pulling variables) may call it.
+ * That also lifts the generic viewer write rule for this route, which is why
+ * ProjectEnvironmentService denies viewers itself.
  */
-const READ_ONLY_POSTS = [/\/log-ticket$/];
+const READ_ONLY_POSTS = [
+  /\/log-ticket$/,
+  /\/projects\/[^/]+\/environments\/[^/]+\/reveal$/,
+  /\/projects\/[^/]+\/environments\/[^/]+\/versions\/[^/]+\/reveal$/,
+];
 
 /** Runs `fn` inside a request context; used by the middleware and by tests. */
 export function runWithRequestContext<T>(ctx: RequestContext, fn: () => T): T {

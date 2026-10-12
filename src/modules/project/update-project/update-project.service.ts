@@ -17,7 +17,6 @@ export class UpdateProjectService {
     if (dto.description !== undefined) {
       project.description = dto.description.trim() || null;
     }
-    if (dto.env !== undefined) project.env = dto.env;
     return this.projectService.repo.save(project);
   }
 }

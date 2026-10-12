@@ -9,6 +9,7 @@ import { ResourceAlertService } from '../resource-alert/resource-alert.service';
 import { Job } from '../job/job.entity';
 import { JobService } from '../job/job.service';
 import { ManagedDatabaseService } from '../managed-database/managed-database.service';
+import { ProjectEnvironmentService } from '../project/project-environment.service';
 import { Project } from '../project/project.entity';
 import { RegistryService } from '../registry/registry.service';
 import { ServerService } from '../server/server.service';
@@ -38,6 +39,7 @@ export class ProjectExportService {
     private readonly secretSources: SecretSourceService,
     private readonly resourceAlerts: ResourceAlertService,
     private readonly dnsProviders: DnsProviderService,
+    private readonly environments: ProjectEnvironmentService,
   ) {}
 
   async export(
@@ -66,6 +68,16 @@ export class ProjectExportService {
     const ref = (map: Map<string, string>, id: string | null) =>
       id ? (map.get(id) ?? null) : null;
 
+    const envList = await this.environments.repo.find({
+      where: { projectId: project.id },
+      select: { id: true, name: true },
+    });
+    const envNames = new Map(envList.map((e) => [e.id, e.name] as const));
+    const environments = await this.environments.exportAll(
+      project.id,
+      includeSecrets,
+    );
+
     const apps = await this.applications.repo.find({
       where: { projectId: project.id },
       order: { createdAt: 'ASC' },
@@ -88,6 +100,7 @@ export class ProjectExportService {
         containerPort: a.containerPort,
         hostPort: a.hostPort,
         env: a.env,
+        environment: envNames.get(a.environmentId) ?? null,
         buildArgs: a.buildArgs,
         healthcheckPath: a.healthcheckPath,
         ignoreErrorLogs: a.ignoreErrorLogs,
@@ -210,6 +223,7 @@ export class ProjectExportService {
         gitBranch: c.gitBranch,
         composePath: c.composePath,
         env: c.env,
+        environment: envNames.get(c.environmentId) ?? null,
         serviceDomains: c.serviceDomains,
         servicePorts: c.servicePorts,
         references: {
@@ -232,8 +246,8 @@ export class ProjectExportService {
       project: {
         name: project.name,
         description: project.description,
-        env: project.env,
       },
+      environments,
       applications,
       databases,
       composeApps,

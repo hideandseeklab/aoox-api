@@ -109,6 +109,11 @@ export class ComposeAppFieldsDto {
   @MaxLength(20_000)
   env?: string;
 
+  /** Environment of the same project whose variables the container receives (default: production). */
+  @IsOptional()
+  @IsUUID()
+  environmentId?: string;
+
   /** Only for `template` stacks: the compose file itself. */
   @IsOptional()
   @IsString()

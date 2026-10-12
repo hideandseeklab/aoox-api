@@ -1,3 +1,4 @@
+import { ProjectEnvironmentService } from '../project/project-environment.service';
 import { ManagedDatabaseService } from '../managed-database/managed-database.service';
 import { SecretSourceError } from '../secret-source/infisical.client';
 import { SecretSourceService } from '../secret-source/secret-source.service';
@@ -14,7 +15,7 @@ function app(
     id: 'a1',
     projectId: 'p1',
     env,
-    project: { id: 'p1', env: opts.projectEnv ?? '' },
+    __envText: opts.projectEnv ?? '',
     secretConnectionId: source ? 'conn-1' : null,
     secretProjectId: source ? 'proj_1' : null,
     secretEnvironment: source ? 'prod' : null,
@@ -28,6 +29,10 @@ describe('EnvResolverService with a secret source', () => {
   const svc = new EnvResolverService(
     { repo: { findOne: jest.fn() } } as unknown as ManagedDatabaseService,
     { fetch } as unknown as SecretSourceService,
+    {
+      variablesAndFlagsFor: (a: { __envText?: string }) =>
+        Promise.resolve({ text: a.__envText ?? '', flags: {} }),
+    } as unknown as ProjectEnvironmentService,
   );
   const SECRETS = new Map([
     ['DB_PASSWORD', 'infisical-db-password'],

@@ -47,6 +47,8 @@ export interface ExportedApplication {
   containerPort: number;
   hostPort: number | null;
   env: string;
+  /** Name of the linked project environment; absent in older files (production). */
+  environment?: string | null;
   buildArgs: string;
   healthcheckPath: string | null;
   ignoreErrorLogs?: boolean;
@@ -130,6 +132,8 @@ export interface ExportedComposeApp {
   gitBranch: string;
   composePath: string;
   env: string;
+  /** Name of the linked project environment; absent in older files (production). */
+  environment?: string | null;
   serviceDomains: Array<{
     service: string;
     port: number;
@@ -147,7 +151,24 @@ export interface ProjectExport {
   version: typeof EXPORT_VERSION;
   exportedAt: string;
   includesSecrets: boolean;
-  project: { name: string; description: string | null; env: string };
+  project: {
+    name: string;
+    description: string | null;
+    /** Files from before environments: the shared env, imported into production. */
+    env?: string;
+  };
+  /**
+   * Project environments. Variables only with `includesSecrets` (like
+   * database passwords); absent in older files.
+   */
+  environments?: Array<{
+    name: string;
+    protected: boolean;
+    variables?: string;
+    /** Names flagged secret / explicitly not secret (names only, always exported). */
+    secretKeys?: string[];
+    plainKeys?: string[];
+  }>;
   applications: ExportedApplication[];
   databases: ExportedDatabase[];
   composeApps: ExportedComposeApp[];
