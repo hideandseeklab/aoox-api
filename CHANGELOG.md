@@ -8,6 +8,10 @@ Versions below 1.0.0 may include breaking changes in a minor release.
 
 ## [Unreleased]
 
+### Changed
+
+- The favicon served at `/favicon.ico`, `/favicon.svg` and on the Swagger UI (`/docs`) is now the round mark of aoox.dev, the same as the dashboard.
+
 ## [0.1.0-alpha.10] - 2026-10-13
 
 ### Breaking changes
