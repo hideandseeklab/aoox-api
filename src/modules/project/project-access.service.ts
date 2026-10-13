@@ -54,6 +54,44 @@ export class ProjectAccessService {
     return scope ? scope.filter((id) => own.has(id)) : [...own];
   }
 
+  /**
+   * The user's role in every project they may see, in one go (for resources
+   * shared across projects, such as variable sets). `platform` = owner/admin
+   * of the instance. `roles` is `'all'` for an unscoped platform owner/admin
+   * (every project, as admin); otherwise a map of project id to role, already
+   * intersected with an API token's project scope.
+   */
+  async projectRoles(userId: string): Promise<{
+    platform: boolean;
+    roles: 'all' | Map<string, ProjectRole>;
+  }> {
+    const scope = currentTokenScope()?.projectIds ?? null;
+    const role = await this.platformRole(userId);
+    const platform = role === 'owner' || role === 'admin';
+    if (platform) {
+      return {
+        platform,
+        roles: scope ? new Map(scope.map((id) => [id, 'admin'])) : 'all',
+      };
+    }
+    const [owned, member] = await Promise.all([
+      this.projects.find({ where: { ownerId: userId }, select: { id: true } }),
+      this.members.find({
+        where: { userId },
+        select: { projectId: true, role: true },
+      }),
+    ]);
+    const roles = new Map<string, ProjectRole>();
+    for (const m of member) roles.set(m.projectId, m.role);
+    for (const p of owned) roles.set(p.id, 'admin');
+    if (scope) {
+      for (const id of [...roles.keys()]) {
+        if (!scope.includes(id)) roles.delete(id);
+      }
+    }
+    return { platform, roles };
+  }
+
   /** TypeORM `where` fragment restricting a `projects` query to what the user may see. */
   async whereAccessible(
     userId: string,

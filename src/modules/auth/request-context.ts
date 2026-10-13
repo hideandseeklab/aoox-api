@@ -9,16 +9,17 @@ export interface TokenScope {
   /** Projects the token may touch; null = whatever the user may see. */
   projectIds: string[] | null;
   /**
-   * Environment names whose values the token may reveal or change; null =
-   * every environment its user may. Only narrows (see ProjectEnvironmentService).
+   * Variable set environments whose values the token may reveal or change,
+   * as `<set-slug>/<env>`, `<set-slug>/*` or `*` + `/<env>`; null = every one its
+   * user may. Only narrows (see variable-set/variable-scope.ts).
    */
-  environments: string[] | null;
+  variableScopes: string[] | null;
 }
 
 export const FULL_SCOPE: TokenScope = {
   readOnly: false,
   projectIds: null,
-  environments: null,
+  variableScopes: null,
 };
 
 export interface RequestContext {
@@ -44,15 +45,16 @@ export function currentRequest(): RequestContext | undefined {
  * it cannot authenticate with a header, so it must stay available to
  * viewers; everything else with a body changes something.
  *
- * `.../environments/:envId/reveal` (and the same under `versions/:versionId`) is a POST only so that it is audited; it
- * changes nothing, so a read-only token (CI pulling variables) may call it.
- * That also lifts the generic viewer write rule for this route, which is why
- * ProjectEnvironmentService denies viewers itself.
+ * `/variable-sets/:id/environments/:envId/reveal` (and the same under
+ * `versions/:versionId`) is a POST only so that it is audited; it changes
+ * nothing, so a read-only token (CI pulling variables) may call it. Variable
+ * set routes carry no project, so the generic viewer write rule never applied
+ * to them: VariableSetAccessService decides viewers itself.
  */
 const READ_ONLY_POSTS = [
   /\/log-ticket$/,
-  /\/projects\/[^/]+\/environments\/[^/]+\/reveal$/,
-  /\/projects\/[^/]+\/environments\/[^/]+\/versions\/[^/]+\/reveal$/,
+  /\/variable-sets\/[^/]+\/environments\/[^/]+\/reveal$/,
+  /\/variable-sets\/[^/]+\/environments\/[^/]+\/versions\/[^/]+\/reveal$/,
 ];
 
 /** Runs `fn` inside a request context; used by the middleware and by tests. */

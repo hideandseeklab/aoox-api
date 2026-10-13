@@ -44,7 +44,7 @@ export class ApiTokenService {
     scope: {
       readOnly?: boolean;
       projectIds?: string[] | null;
-      environments?: string[] | null;
+      variableScopes?: string[] | null;
     } = {},
   ): Promise<{ token: ApiToken; plaintext: string }> {
     const plaintext = generateToken();
@@ -58,7 +58,9 @@ export class ApiTokenService {
         expiresAt,
         readOnly: scope.readOnly ?? false,
         projectIds: scope.projectIds?.length ? scope.projectIds : null,
-        environments: scope.environments?.length ? scope.environments : null,
+        variableScopes: scope.variableScopes?.length
+          ? scope.variableScopes
+          : null,
       }),
     );
     delete (token as Partial<ApiToken>).tokenHash;

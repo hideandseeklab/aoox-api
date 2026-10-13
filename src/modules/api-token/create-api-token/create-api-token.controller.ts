@@ -59,8 +59,8 @@ export class CreateApiTokenController {
       {
         readOnly: dto.readOnly,
         projectIds,
-        environments: dto.environments?.length
-          ? [...new Set(dto.environments)]
+        variableScopes: dto.variableScopes?.length
+          ? [...new Set(dto.variableScopes)]
           : null,
       },
     );

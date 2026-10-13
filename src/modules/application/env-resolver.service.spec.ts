@@ -1,4 +1,5 @@
-import { ProjectEnvironmentService } from '../project/project-environment.service';
+import type { VariableSetEnvironmentService } from '../variable-set/variable-set-environment.service';
+import type { VariableSetLinkService } from '../variable-set/variable-set-link.service';
 import { ManagedDatabaseService } from '../managed-database/managed-database.service';
 import { SecretSourceService } from '../secret-source/secret-source.service';
 import { Application } from './application.entity';
@@ -8,14 +9,36 @@ import {
   parseEnvLines,
 } from './env-resolver.service';
 
-function app(env: string, projectEnv = ''): Application {
-  return {
-    id: 'a1',
-    projectId: 'p1',
-    env,
-    __envText: projectEnv,
-  } as unknown as Application;
+/** Variable set layers by environment id, and the links of each owner id. */
+const layers = new Map<
+  string,
+  { text: string; flags: Record<string, boolean> }
+>();
+const linksOf = new Map<string, string[]>();
+let seq = 0;
+
+/** An app linked to one environment holding `setEnv` (none when empty). */
+function app(env: string, setEnv = ''): Application {
+  const id = `a${++seq}`;
+  if (setEnv) {
+    layers.set(`e-${id}`, { text: setEnv, flags: {} });
+    linksOf.set(id, [`e-${id}`]);
+  }
+  return { id, projectId: 'p1', env } as unknown as Application;
 }
+
+const environmentIdsFor = jest.fn((_kind: string, id?: string) =>
+  Promise.resolve(linksOf.get(id ?? '') ?? []),
+);
+const fakeLinks = { environmentIdsFor } as unknown as VariableSetLinkService;
+const fakeEnvironments = {
+  layersFor: (ids: string[]) =>
+    Promise.resolve(
+      ids
+        .filter((id) => layers.has(id))
+        .map((id) => ({ environmentId: id, ...layers.get(id)! })),
+    ),
+} as unknown as VariableSetEnvironmentService;
 
 describe('parseEnvLines', () => {
   it('keeps values with = and ignores comments/blank/malformed lines', () => {
@@ -39,10 +62,8 @@ describe('EnvResolverService', () => {
       connection,
     } as unknown as ManagedDatabaseService,
     { fetch: fetchSecrets } as unknown as SecretSourceService,
-    {
-      variablesAndFlagsFor: (a: { __envText?: string }) =>
-        Promise.resolve({ text: a.__envText ?? '', flags: {} }),
-    } as unknown as ProjectEnvironmentService,
+    fakeEnvironments,
+    fakeLinks,
   );
 
   beforeEach(() => {
@@ -62,9 +83,9 @@ describe('EnvResolverService', () => {
     });
   });
 
-  it('merges project env under app env (app wins) and expands project refs', async () => {
+  it('merges set variables under app env (app wins) and expands vars refs', async () => {
     const r = await svc.resolve(
-      app('B=app\nURL=${{project.HOST}}/api', 'A=shared\nB=project\nHOST=h'),
+      app('B=app\nURL=${{vars.HOST}}/api', 'A=shared\nB=project\nHOST=h'),
     );
     expect(r.env).toEqual(['A=shared', 'B=app', 'HOST=h', 'URL=h/api']);
     expect(r.secrets).toEqual([]);
@@ -99,11 +120,14 @@ describe('EnvResolverService', () => {
     ]);
   });
 
-  it('rejects unknown project vars, databases outside the project, and bad fields', async () => {
-    await expect(svc.resolve(app('X=${{project.NOPE}}'))).rejects.toThrow(
+  it('rejects unknown vars, the removed project scope, databases outside the project, and bad fields', async () => {
+    await expect(svc.resolve(app('X=${{vars.NOPE}}'))).rejects.toThrow(
       new EnvReferenceError(
-        'X: ${{project.NOPE}} — no shared variable "NOPE" in the project',
+        'X: ${{vars.NOPE}} — no variable "NOPE" in the linked variable sets',
       ),
+    );
+    await expect(svc.resolve(app('X=${{project.A}}', 'A=1'))).rejects.toThrow(
+      EnvReferenceError,
     );
     await expect(svc.resolve(app('X=${{database.other.url}}'))).rejects.toThrow(
       'no database "other" in this project',
@@ -122,60 +146,89 @@ describe('EnvResolverService', () => {
   });
 });
 
-describe('EnvResolverService with project environments', () => {
-  const variablesAndFlagsFor = jest.fn();
+describe('EnvResolverService with variable set links', () => {
   const svc = new EnvResolverService(
     { repo: { findOne: jest.fn() } } as unknown as ManagedDatabaseService,
     { fetch: jest.fn() } as unknown as SecretSourceService,
-    { variablesAndFlagsFor } as unknown as ProjectEnvironmentService,
+    fakeEnvironments,
+    fakeLinks,
   );
+  const owner = (env: string, envIds: string[]) => {
+    const id = `o${++seq}`;
+    linksOf.set(id, envIds);
+    return { id, projectId: 'p1', env } as unknown as Application;
+  };
+  const layer = (
+    id: string,
+    text: string,
+    flags: Record<string, boolean> = {},
+  ) => layers.set(id, { text, flags });
 
-  beforeEach(() => variablesAndFlagsFor.mockReset());
+  it('has no variables without links', async () => {
+    const r = await svc.resolve(owner('A=1', []));
+    expect(r.env).toEqual(['A=1']);
+  });
 
-  it('reads the environment the app or stack is linked to', async () => {
-    variablesAndFlagsFor.mockResolvedValue({
-      text: 'HOST=staging.example.com',
-      flags: {},
-    });
-    const linked = {
-      id: 'a1',
-      projectId: 'p1',
-      environmentId: 'env-stg',
-      env: 'URL=https://${{project.HOST}}',
-    } as unknown as Application;
-    const r = await svc.resolve(linked);
-    expect(variablesAndFlagsFor).toHaveBeenCalledWith(linked);
+  it('merges links in order: later links override earlier ones, the own env wins', async () => {
+    layer('common', 'HOST=common.example.com\nLOG=info\nREGION=eu');
+    layer('service', 'HOST=api.example.com\nPORT=8080');
+    const r = await svc.resolve(
+      owner('LOG=debug\nURL=https://${{vars.HOST}}:${{vars.PORT}}', [
+        'common',
+        'service',
+      ]),
+    );
     expect(r.env).toEqual([
-      'HOST=staging.example.com',
-      'URL=https://staging.example.com',
+      'HOST=api.example.com',
+      'LOG=debug',
+      'REGION=eu',
+      'PORT=8080',
+      'URL=https://api.example.com:8080',
     ]);
   });
 
-  it('registers environment values for log redaction, but not plain words or short values', async () => {
-    variablesAndFlagsFor.mockResolvedValue({
-      text: 'NODE_ENV=production\nPORT=5432\nSHORT=abc\nDB_PASSWORD=s3cr3t-value-123\nURL=postgres://u:p@h/db',
-      flags: {},
-    });
-    const r = await svc.resolve({
-      id: 'a1',
-      projectId: 'p1',
-      env: '',
-    } as unknown as Application);
+  it('resolves a set value that references a key of another linked set', async () => {
+    layer('base', 'DOMAIN=example.com');
+    layer('derived', 'API=https://api.${{vars.DOMAIN}}');
+    const r = await svc.resolve(owner('', ['base', 'derived']));
+    expect(r.env).toContain('API=https://api.example.com');
+  });
+
+  it('uses an explicit list instead of the saved links (a new list, an unsaved owner)', async () => {
+    layer('x', 'K=from-x');
+    const target = owner('V=${{vars.K}}', []);
+    await expect(svc.resolve(target)).rejects.toThrow(EnvReferenceError);
+    const r = await svc.resolve(target, { environmentIds: ['x'] });
+    expect(r.env).toContain('V=from-x');
+  });
+
+  it('looks up compose links when told the owner is a stack', async () => {
+    environmentIdsFor.mockClear();
+    await svc.resolve(owner('', []), { owner: 'compose' });
+    expect(environmentIdsFor).toHaveBeenCalledWith(
+      'compose',
+      expect.any(String),
+    );
+  });
+
+  it('registers set values for log redaction, but not plain words or short values', async () => {
+    layer(
+      'r1',
+      'NODE_ENV=production\nPORT=5432\nSHORT=abc\nDB_PASSWORD=s3cr3t-value-123\nURL=postgres://u:p@h/db',
+    );
+    const r = await svc.resolve(owner('', ['r1']));
     expect(r.secrets.sort()).toEqual(
       ['postgres://u:p@h/db', 's3cr3t-value-123'].sort(),
     );
   });
 
   it('masks a flagged secret of any length and leaves an explicit non-secret alone', async () => {
-    variablesAndFlagsFor.mockResolvedValue({
-      text: 'PIN=ab1\nREGION=eu-west-long-region-name\nLONG_UNMARKED=some-long-unmarked-value\nEMPTY=',
-      flags: { PIN: true, REGION: false, EMPTY: true },
-    });
-    const r = await svc.resolve({
-      id: 'a1',
-      projectId: 'p1',
-      env: '',
-    } as unknown as Application);
+    layer(
+      'r2',
+      'PIN=ab1\nREGION=eu-west-long-region-name\nLONG_UNMARKED=some-long-unmarked-value\nEMPTY=',
+      { PIN: true, REGION: false, EMPTY: true },
+    );
+    const r = await svc.resolve(owner('', ['r2']));
     // PIN: short but flagged. REGION: long but explicitly not secret.
     // LONG_UNMARKED: no flag, so the length heuristic still applies.
     expect(r.secrets.sort()).toEqual(
@@ -184,15 +237,17 @@ describe('EnvResolverService with project environments', () => {
   });
 
   it('masks the expanded value of a flagged variable that holds a reference', async () => {
-    variablesAndFlagsFor.mockResolvedValue({
-      text: 'BASE=x\nTOKEN=${{project.BASE}}-y',
-      flags: { TOKEN: true },
-    });
-    const r = await svc.resolve({
-      id: 'a1',
-      projectId: 'p1',
-      env: '',
-    } as unknown as Application);
+    layer('r3', 'BASE=x\nTOKEN=${{vars.BASE}}-y', { TOKEN: true });
+    const r = await svc.resolve(owner('', ['r3']));
     expect(r.secrets).toContain('x-y');
+  });
+
+  it('a key keeps the flag of the layer its value comes from', async () => {
+    layer('f1', 'TOKEN=${{vars.BASE}}-1\nBASE=b', { TOKEN: true });
+    layer('f2', 'TOKEN=${{vars.BASE}}-2', {});
+    const r = await svc.resolve(owner('', ['f1', 'f2']));
+    // f2 wins and has no flag, so its expanded value is not force-masked.
+    expect(r.env).toContain('TOKEN=b-2');
+    expect(r.secrets).not.toContain('b-2');
   });
 });

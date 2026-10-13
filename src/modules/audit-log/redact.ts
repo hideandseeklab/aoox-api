@@ -1,6 +1,10 @@
-/** Keys whose values never belong in a log (matched case-insensitively as substrings). */
+/**
+ * Keys whose values never belong in a log (matched case-insensitively as
+ * substrings; `variables` and `env` only at the end, so `variableSetLinks`
+ * keeps its ids).
+ */
 const SECRET_KEY =
-  /password|secret|token|apikey|api_key|privatekey|private_key|content|variables|env$/i;
+  /password|secret|token|apikey|api_key|privatekey|private_key|content|variables$|env$/i;
 const MAX_STRING = 200;
 const MAX_JSON = 4_000;
 

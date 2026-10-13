@@ -21,15 +21,6 @@ export class Project {
   @Column({ type: 'text', nullable: true })
   description: string | null;
 
-  /**
-   * Deprecated: the project's shared env now lives in `project_environments`
-   * (migration ProjectEnvironments copied it into `production`). The column is
-   * kept, no longer written or selected, so a downgrade still finds the old
-   * values.
-   */
-  @Column({ type: 'text', default: '', select: false })
-  env: string;
-
   @Column({ name: 'owner_id', type: 'uuid' })
   ownerId: string;
 

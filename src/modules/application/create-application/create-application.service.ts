@@ -5,11 +5,11 @@ import { RemoteDockerService } from '../../server/remote-docker.service';
 import { ServerService } from '../../server/server.service';
 import { SwarmService } from '../../swarm/swarm.service';
 import { GitCredentialService } from '../../git-credential/git-credential.service';
-import { ProjectEnvironmentService } from '../../project/project-environment.service';
 import { ProjectService } from '../../project/project.service';
 import { Application } from '../application.entity';
 import { ApplicationService } from '../application.service';
 import { normalizeRootDirectory } from '../root-directory';
+import { OwnerVariableSetsService } from '../variable-set-links/variable-set-links.service';
 import { CreateApplicationDto } from './create-application.dto';
 
 @Injectable()
@@ -17,7 +17,7 @@ export class CreateApplicationService {
   constructor(
     private readonly applications: ApplicationService,
     private readonly projects: ProjectService,
-    private readonly environments: ProjectEnvironmentService,
+    private readonly variableSets: OwnerVariableSetsService,
     private readonly credentials: GitCredentialService,
     private readonly servers: ServerService,
     private readonly swarm: SwarmService,
@@ -52,11 +52,6 @@ export class CreateApplicationService {
     }
     const app = this.applications.repo.create({
       projectId: project.id,
-      environmentId: await this.environments.resolveLink(
-        project.id,
-        dto.environmentId,
-        { userId: ownerId },
-      ),
       name: dto.name.trim(),
       appName: ApplicationService.slugify(dto.name),
       sourceType: dto.sourceType ?? 'git',
@@ -97,6 +92,21 @@ export class CreateApplicationService {
       updateDelaySeconds: dto.updateDelaySeconds ?? 2,
       updateOrder: dto.updateOrder ?? 'auto',
     });
-    return this.applications.repo.save(app);
+    // Without links the application has none (no default environment).
+    const links = (dto.variableSetLinks ?? []).map((l) => l.environmentId);
+    const owner = { kind: 'application' as const, projectId: project.id };
+    if (links.length > 0) {
+      await this.variableSets.check(owner, app, links, ownerId);
+    }
+    const saved = await this.applications.repo.save(app);
+    if (links.length > 0) {
+      await this.variableSets.replace(
+        { ...owner, id: saved.id },
+        saved,
+        links,
+        ownerId,
+      );
+    }
+    return saved;
   }
 }

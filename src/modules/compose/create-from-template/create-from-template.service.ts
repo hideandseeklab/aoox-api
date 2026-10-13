@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { randomBytes } from 'crypto';
-import { ProjectEnvironmentService } from '../../project/project-environment.service';
+import { OwnerVariableSetsService } from '../../application/variable-set-links/variable-set-links.service';
 import { ProjectService } from '../../project/project.service';
 import {
   renderEnv,
@@ -11,6 +11,7 @@ import {
 import { ComposeApp } from '../compose-app.entity';
 import { ComposeRunnerService } from '../compose-runner.service';
 import { ComposeService } from '../compose.service';
+import { asTarget } from '../create-compose-app/create-compose-app.service';
 import { CreateFromTemplateDto } from './create-from-template.dto';
 
 /**
@@ -23,7 +24,7 @@ export class CreateFromTemplateService {
   constructor(
     private readonly compose: ComposeService,
     private readonly projects: ProjectService,
-    private readonly environments: ProjectEnvironmentService,
+    private readonly variableSets: OwnerVariableSetsService,
     private readonly templates: TemplateService,
     private readonly runner: ComposeRunnerService,
   ) {}
@@ -60,11 +61,6 @@ export class CreateFromTemplateService {
     const draft = this.compose.repo.create({
       projectId: project.id,
       project,
-      environmentId: await this.environments.resolveLink(
-        project.id,
-        dto.environmentId,
-        { userId: ownerId },
-      ),
       name,
       slug: ComposeService.slugify(name),
       source: 'template',
@@ -90,7 +86,20 @@ export class CreateFromTemplateService {
       status: 'idle',
     });
     await this.compose.assertHostPortsFree(draft);
+    const links = (dto.variableSetLinks ?? []).map((l) => l.environmentId);
+    const owner = { kind: 'compose' as const, projectId: project.id };
+    if (links.length > 0) {
+      await this.variableSets.check(owner, asTarget(draft), links, ownerId);
+    }
     const app = await this.compose.repo.save(draft);
+    if (links.length > 0) {
+      await this.variableSets.replace(
+        { ...owner, id: app.id },
+        asTarget(app),
+        links,
+        ownerId,
+      );
+    }
     this.runner.start(app, 'deploy');
     return { ...app, status: 'deploying' };
   }

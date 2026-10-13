@@ -1,11 +1,10 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
-import { EnvResolverService } from '../../application/env-resolver.service';
-import { ProjectEnvironmentService } from '../../project/project-environment.service';
+import { OwnerVariableSetsService } from '../../application/variable-set-links/variable-set-links.service';
 import { GitCredentialService } from '../../git-credential/git-credential.service';
 import { ComposeAppFieldsDto } from '../compose-app.dto';
 import { ComposeApp } from '../compose-app.entity';
 import { ComposeService } from '../compose.service';
-import { validateEnv } from '../create-compose-app/create-compose-app.service';
+import { asTarget } from '../create-compose-app/create-compose-app.service';
 
 /** Settings only; they take effect on the next deploy. */
 @Injectable()
@@ -13,8 +12,7 @@ export class UpdateComposeAppService {
   constructor(
     private readonly compose: ComposeService,
     private readonly credentials: GitCredentialService,
-    private readonly envResolver: EnvResolverService,
-    private readonly environments: ProjectEnvironmentService,
+    private readonly variableSets: OwnerVariableSetsService,
   ) {}
 
   async execute(
@@ -37,23 +35,13 @@ export class UpdateComposeAppService {
       }
       app.gitCredentialId = dto.gitCredentialId;
     }
-    let environmentChanged = false;
-    if (dto.environmentId) {
-      const id = await this.environments.resolveLink(
-        app.projectId,
-        dto.environmentId,
-        {
-          userId: ownerId,
-          currentId: app.environmentId,
-        },
+    if (dto.env !== undefined) {
+      app.env = dto.env;
+      // A ${{vars.KEY}} missing from the linked variable sets is a 400 now.
+      await this.variableSets.checkReferences(
+        { kind: 'compose', id: app.id, projectId: app.projectId },
+        asTarget(app),
       );
-      environmentChanged = id !== app.environmentId;
-      app.environmentId = id;
-    }
-    if (dto.env !== undefined) app.env = dto.env;
-    if (dto.env !== undefined || environmentChanged) {
-      // A ${{project.KEY}} missing from the new environment is a 400 now.
-      await validateEnv(this.envResolver, app);
     }
     if (dto.composeContent !== undefined) {
       if (app.source !== 'template') {

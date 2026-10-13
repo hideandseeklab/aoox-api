@@ -10,7 +10,6 @@ import {
 } from 'typeorm';
 import { GitCredential } from '../git-credential/git-credential.entity';
 import { Project } from '../project/project.entity';
-import { ProjectEnvironment } from '../project/project-environment.entity';
 
 export type ComposeAppStatus =
   'idle' | 'deploying' | 'running' | 'stopped' | 'error';
@@ -68,21 +67,6 @@ export class ComposeApp {
   @ManyToOne(() => Project, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'project_id' })
   project: Project;
-
-  /**
-   * The project environment whose variables this stack receives
-   * (`${{project.KEY}}` resolves from it). NO ACTION: an environment still
-   * linked cannot be deleted, and a project delete still cascades.
-   */
-  @Column({ name: 'environment_id', type: 'uuid' })
-  environmentId: string;
-
-  @ManyToOne(() => ProjectEnvironment, { onDelete: 'NO ACTION' })
-  @JoinColumn({
-    name: 'environment_id',
-    foreignKeyConstraintName: 'FK_compose_apps_environment',
-  })
-  environment: ProjectEnvironment;
 
   @Column()
   name: string;
@@ -149,7 +133,7 @@ export class ComposeApp {
   /**
    * `KEY=VALUE` lines written to `.aoox.env` and passed with
    * `--env-file`, so `${VAR}` in the compose file resolves. Same references
-   * as applications (`${{project.KEY}}`, `${{database.<slug>.url}}`).
+   * as applications (`${{vars.KEY}}`, `${{database.<slug>.url}}`).
    */
   @Column({ type: 'text', default: '' })
   env: string;

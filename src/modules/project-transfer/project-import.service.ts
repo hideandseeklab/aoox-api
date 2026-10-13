@@ -19,7 +19,8 @@ import { Job } from '../job/job.entity';
 import { JobService } from '../job/job.service';
 import { defaultTagFor, ENGINES } from '../managed-database/engines';
 import { ManagedDatabaseService } from '../managed-database/managed-database.service';
-import { ProjectEnvironmentService } from '../project/project-environment.service';
+import { rewriteProjectReferences } from '../variable-set/env-text';
+import { VariableSetTransferService } from '../variable-set/variable-set-transfer.service';
 import { ProjectService } from '../project/project.service';
 import { RegistryService } from '../registry/registry.service';
 import { ServerService } from '../server/server.service';
@@ -78,7 +79,7 @@ export class ProjectImportService {
     private readonly resourceAlerts: ResourceAlertService,
     private readonly dnsProviders: DnsProviderService,
     private readonly dnsBindings: ProxyDnsBindingService,
-    private readonly environments: ProjectEnvironmentService,
+    private readonly variableSets: VariableSetTransferService,
   ) {}
 
   async import(file: unknown, options: ImportOptions): Promise<ImportReport> {
@@ -132,28 +133,22 @@ export class ProjectImportService {
         ownerId: options.ownerId,
       }),
     );
-    // Environments by name; an old file's project.env lands in production.
-    const environmentIds = await this.environments.importAll(
+    // Variable sets: whole sets from files exported with secrets, old
+    // per-project environments as one set; links are matched by name.
+    const sets = await this.variableSets.importFor(
       project.id,
-      Array.isArray(file.environments) ? file.environments : [],
-      typeof file.project.env === 'string' ? file.project.env : undefined,
+      project.name,
+      options.ownerId,
+      Array.isArray(file.variableSets) ? file.variableSets : undefined,
+      {
+        environments: Array.isArray(file.environments)
+          ? file.environments
+          : undefined,
+        projectEnv:
+          typeof file.project.env === 'string' ? file.project.env : undefined,
+      },
       warnings,
     );
-    const environmentFor = (
-      name: string | null | undefined,
-      where: string,
-    ): string => {
-      const production = environmentIds.get('production')!;
-      if (!name) return production;
-      const id = environmentIds.get(name);
-      if (!id) {
-        warnings.push(
-          `${where}: environment "${name}" not found, using production`,
-        );
-        return production;
-      }
-      return id;
-    };
 
     for (const a of file.applications ?? []) {
       const where = `application "${a.name}"`;
@@ -176,7 +171,6 @@ export class ProjectImportService {
       const app = await this.applications.repo.save(
         this.applications.repo.create({
           projectId: project.id,
-          environmentId: environmentFor(a.environment, where),
           name: a.name,
           appName,
           sourceType: a.sourceType ?? 'git',
@@ -198,7 +192,8 @@ export class ProjectImportService {
           staticSpa: a.staticSpa ?? true,
           containerPort: a.containerPort ?? 3000,
           hostPort: await this.freeHostPort(a.hostPort, where, warnings),
-          env: a.env ?? '',
+          // `${{project.KEY}}` of older files is `${{vars.KEY}}` now.
+          env: rewriteProjectReferences(a.env ?? ''),
           buildArgs: a.buildArgs ?? '',
           healthcheckPath: a.healthcheckPath ?? null,
           ignoreErrorLogs: a.ignoreErrorLogs ?? false,
@@ -234,6 +229,11 @@ export class ProjectImportService {
         }),
       );
       created.applications++;
+      await sets.save(
+        'application',
+        app.id,
+        sets.linksFor(a.variableSets, a.environment, where),
+      );
       if (a.httpMonitor)
         await this.httpMonitors.importConfig(
           app,
@@ -412,7 +412,6 @@ export class ProjectImportService {
       const stack = await this.compose.repo.save(
         this.compose.repo.create({
           projectId: project.id,
-          environmentId: environmentFor(c.environment, where),
           name: c.name,
           slug,
           webhookToken: randomBytes(24).toString('base64url'),
@@ -428,7 +427,7 @@ export class ProjectImportService {
             where,
           ),
           composePath: c.composePath || 'docker-compose.yml',
-          env: c.env ?? '',
+          env: rewriteProjectReferences(c.env ?? ''),
           serviceDomains: c.serviceDomains ?? [],
           servicePorts: await this.freeServicePorts(
             c.servicePorts ?? [],
@@ -439,6 +438,11 @@ export class ProjectImportService {
         }),
       );
       created.composeApps++;
+      await sets.save(
+        'compose',
+        stack.id,
+        sets.linksFor(c.variableSets, c.environment, where),
+      );
       created.jobs += await this.importJobs(
         { composeAppId: stack.id },
         c.jobs ?? [],

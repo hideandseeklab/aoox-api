@@ -279,6 +279,7 @@ export class ComposeRunnerService {
       // The env file doubles as compose interpolation source (`${VAR}`).
       const resolved = await this.envResolver.resolve(
         app as unknown as Application,
+        { owner: 'compose' },
       );
       secrets.push(...resolved.secrets);
       files.push([ENV_FILE, `${resolved.env.join('\n')}\n`]);

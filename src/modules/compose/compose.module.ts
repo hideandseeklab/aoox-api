@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ApplicationModule } from '../application/application.module';
+import { ComposeVariableSetsController } from './compose-variable-sets/compose-variable-sets.controller';
 import { Mount } from '../application/mount.entity';
 import { DockerModule } from '../docker/docker.module';
 import { GitCredentialModule } from '../git-credential/git-credential.module';
@@ -52,6 +53,7 @@ import { UpdateComposeAppService } from './update-compose-app/update-compose-app
     HostPortModule,
   ],
   controllers: [
+    ComposeVariableSetsController,
     CreateComposeAppController,
     CreateFromTemplateController,
     ListComposeAppsController,

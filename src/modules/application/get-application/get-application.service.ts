@@ -11,6 +11,8 @@ import {
   SecretSourceView,
   secretSourceView,
 } from '../secret-source/secret-source-view';
+import type { LinkView } from '../../variable-set/variable-set-link.service';
+import { OwnerVariableSetsService } from '../variable-set-links/variable-set-links.service';
 
 export interface ApplicationDetail extends Application {
   /** Live container state from Docker, or null when no container exists. */
@@ -27,6 +29,8 @@ export interface ApplicationDetail extends Application {
    * daemon, daemon unreachable or slow. [] = the image exposes nothing.
    */
   exposedPorts: number[] | null;
+  /** Linked variable set environments in merge order (no values), with per-key conflicts. */
+  variableSets: LinkView[];
 }
 
 @Injectable()
@@ -37,6 +41,7 @@ export class GetApplicationService {
     private readonly swarmDeploy: SwarmDeployService,
     private readonly access: ProjectAccessService,
     private readonly secrets: SecretSourceService,
+    private readonly variableSets: OwnerVariableSetsService,
   ) {}
 
   async execute(ownerId: string, id: string): Promise<ApplicationDetail> {
@@ -51,6 +56,10 @@ export class GetApplicationService {
             })
           )?.name ?? null)
         : null,
+    );
+    const variableSets = await this.variableSets.views(
+      { kind: 'application', id: app.id, projectId: app.projectId },
+      app.env,
     );
     if (app.deployMode === 'service') {
       const service = await this.swarmDeploy.status(app).catch(() => null);
@@ -77,6 +86,7 @@ export class GetApplicationService {
         projectRole,
         secretSource,
         exposedPorts,
+        variableSets,
       };
     }
     const docker = await this.remote.forServer(app.serverId);
@@ -93,6 +103,7 @@ export class GetApplicationService {
       projectRole,
       secretSource,
       exposedPorts,
+      variableSets,
     };
   }
 

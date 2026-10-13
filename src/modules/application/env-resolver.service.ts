@@ -4,8 +4,12 @@ import {
   isSecretValue,
   parseEnvLines,
   REFERENCE,
-} from '../project/env-text';
-import { ProjectEnvironmentService } from '../project/project-environment.service';
+} from '../variable-set/env-text';
+import { VariableSetEnvironmentService } from '../variable-set/variable-set-environment.service';
+import {
+  LinkOwnerKind,
+  VariableSetLinkService,
+} from '../variable-set/variable-set-link.service';
 import { ENGINES } from '../managed-database/engines';
 import { ManagedDatabaseService } from '../managed-database/managed-database.service';
 import { SecretSourceError } from '../secret-source/infisical.client';
@@ -37,6 +41,17 @@ export interface ResolveOptions {
    * must not block editing. Real container creation never sets this.
    */
   lenient?: boolean;
+  /**
+   * Which kind of owner `app` is, to find its variable set links. Compose
+   * stacks are passed in as an `Application`-shaped object, so they must say
+   * so. Default `application`.
+   */
+  owner?: LinkOwnerKind;
+  /**
+   * Use these (set environment) ids, in this order, instead of the saved
+   * links: validating a new link list, or an owner that is not saved yet.
+   */
+  environmentIds?: string[];
 }
 
 /** Secret values shorter than this are not registered for redaction (they would mangle ordinary log text). */
@@ -45,42 +60,54 @@ const MIN_REDACT_LENGTH = 6;
 export class EnvReferenceError extends Error {}
 
 /**
- * Builds a container's env from the app's linked project environment plus its own
- * (the app wins on duplicate keys), expanding references to project vars
- * and to managed databases of the same project. Runs at container create so
+ * Builds a container's env from the app's linked variable set environments
+ * plus its own, expanding references to `${{vars.KEY}}` and to managed
+ * databases of the same project. Links merge in order: later links override
+ * earlier ones on the same key, the app's own env always wins. Runs at container create so
  * a rotated password or new database is picked up on the next deploy
  * without a rebuild. Unknown references fail the deployment: an empty
  * DATABASE_URL would only surface as a confusing runtime error.
  *
  * With an external secret source (Infisical) the folder's secrets are fetched
- * here, per call and never cached or stored: priority is project env < source
+ * here, per call and never cached or stored: priority is variable sets < source
  * secrets (when `secretSync`) < application env, and `${{secret.KEY}}` works in
- * project and application env. Source values are literal (never expanded).
+ * set values and application env. Source values are literal (never expanded).
  */
 @Injectable()
 export class EnvResolverService {
   constructor(
     private readonly databases: ManagedDatabaseService,
     private readonly secretSource: SecretSourceService,
-    private readonly environments: ProjectEnvironmentService,
+    private readonly environments: VariableSetEnvironmentService,
+    private readonly links: VariableSetLinkService,
   ) {}
 
   async resolve(
     app: Application,
     opts: ResolveOptions = {},
   ): Promise<ResolvedEnv> {
-    // The linked environment replaces the old `Project.env`.
-    const { text: environmentText, flags } =
-      await this.environments.variablesAndFlagsFor(app);
-    const project = new Map(parseEnvLines(environmentText));
-    const appEnv = parseEnvLines(app.env);
+    // Linked variable set environments, merged in order (later wins); each
+    // key keeps the secret flag of the layer its value comes from.
+    const environmentIds =
+      opts.environmentIds ??
+      (await this.links.environmentIdsFor(opts.owner ?? 'application', app.id));
+    const layers = await this.environments.layersFor(environmentIds);
+    const vars = new Map<string, string>();
+    const flags: Record<string, boolean> = {};
     const secrets = new Set<string>();
-    const dbCache = new Map<string, Record<DatabaseField, string>>();
-    // A secret flag always masks (any non-empty length); an explicit "not
-    // secret" never does; unmarked keys use the length heuristic.
-    for (const [k, v] of project) {
-      if (isSecretValue(k, v, flags)) secrets.add(v);
+    for (const layer of layers) {
+      for (const [k, v] of parseEnvLines(layer.text)) {
+        vars.set(k, v);
+        if (layer.flags[k] === undefined) delete flags[k];
+        else flags[k] = layer.flags[k];
+        // A secret flag always masks (any non-empty length); an explicit "not
+        // secret" never does; unmarked keys use the length heuristic. Shadowed
+        // values are registered too: harmless, and simpler to reason about.
+        if (isSecretValue(k, v, layer.flags)) secrets.add(v);
+      }
     }
+    const appEnv = parseEnvLines(app.env);
+    const dbCache = new Map<string, Record<DatabaseField, string>>();
 
     // ---- external secret source ----
     const sourceActive =
@@ -88,10 +115,9 @@ export class EnvResolverService {
       !!app.secretConnectionId &&
       !!app.secretProjectId &&
       !!app.secretEnvironment;
-    const refersToSecret = [
-      ...project.values(),
-      ...appEnv.map(([, v]) => v),
-    ].some((v) => /\$\{\{\s*secret\./.test(v));
+    const refersToSecret = [...vars.values(), ...appEnv.map(([, v]) => v)].some(
+      (v) => /\$\{\{\s*secret\./.test(v),
+    );
     let fetched: Map<string, string> | null = null;
     if (sourceActive && (app.secretSync || refersToSecret)) {
       try {
@@ -108,9 +134,9 @@ export class EnvResolverService {
       }
     }
 
-    // Source secrets sit between project and application env; keys that are
-    // not valid env names are skipped. `literal` = never expanded.
-    const merged = new Map<string, string>(project);
+    // Source secrets sit between the variable sets and application env; keys
+    // that are not valid env names are skipped. `literal` = never expanded.
+    const merged = new Map<string, string>(vars);
     const literal = new Set<string>();
     if (fetched && app.secretSync) {
       for (const [k, v] of fetched) {
@@ -136,11 +162,11 @@ export class EnvResolverService {
         const [whole, scope, name, field, dbName] = m;
         resolved += value.slice(last, m.index);
         last = m.index + whole.length;
-        if (scope === 'project' && field === undefined) {
-          const v = project.get(name);
+        if (scope === 'vars' && field === undefined) {
+          const v = vars.get(name);
           if (v === undefined) {
             throw new EnvReferenceError(
-              `${key}: ${whole} — no shared variable "${name}" in the project`,
+              `${key}: ${whole} — no variable "${name}" in the linked variable sets`,
             );
           }
           resolved += v;
@@ -181,7 +207,7 @@ export class EnvResolverService {
           resolved += fields[field];
         } else {
           throw new EnvReferenceError(
-            `${key}: ${whole} — use \${{project.KEY}}, \${{secret.KEY}} or \${{database.<slug>.(${DATABASE_FIELDS.join('|')})}}`,
+            `${key}: ${whole} — use \${{vars.KEY}}, \${{secret.KEY}} or \${{database.<slug>.(${DATABASE_FIELDS.join('|')})}}`,
           );
         }
       }
@@ -191,7 +217,7 @@ export class EnvResolverService {
       // secret): the expanded value is what reaches the container and the logs.
       if (
         flags[key] === true &&
-        project.has(key) &&
+        vars.has(key) &&
         !appEnv.some(([k]) => k === key) &&
         resolved.length > 0
       ) {

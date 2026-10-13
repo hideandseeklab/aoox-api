@@ -1,9 +1,13 @@
-import { ProjectEnvironmentService } from '../project/project-environment.service';
+import type { VariableSetEnvironmentService } from '../variable-set/variable-set-environment.service';
+import type { VariableSetLinkService } from '../variable-set/variable-set-link.service';
 import { ManagedDatabaseService } from '../managed-database/managed-database.service';
 import { SecretSourceError } from '../secret-source/infisical.client';
 import { SecretSourceService } from '../secret-source/secret-source.service';
 import { Application } from './application.entity';
 import { EnvReferenceError, EnvResolverService } from './env-resolver.service';
+
+/** The text of the one variable set environment each app is linked to. */
+const setText = new Map<string, string>();
 
 /** An application with an external secret source (Infisical). */
 function app(
@@ -11,11 +15,11 @@ function app(
   opts: { projectEnv?: string; sync?: boolean; source?: boolean } = {},
 ): Application {
   const source = opts.source !== false;
+  setText.set('a1', opts.projectEnv ?? '');
   return {
     id: 'a1',
     projectId: 'p1',
     env,
-    __envText: opts.projectEnv ?? '',
     secretConnectionId: source ? 'conn-1' : null,
     secretProjectId: source ? 'proj_1' : null,
     secretEnvironment: source ? 'prod' : null,
@@ -30,9 +34,18 @@ describe('EnvResolverService with a secret source', () => {
     { repo: { findOne: jest.fn() } } as unknown as ManagedDatabaseService,
     { fetch } as unknown as SecretSourceService,
     {
-      variablesAndFlagsFor: (a: { __envText?: string }) =>
-        Promise.resolve({ text: a.__envText ?? '', flags: {} }),
-    } as unknown as ProjectEnvironmentService,
+      layersFor: (ids: string[]) =>
+        Promise.resolve(
+          ids.map((id) => ({
+            environmentId: id,
+            text: setText.get(id) ?? '',
+            flags: {},
+          })),
+        ),
+    } as unknown as VariableSetEnvironmentService,
+    {
+      environmentIdsFor: (_kind: string, id: string) => Promise.resolve([id]),
+    } as unknown as VariableSetLinkService,
   );
   const SECRETS = new Map([
     ['DB_PASSWORD', 'infisical-db-password'],
@@ -100,11 +113,11 @@ describe('EnvResolverService with a secret source', () => {
 
   it('source values are literal: a ${{...}} inside a secret is not expanded', async () => {
     fetch.mockResolvedValue(
-      new Map([['PAYLOAD', '${{database.pg.password}}-and-${{project.X}}']]),
+      new Map([['PAYLOAD', '${{database.pg.password}}-and-${{vars.X}}']]),
     );
     const r = await svc.resolve(app('', { sync: true }));
     expect(r.env).toEqual([
-      'PAYLOAD=${{database.pg.password}}-and-${{project.X}}',
+      'PAYLOAD=${{database.pg.password}}-and-${{vars.X}}',
     ]);
   });
 

@@ -79,11 +79,6 @@ function harness(
     applications as never,
     {} as never,
     {} as never,
-    {
-      resolveLink: jest.fn((_p: string, id?: string) =>
-        Promise.resolve(id ?? 'env-prod'),
-      ),
-    } as never,
     { findOrFail: jest.fn().mockResolvedValue({}) } as never,
     remote as never,
     runner as never,

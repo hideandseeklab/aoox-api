@@ -1,3 +1,7 @@
+import type {
+  ExportedLink,
+  ExportedVariableSet,
+} from '../variable-set/variable-set-transfer.service';
 /**
  * Portable description of a project — aoox's own format. Ids are never exported: references to
  * platform objects (registries, git credentials, backup destinations,
@@ -47,7 +51,12 @@ export interface ExportedApplication {
   containerPort: number;
   hostPort: number | null;
   env: string;
-  /** Name of the linked project environment; absent in older files (production). */
+  /** Linked variable set environments by name, in merge order. */
+  variableSets?: ExportedLink[];
+  /**
+   * alpha.9 files: the linked project environment's name (absent in older
+   * files = production). Read on import only.
+   */
   environment?: string | null;
   buildArgs: string;
   healthcheckPath: string | null;
@@ -132,7 +141,9 @@ export interface ExportedComposeApp {
   gitBranch: string;
   composePath: string;
   env: string;
-  /** Name of the linked project environment; absent in older files (production). */
+  /** Linked variable set environments by name, in merge order. */
+  variableSets?: ExportedLink[];
+  /** alpha.9 files: the linked project environment's name. Read on import only. */
   environment?: string | null;
   serviceDomains: Array<{
     service: string;
@@ -158,8 +169,14 @@ export interface ProjectExport {
     env?: string;
   };
   /**
-   * Project environments. Variables only with `includesSecrets` (like
-   * database passwords); absent in older files.
+   * Whole variable sets (values included), only in files exported with
+   * secrets: the sets shared with the project explicitly or linked by one of
+   * its applications/stacks. An import never overwrites an existing set.
+   */
+  variableSets?: ExportedVariableSet[];
+  /**
+   * alpha.9 files: per-project environments. Read on import only (they
+   * become one variable set named after the project, like the migration).
    */
   environments?: Array<{
     name: string;

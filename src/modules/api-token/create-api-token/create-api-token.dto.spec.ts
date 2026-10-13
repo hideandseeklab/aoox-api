@@ -8,23 +8,25 @@ const check = (body: object) =>
     forbidNonWhitelisted: true,
   });
 
-describe('CreateApiTokenDto environments', () => {
-  it('accepts environment names or nothing', async () => {
+describe('CreateApiTokenDto variableScopes', () => {
+  it('accepts set/environment scopes or nothing', async () => {
     expect(await check({ name: 't' })).toHaveLength(0);
     expect(
-      await check({ name: 't', environments: ['development', 'qa-2'] }),
+      await check({
+        name: 't',
+        variableScopes: ['backend/development', 'shared/*', '*/qa-2'],
+      }),
     ).toHaveLength(0);
   });
 
-  it('rejects anything that is not a lowercase environment name', async () => {
-    for (const bad of [
-      ['Production'],
-      ['a b'],
-      [''],
-      ['x'.repeat(33)],
-      'dev',
-    ]) {
-      expect(await check({ name: 't', environments: bad })).not.toHaveLength(0);
+  it('rejects anything else, including the removed environments field', async () => {
+    for (const bad of [['Production'], ['dev'], ['a b/c'], [''], 'x/y']) {
+      expect(await check({ name: 't', variableScopes: bad })).not.toHaveLength(
+        0,
+      );
     }
+    expect(
+      await check({ name: 't', environments: ['development'] }),
+    ).not.toHaveLength(0);
   });
 });

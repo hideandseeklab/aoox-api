@@ -1,12 +1,8 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { randomBytes } from 'crypto';
 import { Application } from '../../application/application.entity';
-import {
-  EnvReferenceError,
-  EnvResolverService,
-} from '../../application/env-resolver.service';
+import { OwnerVariableSetsService } from '../../application/variable-set-links/variable-set-links.service';
 import { GitCredentialService } from '../../git-credential/git-credential.service';
-import { ProjectEnvironmentService } from '../../project/project-environment.service';
 import { ProjectService } from '../../project/project.service';
 import { ComposeApp } from '../compose-app.entity';
 import { ComposeService } from '../compose.service';
@@ -18,8 +14,7 @@ export class CreateComposeAppService {
     private readonly compose: ComposeService,
     private readonly projects: ProjectService,
     private readonly credentials: GitCredentialService,
-    private readonly envResolver: EnvResolverService,
-    private readonly environments: ProjectEnvironmentService,
+    private readonly variableSets: OwnerVariableSetsService,
   ) {}
 
   async execute(
@@ -33,11 +28,6 @@ export class CreateComposeAppService {
     const app = this.compose.repo.create({
       projectId: project.id,
       project,
-      environmentId: await this.environments.resolveLink(
-        project.id,
-        dto.environmentId,
-        { userId: ownerId },
-      ),
       name: dto.name.trim(),
       slug: ComposeService.slugify(dto.name),
       gitUrl: dto.gitUrl.trim(),
@@ -48,22 +38,25 @@ export class CreateComposeAppService {
       webhookToken: randomBytes(24).toString('base64url'),
       status: 'idle',
     });
-    await validateEnv(this.envResolver, app);
-    return this.compose.repo.save(app);
+    // Without links the stack has none (no default environment). The env is
+    // validated against the requested links (400 now, not a failed deploy).
+    const links = (dto.variableSetLinks ?? []).map((l) => l.environmentId);
+    const owner = { kind: 'compose' as const, projectId: project.id };
+    await this.variableSets.check(owner, asTarget(app), links, ownerId);
+    const saved = await this.compose.repo.save(app);
+    if (links.length > 0) {
+      await this.variableSets.replace(
+        { ...owner, id: saved.id },
+        asTarget(saved),
+        links,
+        ownerId,
+      );
+    }
+    return saved;
   }
 }
 
-/** Same reference validation as applications (400 now, not a failed deploy later). */
-export async function validateEnv(
-  resolver: EnvResolverService,
-  app: ComposeApp,
-): Promise<void> {
-  try {
-    await resolver.resolve(app as unknown as Application);
-  } catch (err) {
-    if (err instanceof EnvReferenceError) {
-      throw new BadRequestException(err.message);
-    }
-    throw err;
-  }
+/** The resolver takes an `Application`; a stack has the fields it reads. */
+export function asTarget(app: ComposeApp): Application {
+  return app as unknown as Application;
 }

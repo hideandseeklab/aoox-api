@@ -69,10 +69,25 @@ describe('redactBody for environments', () => {
     });
   });
 
-  it('keeps the environment link of an application', () => {
-    expect(redactBody({ environmentId: 'e1', env: 'A=1' })).toEqual({
-      environmentId: 'e1',
+  it('keeps variable set links, sharing and token scopes (ids and names only)', () => {
+    expect(
+      redactBody({
+        variableSetLinks: [{ environmentId: 'e1' }],
+        env: 'A=1',
+      }),
+    ).toEqual({
+      variableSetLinks: [{ environmentId: 'e1' }],
       env: '[redacted]',
     });
+    expect(redactBody({ links: [{ environmentId: 'e1' }] })).toEqual({
+      links: [{ environmentId: 'e1' }],
+    });
+    expect(redactBody({ sharedWithAll: false, projectIds: ['p1'] })).toEqual({
+      sharedWithAll: false,
+      projectIds: ['p1'],
+    });
+    expect(
+      redactBody({ name: 't', variableScopes: ['app/development'] }),
+    ).toEqual({ name: 't', variableScopes: ['app/development'] });
   });
 });

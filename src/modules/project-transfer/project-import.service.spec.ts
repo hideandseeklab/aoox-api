@@ -45,19 +45,19 @@ function build(
   const scheduler = { reschedule: jest.fn() };
   const provision = jest.fn<void, [unknown, string]>();
   const importMonitor = jest.fn().mockResolvedValue(undefined);
-  const importAll = jest.fn<
-    Promise<Map<string, string>>,
-    [string, unknown[], string | undefined, string[]]
-  >(() =>
-    Promise.resolve(
-      new Map([
-        ['development', 'env-dev'],
-        ['staging', 'env-stg'],
-        ['production', 'env-prod'],
-      ]),
-    ),
+  // Links resolve to `env:<set>/<environment>`; old files to `legacy:<name>`.
+  const linksFor = jest.fn(
+    (
+      links: Array<{ set: string; environment: string }> | undefined,
+      legacy: string | null | undefined,
+    ) =>
+      links
+        ? links.map((l) => `env:${l.set}/${l.environment}`)
+        : [`legacy:${legacy ?? 'production'}`],
   );
-  const environments = { importAll };
+  const saveLinks = jest.fn().mockResolvedValue(undefined);
+  const importFor = jest.fn().mockResolvedValue({ linksFor, save: saveLinks });
+  const variableSets = { importFor };
   const service = new ProjectImportService(
     { repo: projects } as never,
     { repo: apps, domains, mounts: appMounts } as never,
@@ -92,7 +92,7 @@ function build(
     { importConfig: jest.fn().mockResolvedValue(undefined) } as never,
     { repo: fakeRepo(opts.dnsConnections) } as never,
     { get: jest.fn().mockResolvedValue(opts.dnsBinding ? {} : null) } as never,
-    environments as never,
+    variableSets as never,
   );
   return {
     service,
@@ -106,7 +106,9 @@ function build(
     provision,
     scheduler,
     importMonitor,
-    importAll,
+    importFor,
+    linksFor,
+    saveLinks,
   };
 }
 
@@ -137,39 +139,67 @@ describe('ProjectImportService', () => {
     ).rejects.toThrow(/needs a name/);
   });
 
-  it('creates the project for the importing user and imports an old file env into production', async () => {
-    const { service, projects, importAll } = build();
+  it('creates the project for the importing user and hands old file environments to the variable sets', async () => {
+    const { service, projects, importFor } = build();
     const report = await service.import(base, { ...options, name: ' Copy ' });
     expect(projects.save).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'Copy', ownerId: 'user-1' }),
     );
-    // A file from before environments: project.env goes to production.
-    expect(importAll).toHaveBeenCalledWith('id-1', [], 'A=1', []);
+    // A file from before environments: project.env becomes part of a set.
+    expect(importFor).toHaveBeenCalledWith(
+      'id-1',
+      'Copy',
+      'user-1',
+      undefined,
+      { environments: undefined, projectEnv: 'A=1' },
+      [],
+    );
     expect(report.projectId).toBe('id-1');
     expect(report.warnings).toEqual([]);
   });
 
-  it('links applications and stacks to environments by name, production when absent or unknown', async () => {
-    const { service, apps } = build();
+  it('links applications and stacks to variable sets by name, and old files through their environment', async () => {
+    const { service, apps, saveLinks, importFor } = build();
     const file = {
       ...base,
-      environments: [{ name: 'staging', protected: false }],
+      environments: [{ name: 'staging', protected: false, variables: 'A=1' }],
+      variableSets: [{ name: 'Common', environments: [] }],
       applications: [
-        { name: 'A', appName: 'a-1', environment: 'staging' },
-        { name: 'B', appName: 'b-1' },
-        { name: 'C', appName: 'c-1', environment: 'gone' },
+        {
+          name: 'A',
+          appName: 'a-1',
+          env: 'URL=${{project.HOST}}',
+          variableSets: [
+            { set: 'Common', environment: 'production' },
+            { set: 'Shop', environment: 'staging' },
+          ],
+        },
+        { name: 'B', appName: 'b-1', environment: 'staging' },
       ],
+      composeApps: [{ name: 'S', slug: 's-1', environment: null }],
     };
-    const report = await service.import(file, options);
-    const saved = apps.save.mock.calls.map(
-      (c: unknown[]) => c[0] as { name: string; environmentId: string },
+    await service.import(file, options);
+    expect((importFor.mock.calls[0] as unknown[])[3]).toEqual(
+      file.variableSets,
     );
-    expect(saved.map((a) => [a.name, a.environmentId])).toEqual([
-      ['A', 'env-stg'],
-      ['B', 'env-prod'],
-      ['C', 'env-prod'],
+    expect((importFor.mock.calls[0] as unknown[])[4]).toEqual({
+      environments: file.environments,
+      projectEnv: 'A=1',
+    });
+    const saved = apps.save.mock.calls.map(
+      (c: unknown[]) => c[0] as { name: string; env: string; id?: string },
+    );
+    // `${{project.KEY}}` of older files becomes `${{vars.KEY}}`.
+    expect(saved[0].env).toBe('URL=${{vars.HOST}}');
+    expect(saveLinks.mock.calls).toEqual([
+      [
+        'application',
+        expect.any(String),
+        ['env:Common/production', 'env:Shop/staging'],
+      ],
+      ['application', expect.any(String), ['legacy:staging']],
+      ['compose', expect.any(String), ['legacy:production']],
     ]);
-    expect(report.warnings.join(' | ')).toMatch(/environment "gone" not found/);
   });
 
   it('matches the secret connection by name, without any credential, and warns when it is missing', async () => {

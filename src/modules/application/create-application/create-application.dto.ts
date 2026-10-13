@@ -1,4 +1,7 @@
+import { Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
+  IsArray,
   IsBoolean,
   IsIn,
   IsInt,
@@ -12,7 +15,10 @@ import {
   Min,
   Validate,
   ValidateIf,
+  ValidateNested,
 } from 'class-validator';
+import { VariableSetLinkDto } from '../../variable-set/variable-set.dto';
+import { MAX_LINKS } from '../../variable-set/variable-set-link.entity';
 import {
   SWARM_CONSTRAINT,
   type BuildType,
@@ -197,10 +203,17 @@ export class CreateApplicationDto {
   @MaxLength(20_000)
   env?: string;
 
-  /** Environment of the same project whose variables the container receives (default: production). */
+  /**
+   * Variable set environments to link, in order (later ones override earlier
+   * ones on the same key). Omitted/empty = no links. Same rules as
+   * `PUT /…/variable-sets`.
+   */
   @IsOptional()
-  @IsUUID()
-  environmentId?: string;
+  @IsArray()
+  @ArrayMaxSize(MAX_LINKS)
+  @ValidateNested({ each: true })
+  @Type(() => VariableSetLinkDto)
+  variableSetLinks?: VariableSetLinkDto[];
 
   @IsOptional()
   @IsString()

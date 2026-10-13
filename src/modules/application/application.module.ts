@@ -18,6 +18,9 @@ import { ManagedDatabaseModule } from '../managed-database/managed-database.modu
 import { MonitoringModule } from '../monitoring/monitoring.module';
 import { NotificationModule } from '../notification/notification.module';
 import { ProjectModule } from '../project/project.module';
+import { VariableSetModule } from '../variable-set/variable-set.module';
+import { ApplicationVariableSetsController } from './variable-set-links/variable-set-links.controller';
+import { OwnerVariableSetsService } from './variable-set-links/variable-set-links.service';
 import { ProxyModule } from '../proxy/proxy.module';
 import { ServerModule } from '../server/server.module';
 import { RegistryModule } from '../registry/registry.module';
@@ -121,6 +124,7 @@ import { UpdateApplicationService } from './update-application/update-applicatio
     ProxyConfigModule,
     MaintenanceModeModule,
     ProjectModule,
+    VariableSetModule,
     RegistryModule,
     ProxyModule,
     NotificationModule,
@@ -131,6 +135,7 @@ import { UpdateApplicationService } from './update-application/update-applicatio
     HostPortModule,
   ],
   controllers: [
+    ApplicationVariableSetsController,
     CreateApplicationController,
     CheckImageUpdateController,
     ListApplicationsController,
@@ -200,6 +205,7 @@ import { UpdateApplicationService } from './update-application/update-applicatio
     DnsWatcherService,
     AppErrorWatcherService,
     EnvResolverService,
+    OwnerVariableSetsService,
     NixpacksBuilderService,
     RailpackBuilderService,
     StaticSiteBuilderService,
@@ -214,6 +220,7 @@ import { UpdateApplicationService } from './update-application/update-applicatio
   ],
   exports: [
     EnvResolverService,
+    OwnerVariableSetsService,
     ApplicationService,
     SwarmDeployService,
     RailpackBuilderService,

@@ -52,12 +52,13 @@ export class ApiToken {
   projectIds: string[] | null;
 
   /**
-   * Names of the project environments whose values this token may reveal or
-   * change (`development`, ...); `null` = every environment its user may.
-   * Enforced by ProjectEnvironmentService; only narrows.
+   * Variable set environments whose values this token may reveal or change:
+   * `<set-slug>/<env>`, `<set-slug>/*` or `*` + `/<env>` (that name in every
+   * set); `null` = every one its
+   * user may. Enforced by the variable set services; only narrows.
    */
-  @Column({ type: 'jsonb', nullable: true })
-  environments: string[] | null;
+  @Column({ name: 'variable_scopes', type: 'jsonb', nullable: true })
+  variableScopes: string[] | null;
 
   @Column({ name: 'expires_at', type: 'timestamptz', nullable: true })
   expiresAt: Date | null;

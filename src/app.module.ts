@@ -37,6 +37,7 @@ import { ManagedDatabaseModule } from './modules/managed-database/managed-databa
 import { PanelDomainModule } from './modules/panel-domain/panel-domain.module';
 import { ProjectModule } from './modules/project/project.module';
 import { ProjectTransferModule } from './modules/project-transfer/project-transfer.module';
+import { VariableSetModule } from './modules/variable-set/variable-set.module';
 import { ProxyModule } from './modules/proxy/proxy.module';
 import { RegistryModule } from './modules/registry/registry.module';
 import { ServerModule } from './modules/server/server.module';
@@ -57,6 +58,7 @@ import { VolumeBackupModule } from './modules/volume-backup/volume-backup.module
     ApiTokenModule,
     AuditLogModule,
     ProjectModule,
+    VariableSetModule,
     ProjectTransferModule,
     TerminalModule,
     ServerModule,

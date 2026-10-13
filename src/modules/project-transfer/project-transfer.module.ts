@@ -11,6 +11,7 @@ import { ResourceAlertModule } from '../resource-alert/resource-alert.module';
 import { JobModule } from '../job/job.module';
 import { ManagedDatabaseModule } from '../managed-database/managed-database.module';
 import { ProjectModule } from '../project/project.module';
+import { VariableSetModule } from '../variable-set/variable-set.module';
 import { RegistryModule } from '../registry/registry.module';
 import { ServerModule } from '../server/server.module';
 import { VolumeBackupModule } from '../volume-backup/volume-backup.module';
@@ -25,6 +26,7 @@ import { ProjectImportService } from './project-import.service';
 @Module({
   imports: [
     ProjectModule,
+    VariableSetModule,
     ApplicationModule,
     ManagedDatabaseModule,
     ComposeModule,

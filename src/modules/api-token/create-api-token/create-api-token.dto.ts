@@ -11,6 +11,7 @@ import {
   Max,
   Min,
 } from 'class-validator';
+import { VARIABLE_SCOPE } from '../../variable-set/variable-scope';
 
 export class CreateApiTokenDto {
   @IsString()
@@ -40,15 +41,18 @@ export class CreateApiTokenDto {
   projectIds?: string[];
 
   /**
-   * Limit the token to the variables of these environments (by name, e.g.
-   * `development`); omitted/empty = every environment its user may reach.
+   * Limit which variable set environments the token may reveal or change:
+   * `<set-slug>/<env>` (one environment), `<set-slug>/*` (every environment
+   * of a set) or `*` + `/<env>` (that environment name in every set);
+   * omitted/empty = every one its user may reach.
    */
   @IsOptional()
   @IsArray()
   @ArrayMaxSize(20)
-  @Matches(/^[a-z0-9-]{1,32}$/, {
+  @Matches(VARIABLE_SCOPE, {
     each: true,
-    message: 'environments must be environment names (lowercase, digits, -)',
+    message:
+      'variableScopes must look like <set-slug>/<environment>, <set-slug>/* or */<environment>',
   })
-  environments?: string[];
+  variableScopes?: string[];
 }
