@@ -89,7 +89,7 @@ describe('InboxService.record', () => {
     await svc.record('diskLow', message({}, { level: 'failure' }));
     expect(saved[0]).toMatchObject({
       projectId: null,
-      link: '/infra/disk',
+      link: '/infra/docker',
       event: 'diskLow',
     });
   });

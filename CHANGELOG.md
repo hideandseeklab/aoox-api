@@ -8,6 +8,20 @@ Versions below 1.0.0 may include breaking changes in a minor release.
 
 ## [Unreleased]
 
+## [0.1.0-alpha.10] - 2026-10-13
+
+### Breaking changes
+
+Read before upgrading; back up first (Settings → Infrastructure → Instance backup, or `pg_dump`).
+
+- **Project environments are replaced by variable sets.** Migration `VariableSets` converts existing environments (see Changed) and the `/projects/:id/environments` endpoints are gone; use `/variable-sets`. Update the dashboard (`aoox-web`) and the CLI together with the API: the 0.1.0-alpha.9 web and `aoox env` call endpoints that no longer exist (404).
+- **`${{project.KEY}}` is now `${{vars.KEY}}`** (migrated in stored env and sets; saving the old form is a 400).
+- **Protected environments are instance owner/admin only** (a project admin could reveal and edit them in 0.1.0-alpha.9).
+- **API tokens:** the `environments` field is replaced by `variableScopes`; existing values migrate to `*/<name>`.
+- **`environmentId` is removed** from application and stack create/update and template deploys (400 `forbidNonWhitelisted`); use `variableSetLinks` / `PUT …/variable-sets`. Applications and stacks have no default environment any more.
+- **`ENCRYPTION_KEY` must be set** during the upgrade when any environment has variables (the migration stops with a clear message otherwise).
+- After upgrading, review the links of your applications and stacks (links to empty environments are dropped).
+
 ### Added
 
 - **Variable sets ("Variables").** Project environments became standalone, platform-level variable sets. A set has a name, an immutable slug and its own environments (`development`, `staging`, `production` (protected) for a new set), each holding encrypted `KEY=VALUE` variables with everything environments had: secret flags, version history (50 kept, baseline, restore), compare, promote, optimistic concurrency (`expectedUpdatedAt`) and strict validation. Instance owners and admins create, rename, share and delete sets and add or remove environments; a set is shared with chosen projects or with all projects. New endpoints: `GET/POST /variable-sets`, `GET/PATCH/DELETE /variable-sets/:id`, `PUT /variable-sets/:id/sharing`, `POST/DELETE /variable-sets/:id/environments[/:envId]`, `POST …/environments/:envId/reveal`, `PUT …/environments/:envId`, `GET …/environments/:envId/versions`, `POST …/versions/:versionId/reveal|restore`, `GET /variable-sets/:id/diff?from=&to=`, `POST …/environments/:toId/promote`, and `GET /projects/:id/variable-sets` for the project page. Deleting a set or an environment, or taking a set away from a project, is refused (409, naming them) while an application or stack still links it.
@@ -26,6 +40,10 @@ Versions below 1.0.0 may include breaking changes in a minor release.
 
 - The project environment endpoints under `/projects/:id/environments` (list, create, reveal, update, delete, versions, diff, promote); use the variable set endpoints.
 - `environmentId` on application and stack create/update and template deploys, the default-environment rule (production for admins, the first unprotected one for others), `applications.environment_id`, `compose_apps.environment_id`, `api_tokens.environments` (use `variableScopes`) and the unused `projects.env` column.
+
+### Fixed
+
+- The inbox link of the "disk low" event now points to `/infra/docker` (the Docker page holds the disk strip now) instead of the old `/infra/disk` redirect.
 
 ## [0.1.0-alpha.9] - 2026-10-13
 
@@ -586,7 +604,8 @@ Versions below 1.0.0 may include breaking changes in a minor release.
 - Monitoring with metrics history, disk cleanup tooling, and project/instance export-import for
   backup and migration between hosts.
 
-[Unreleased]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-alpha.9...HEAD
+[Unreleased]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-alpha.10...HEAD
+[0.1.0-alpha.10]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-alpha.9...v0.1.0-alpha.10
 [0.1.0-alpha.9]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-alpha.8...v0.1.0-alpha.9
 [0.1.0-alpha.8]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-alpha.7...v0.1.0-alpha.8
 [0.1.0-alpha.7]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-alpha.6...v0.1.0-alpha.7

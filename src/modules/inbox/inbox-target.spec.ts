@@ -79,7 +79,7 @@ describe('inboxLink', () => {
   });
 
   it('falls back to the platform page of the event, else null', () => {
-    expect(inboxLink('diskLow', null)).toBe('/infra/disk');
+    expect(inboxLink('diskLow', null)).toBe('/infra/docker');
     expect(inboxLink('serverDown', null)).toBe('/infra/servers');
     expect(inboxLink('certificateFailure', null)).toBe('/infra/proxy');
     expect(inboxLink('backupFailure', null)).toBe('/infra/backup');

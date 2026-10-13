@@ -26,7 +26,7 @@ export function inboxResource(
 }
 
 const PLATFORM_LINK: Record<string, string> = {
-  diskLow: '/infra/disk',
+  diskLow: '/infra/docker',
   serverDown: '/infra/servers',
   certificateFailure: '/infra/proxy',
   backupFailure: '/infra/backup',
