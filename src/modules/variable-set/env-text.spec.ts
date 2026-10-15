@@ -5,6 +5,8 @@ import {
   keysOf,
   looksSecretName,
   nextFlags,
+  extractNotes,
+  NOTE_MAX,
   normalizeEnvText,
   parseEnvLines,
   setValues,
@@ -174,5 +176,91 @@ describe('secret flags and change helpers', () => {
       ]),
     ).toBe('# c\nA=x\n\nB=2\nN=y=z');
     expect(setValues('', [['A', '1']])).toBe('A=1');
+  });
+});
+
+describe('variable notes', () => {
+  const example = [
+    '# Base URL of the API, INCLUDING the /v1 prefix',
+    '# API runs on port 4000 locally.',
+    'API_ENDPOINT=http://localhost:4000/v1',
+    '# Shared secret; MUST equal the value there.',
+    'CLIENT_IP_TRUST_SECRET=XXX',
+    'LANDING_URL=http://localhost:3100',
+  ].join('\n');
+
+  it('takes the # lines directly above a key as its note', () => {
+    expect(extractNotes(example)).toEqual({
+      API_ENDPOINT:
+        'Base URL of the API, INCLUDING the /v1 prefix\nAPI runs on port 4000 locally.',
+      CLIENT_IP_TRUST_SECRET: 'Shared secret; MUST equal the value there.',
+    });
+  });
+
+  it('a blank line breaks the attachment (section headers stay standalone)', () => {
+    expect(extractNotes('# Database\n\nDB_URL=x\n# note\nB=1')).toEqual({
+      B: 'note',
+    });
+    expect(extractNotes('# a\n\n# b\nB=1')).toEqual({ B: 'b' });
+  });
+
+  it('handles CRLF, a BOM, indentation and strips only one # and one space', () => {
+    expect(
+      extractNotes('\uFEFF# first  \r\n  #   indented\r\nA=1\r\n##x\r\nB=2'),
+    ).toEqual({ A: 'first\n  indented', B: '#x' });
+  });
+
+  it('keeps empty comment lines inside a note, drops them at the edges', () => {
+    expect(extractNotes('#\n# one\n#\n# two\n#\nA=1')).toEqual({
+      A: 'one\n\ntwo',
+    });
+    expect(extractNotes('#\nA=1')).toEqual({});
+  });
+
+  it('a # inside a value is not a comment; a comment at the end is no note', () => {
+    expect(extractNotes('A=x#y\n# tail')).toEqual({});
+    expect(extractNotes('# n\nA=x # y')).toEqual({ A: 'n' });
+  });
+
+  it('a malformed line or an export prefix breaks the attachment', () => {
+    expect(extractNotes('# n\nbad line\nA=1')).toEqual({});
+    expect(extractNotes('# n\nexport A=1\nB=2')).toEqual({});
+  });
+
+  it('on a repeated name the last definition wins', () => {
+    expect(extractNotes('# one\nA=1\n# two\nA=2')).toEqual({ A: 'two' });
+    expect(extractNotes('# one\nA=1\nA=2')).toEqual({});
+  });
+
+  it('cuts a note at NOTE_MAX characters', () => {
+    const long = '# ' + 'x'.repeat(NOTE_MAX + 50) + '\nA=1';
+    expect(extractNotes(long).A).toHaveLength(NOTE_MAX);
+  });
+
+  it('normalizeEnvText keeps notes and drops standalone comments', () => {
+    expect(
+      normalizeEnvText(
+        '# Section\n\n# note a\n#\n# more\nA=1\nbad\nB=2\n# tail',
+      ),
+    ).toBe('# note a\n#\n# more\nA=1\nB=2');
+    expect(extractNotes(normalizeEnvText(example))).toEqual(
+      extractNotes(example),
+    );
+  });
+
+  it("setValues adds a new key with its note and keeps an existing key's own note", () => {
+    expect(
+      setValues(
+        '# mine\nA=1\n# trailing',
+        [
+          ['A', '2'],
+          ['N', '3'],
+        ],
+        { A: 'theirs', N: 'new note' },
+      ),
+    ).toBe('# mine\nA=2\n# trailing\n\n# new note\nN=3');
+    expect(setValues('A=1', [['N', '3']], { N: 'a\nb' })).toBe(
+      'A=1\n# a\n# b\nN=3',
+    );
   });
 });

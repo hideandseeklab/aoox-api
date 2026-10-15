@@ -36,6 +36,7 @@ import { DatabaseCompanionModule } from './modules/database-companion/database-c
 import { ManagedDatabaseModule } from './modules/managed-database/managed-database.module';
 import { PanelDomainModule } from './modules/panel-domain/panel-domain.module';
 import { ProjectModule } from './modules/project/project.module';
+import { ProjectDeleteModule } from './modules/project-delete/project-delete.module';
 import { ProjectTransferModule } from './modules/project-transfer/project-transfer.module';
 import { VariableSetModule } from './modules/variable-set/variable-set.module';
 import { ProxyModule } from './modules/proxy/proxy.module';
@@ -58,6 +59,7 @@ import { VolumeBackupModule } from './modules/volume-backup/volume-backup.module
     ApiTokenModule,
     AuditLogModule,
     ProjectModule,
+    ProjectDeleteModule,
     VariableSetModule,
     ProjectTransferModule,
     TerminalModule,

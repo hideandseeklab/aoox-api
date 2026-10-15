@@ -6,7 +6,7 @@ import {
   ManyToOne,
   PrimaryGeneratedColumn,
 } from 'typeorm';
-import type { ChangeSummary, SecretFlags } from './env-text';
+import type { ChangeSummary, SecretFlags, VariableNotes } from './env-text';
 import { VariableSetEnvironment } from './variable-set-environment.entity';
 
 /** How many versions are kept per environment; older ones are pruned on write. */
@@ -53,6 +53,10 @@ export class VariableSetEnvironmentVersion {
 
   @Column({ name: 'secret_flags', type: 'jsonb', default: () => "'{}'" })
   secretFlags: SecretFlags;
+
+  /** Notes of this version's text (name -> text), like the live column. */
+  @Column({ type: 'jsonb', default: () => "'{}'" })
+  notes: VariableNotes;
 
   /** Null once the author's account is deleted (FK ON DELETE SET NULL, hand-written migration). */
   @Column({ name: 'author_id', type: 'uuid', nullable: true })

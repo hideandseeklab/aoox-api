@@ -21,6 +21,7 @@ import {
 import { Registry } from '../registry/registry.entity';
 import { RegistryService } from '../registry/registry.service';
 import { RemoteDockerService } from '../server/remote-docker.service';
+import { DomainConflictService } from '../domain-conflict/domain-conflict.service';
 import { ImageDigestService } from './image-digest.service';
 import { SwarmDeployService } from './swarm-deploy.service';
 import { SwarmService } from '../swarm/swarm.service';
@@ -68,6 +69,7 @@ export class DeploymentRunnerService {
     private readonly swarmDeploy: SwarmDeployService,
     private readonly swarm: SwarmService,
     private readonly servers: ServerService,
+    private readonly domainConflicts: DomainConflictService,
   ) {}
 
   /**
@@ -555,6 +557,25 @@ export class DeploymentRunnerService {
           // DNS-01 certificate (honoured only if the proxy has the resolver).
           dns: dnsRouting(d.host, d.certMode),
         }));
+    // Informational only: another container already routing one of these hosts
+    // splits the traffic with this one. Never blocks the deploy.
+    if (!override && log?.note && domains.length > 0) {
+      const found = await this.domainConflicts.find(
+        docker,
+        app,
+        domains.map((d) => d.host),
+        !app.serverId,
+      );
+      for (const [host, list] of found) {
+        for (const c of list) {
+          await log
+            .note(
+              `Warning: ${host} is also routed by container ${c.containerName}${c.orphan ? ' (left over from a deleted app; remove it on the Docker page (Details))' : ''}. Both answer requests for it.`,
+            )
+            .catch(() => undefined);
+        }
+      }
+    }
     let proxySettings = app.serverId
       ? proxySettingsOf(await this.servers.findOrFail(app.serverId))
       : this.proxy.localSettings;

@@ -119,14 +119,80 @@ export function shouldRedactValue(value: string): boolean {
 
 /**
  * Lenient clean-up for text from an untrusted file (project import): lines
- * with a valid name only, last definition wins, comments dropped.
+ * with a valid name only, last definition wins. A variable's note (the `#`
+ * lines directly above it, see `extractNotes`) is kept above it; standalone
+ * comments, blank lines and malformed lines are dropped.
  */
 export function normalizeEnvText(text: string): string {
   const map = new Map<string, string>();
   for (const [k, v] of parseEnvLines(text)) {
     if (ENV_NAME.test(k)) map.set(k, v);
   }
-  return [...map].map(([k, v]) => `${k}=${v}`).join('\n');
+  const notes = extractNotes(text);
+  const out: string[] = [];
+  for (const [k, v] of map) {
+    if (notes[k]) out.push(...noteLines(notes[k]));
+    out.push(`${k}=${v}`);
+  }
+  return out.join('\n');
+}
+
+// ---------------------------------------------------------------------------
+// Notes
+// ---------------------------------------------------------------------------
+
+/** Longest note kept per variable; longer comment blocks are cut. */
+export const NOTE_MAX = 1000;
+
+/** Per-variable note: name -> text. Only names that have one. */
+export type VariableNotes = Record<string, string>;
+
+/**
+ * The note of each variable: the contiguous `#` lines directly above its
+ * `NAME=value` line. A blank line or a malformed line in between breaks the
+ * attachment, so a section header followed by a blank line is a standalone
+ * comment, not a note. Per line one leading `#` and at most one space after
+ * it are removed; lines are joined with a newline, blank lines at the start
+ * and trailing whitespace are trimmed, and the result is cut to `NOTE_MAX`
+ * characters (comments are not validated, so a longer block still saves).
+ * Lines are trimmed first (indented comments count; a BOM is dropped) and a
+ * `#` inside a value is part of the value. When a name repeats, the last
+ * definition wins (like `envMap`). Only lines with a valid name carry a note,
+ * so `export NAME=value` has none (`export NAME` is not a valid name).
+ */
+export function extractNotes(text: string): VariableNotes {
+  const out: VariableNotes = {};
+  let pending: string[] = [];
+  for (const raw of text.replace(/^\uFEFF/, '').split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line) {
+      pending = [];
+      continue;
+    }
+    if (line.startsWith('#')) {
+      pending.push(line.slice(1).replace(/^ /, '').trimEnd());
+      continue;
+    }
+    const eq = line.indexOf('=');
+    const key = eq > 0 ? line.slice(0, eq).trim() : '';
+    if (key && ENV_NAME.test(key)) {
+      const note = pending
+        .join('\n')
+        .replace(/^\n+/, '')
+        .trimEnd()
+        .slice(0, NOTE_MAX)
+        .trimEnd();
+      if (note) out[key] = note;
+      else delete out[key];
+    }
+    pending = [];
+  }
+  return out;
+}
+
+/** A note as `# ` lines (an empty note line becomes a bare `#`). */
+export function noteLines(note: string): string[] {
+  return note.split('\n').map((l) => (l ? `# ${l}` : '#'));
 }
 
 // ---------------------------------------------------------------------------
@@ -272,12 +338,15 @@ function definesKey(line: string, key: string): boolean {
 /**
  * Sets values key by key while keeping comments, blank lines and order: an
  * existing variable is replaced in place (a repeated definition below it is
- * dropped), a new one is appended at the end. Used by promote, which must not
- * go through `normalizeEnvText` (that drops comments).
+ * dropped) and keeps its own note; a new one is appended at the end, with
+ * its note from `notes` (if any) as `#` lines directly above it. Used by
+ * promote, which must not go through `normalizeEnvText` (that drops
+ * standalone comments).
  */
 export function setValues(
   text: string,
   entries: Array<[key: string, value: string]>,
+  notes: VariableNotes = {},
 ): string {
   let lines = text === '' ? [] : text.split(/\r?\n/);
   for (const [key, value] of entries) {
@@ -286,6 +355,11 @@ export function setValues(
       while (lines.length > 0 && lines[lines.length - 1].trim() === '') {
         lines.pop();
       }
+      // A comment at the very end would otherwise become this key's note
+      // (or merge into it): a blank line keeps it standalone.
+      const last = lines[lines.length - 1];
+      if (last !== undefined && last.trim().startsWith('#')) lines.push('');
+      if (notes[key]) lines.push(...noteLines(notes[key]));
       lines.push(`${key}=${value}`);
     } else {
       lines = lines.filter((l, i) => i <= at || !definesKey(l, key));

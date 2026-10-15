@@ -13,12 +13,14 @@ import {
   compareEnvTexts,
   ENV_NAME,
   envMap,
+  extractNotes,
   keysOf,
   nextFlags,
   SecretFlags,
   setValues,
   summarizeChange,
   validateEnvironmentText,
+  VariableNotes,
 } from './env-text';
 import {
   SetAccess,
@@ -86,6 +88,8 @@ export interface VersionView {
   action: VersionAction;
   detail: string | null;
   summary: ChangeSummary;
+  /** Notes of that version's text (names to text; never values). */
+  notes: VariableNotes;
   /** The newest version is the current content. */
   current: boolean;
 }
@@ -119,6 +123,11 @@ export interface EnvironmentView {
   secretKeys: string[];
   /** Keys explicitly flagged not secret (unmarked keys are in neither list). */
   plainKeys: string[];
+  /**
+   * Per-variable notes (the `#` lines directly above a variable), only
+   * names that have one. Plaintext: visible to everyone who sees the set.
+   */
+  notes: VariableNotes;
   updatedAt: Date;
   /** Applications and stacks linking it, limited to projects the caller may see. */
   usedBy: EnvironmentUser[];
@@ -146,6 +155,7 @@ export interface RevealView {
   keys: string[];
   secretKeys: string[];
   plainKeys: string[];
+  notes: VariableNotes;
   updatedAt: Date;
 }
 
@@ -218,6 +228,7 @@ export class VariableSetEnvironmentService {
       variables: await this.textOf(env.id),
       keys: env.keys,
       ...flagLists(env.secretFlags),
+      notes: env.notes ?? {},
       updatedAt: env.updatedAt,
     };
   }
@@ -278,6 +289,7 @@ export class VariableSetEnvironmentService {
       action: v.action,
       detail: v.detail,
       summary: v.summary,
+      notes: v.notes ?? {},
       current: i === 0,
     }));
   }
@@ -292,6 +304,7 @@ export class VariableSetEnvironmentService {
     variables: string;
     secretKeys: string[];
     plainKeys: string[];
+    notes: VariableNotes;
     createdAt: Date;
   }> {
     await this.guardValues(toActor(actor).userId, setId, envId);
@@ -301,6 +314,7 @@ export class VariableSetEnvironmentService {
         ? decryptSecret(v.variablesEncrypted, this.key)
         : '',
       ...flagLists(v.secretFlags),
+      notes: v.notes ?? {},
       createdAt: v.createdAt,
     };
   }
@@ -413,7 +427,9 @@ export class VariableSetEnvironmentService {
    * Needs the reveal right on the source and the edit right on the target
    * (the same rule, so a protected side needs an instance owner/admin). The
    * target keeps its comments and order; new keys are appended; the source's
-   * secret flag travels with each key.
+   * secret flag travels with each key. Notes: a key new to the target is
+   * appended with the source's note above it; a key the target already has
+   * keeps the target's own note (only its value changes).
    */
   async promote(
     actorIn: EnvActorInput,
@@ -439,7 +455,9 @@ export class VariableSetEnvironmentService {
       sourceId,
     );
     await this.guardValues(actor.userId, setId, targetId);
-    const sourceValues = envMap(await this.textOf(source.id));
+    const sourceText = await this.textOf(source.id);
+    const sourceValues = envMap(sourceText);
+    const sourceNotes = extractNotes(sourceText);
     const missing = unique.filter((k) => !sourceValues.has(k));
     if (missing.length > 0) {
       throw new BadRequestException(
@@ -455,6 +473,7 @@ export class VariableSetEnvironmentService {
         const text = setValues(
           oldText,
           unique.map((k) => [k, sourceValues.get(k) as string]),
+          sourceNotes,
         );
         const problem = validateEnvironmentText(text);
         if (problem) {
@@ -555,6 +574,7 @@ export class VariableSetEnvironmentService {
           environmentId: env.id,
           variablesEncrypted: encryptSecret(oldText, this.key),
           secretFlags: previousFlags,
+          notes: extractNotes(oldText),
           authorId: null,
           authorEmail: null,
           via: 'system',
@@ -573,6 +593,7 @@ export class VariableSetEnvironmentService {
         environmentId: env.id,
         variablesEncrypted: text.trim() ? encryptSecret(text, this.key) : null,
         secretFlags: flags,
+        notes: extractNotes(text),
         authorId: ctx.actor.userId,
         authorEmail: ctx.actor.email,
         via: ctx.actor.via,
@@ -592,6 +613,7 @@ export class VariableSetEnvironmentService {
     env.variablesEncrypted = text.trim() ? encryptSecret(text, this.key) : null;
     env.keys = keys;
     env.secretFlags = flags;
+    env.notes = extractNotes(text);
     return m.save(env);
   }
 
@@ -607,6 +629,7 @@ export class VariableSetEnvironmentService {
         environmentId: true,
         variablesEncrypted: true,
         secretFlags: true,
+        notes: true,
         createdAt: true,
       },
     });
@@ -653,6 +676,7 @@ export class VariableSetEnvironmentService {
           protected: isProtected,
           keys: [],
           secretFlags: {},
+          notes: {},
         }),
       );
       return this.view(saved, []);
@@ -761,6 +785,7 @@ export class VariableSetEnvironmentService {
   ): void {
     row.variablesEncrypted = text ? encryptSecret(text, this.key) : null;
     row.keys = keysOf(text);
+    row.notes = extractNotes(text);
     // Flags from the file (names only) apply to keys that exist; keys
     // without one get the name rule, like any newly added key.
     const patch: Record<string, boolean | null> = {};
@@ -802,6 +827,7 @@ export class VariableSetEnvironmentService {
       protected: e.protected,
       keys: e.keys ?? [],
       ...flagLists(e.secretFlags),
+      notes: e.notes ?? {},
       updatedAt: e.updatedAt,
       usedBy,
     };

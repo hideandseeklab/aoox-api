@@ -4,12 +4,16 @@ import {
   HttpCode,
   HttpStatus,
   Param,
+  Query,
   UseGuards,
 } from '@nestjs/common';
-import { CurrentUser } from '../../auth/current-user.decorator';
-import { JwtAuthGuard } from '../../auth/jwt-auth.guard';
-import type { JwtPayload } from '../../auth/jwt.strategy';
-import { DeleteProjectParamsDto } from './delete-project.dto';
+import { CurrentUser } from '../auth/current-user.decorator';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import type { JwtPayload } from '../auth/jwt.strategy';
+import {
+  DeleteProjectParamsDto,
+  DeleteProjectQueryDto,
+} from './delete-project.dto';
 import { DeleteProjectService } from './delete-project.service';
 
 @Controller('projects')
@@ -22,7 +26,8 @@ export class DeleteProjectController {
   remove(
     @CurrentUser() user: JwtPayload,
     @Param() params: DeleteProjectParamsDto,
+    @Query() query: DeleteProjectQueryDto,
   ): Promise<void> {
-    return this.service.execute(user.sub, params.id);
+    return this.service.execute(user.sub, params.id, query.purge === 'true');
   }
 }

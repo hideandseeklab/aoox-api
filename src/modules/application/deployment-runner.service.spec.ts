@@ -1,4 +1,5 @@
 import { Test } from '@nestjs/testing';
+import { DomainConflictService } from '../domain-conflict/domain-conflict.service';
 import { DockerService } from '../docker/docker.service';
 import { RegistryService } from '../registry/registry.service';
 import { Application } from './application.entity';
@@ -174,6 +175,10 @@ describe('DeploymentRunnerService', () => {
           },
         },
         { provide: ServerService, useValue: servers },
+        {
+          provide: DomainConflictService,
+          useValue: { find: () => Promise.resolve(new Map()) },
+        },
         {
           provide: RailpackBuilderService,
           useValue: { build: jest.fn() },

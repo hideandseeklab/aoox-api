@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Cron } from '@nestjs/schedule';
 import { In, LessThan, Not } from 'typeorm';
@@ -12,6 +12,8 @@ import { ManagedDatabaseService } from '../managed-database/managed-database.ser
 import { RegistryService } from '../registry/registry.service';
 import { SelfHostedRegistryService } from '../registry/self-hosted-registry.service';
 import { RemoteDockerService } from '../server/remote-docker.service';
+import { DomainConflictService } from '../domain-conflict/domain-conflict.service';
+import { OrphanContainer, orphanedContainers } from './orphan-containers';
 import { expectedVolumes, orphanedVolumes } from './orphan-volumes';
 
 /** Failed/queued deployment rows (logs only) older than this are deleted. */
@@ -28,6 +30,8 @@ export interface DiskUsage {
   prunableDeployments: number;
   /** Local-daemon volumes named like aoox's own but with no DB row anymore. */
   orphanVolumes: string[];
+  /** Local-daemon aoox containers whose project/app/database/stack row is gone. */
+  orphanContainers: OrphanContainer[];
   lastCleanup: CleanupReport | null;
 }
 
@@ -42,6 +46,8 @@ export interface CleanupReport {
   buildkitCache: 'skipped' | 'ok' | 'failed';
   /** Only populated when `cleanup()` was called with `pruneVolumes: true`. */
   volumesRemoved: string[];
+  /** Only populated when `cleanup()` was called with `pruneContainers: true`. */
+  containersRemoved: string[];
   errors: string[];
 }
 
@@ -67,6 +73,7 @@ export class MaintenanceService {
     private readonly selfHosted: SelfHostedRegistryService,
     private readonly config: ConfigService,
     private readonly railpack: RailpackBuilderService,
+    private readonly owners: DomainConflictService,
   ) {}
 
   get isRunning(): boolean {
@@ -98,6 +105,7 @@ export class MaintenanceService {
       reclaimableBytes: Math.max(0, dangling) + buildCache,
       prunableDeployments: prunable,
       orphanVolumes: await this.orphanVolumeNames(df),
+      orphanContainers: await this.orphanContainerList().catch(() => []),
       lastCleanup: this.last,
     };
   }
@@ -122,6 +130,12 @@ export class MaintenanceService {
      * (this only looks at the local daemon).
      */
     pruneVolumes?: boolean;
+    /**
+     * Off by default, also in the nightly run. Removes (force) local aoox
+     * containers whose owning row is gone (`orphan-containers.ts`); their
+     * volumes are not touched, `pruneVolumes` covers those.
+     */
+    pruneContainers?: boolean;
   }): Promise<CleanupReport> {
     if (this.running) throw new Error('Cleanup is already running');
     this.running = true;
@@ -134,6 +148,7 @@ export class MaintenanceService {
       registryGc: 'skipped',
       buildkitCache: 'skipped',
       volumesRemoved: [],
+      containersRemoved: [],
       errors: [],
     };
     try {
@@ -193,8 +208,18 @@ export class MaintenanceService {
           }
         }
       }
+      if (opts.pruneContainers) {
+        for (const c of await this.orphanContainerList()) {
+          try {
+            await this.docker.engine.removeContainer(c.id, true);
+            report.containersRemoved.push(c.name);
+          } catch (err) {
+            report.errors.push(`container ${c.name}: ${String(err)}`);
+          }
+        }
+      }
       this.logger.log(
-        `Cleanup: ${report.deploymentsPruned} deployment(s), ${report.imagesRemoved} image(s), ${report.danglingImagesDeleted} dangling, ${report.reclaimedBytes} bytes, ${report.volumesRemoved.length} orphan volume(s), registry gc ${report.registryGc}, buildkit ${report.buildkitCache}`,
+        `Cleanup: ${report.deploymentsPruned} deployment(s), ${report.imagesRemoved} image(s), ${report.danglingImagesDeleted} dangling, ${report.reclaimedBytes} bytes, ${report.volumesRemoved.length} orphan volume(s), ${report.containersRemoved.length} orphan container(s), registry gc ${report.registryGc}, buildkit ${report.buildkitCache}`,
       );
       this.last = report;
       return report;
@@ -256,6 +281,38 @@ export class MaintenanceService {
       usage.Volumes.map((v) => v.Name),
       expected,
     );
+  }
+
+  /**
+   * aoox containers on the LOCAL daemon whose owner row no longer exists.
+   * Remote servers are never looked at (the DB cannot tell what is orphaned
+   * there, and the proxy/volumes differ per daemon).
+   */
+  async orphanContainerList(): Promise<OrphanContainer[]> {
+    const [containers, known] = await Promise.all([
+      this.docker.engine.listContainers(),
+      this.owners.knownOwners(),
+    ]);
+    return orphanedContainers(containers, known);
+  }
+
+  /**
+   * Removes one orphan. The id from the request is only a selector: the
+   * orphan decision is recomputed from the daemon and the DB right now, so a
+   * container that is not (or no longer) an orphan is a 404 and is never
+   * touched, whatever id was sent.
+   */
+  async removeOrphanContainer(id: string): Promise<OrphanContainer> {
+    const wanted = id.toLowerCase();
+    const match = (await this.orphanContainerList()).find(
+      (c) =>
+        c.id === wanted || (wanted.length >= 12 && c.id.startsWith(wanted)),
+    );
+    if (!match) {
+      throw new NotFoundException('No such orphan container');
+    }
+    await this.docker.engine.removeContainer(match.id, true);
+    return match;
   }
 
   private async pruneApp(

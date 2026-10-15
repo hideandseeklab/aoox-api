@@ -35,6 +35,8 @@ export interface LinkView {
   setSlug: string;
   /** Variable names of that environment. */
   keys: string[];
+  /** Notes of those variables (names to text; plaintext, never values). */
+  notes: Record<string, string>;
   /** Keys a later link also defines: its value wins over this one. */
   shadowedKeys: string[];
   /** Keys the application's / stack's own env defines: it always wins. */
@@ -124,6 +126,7 @@ export class VariableSetLinkService {
         setName: set.name,
         setSlug: set.slug,
         keys: e.keys ?? [],
+        notes: e.notes ?? {},
         ...conflicts[i],
       };
     });

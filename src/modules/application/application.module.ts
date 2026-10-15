@@ -13,6 +13,7 @@ import { SetMaintenanceService } from './set-maintenance/set-maintenance.service
 import { SecretSourceModule } from '../secret-source/secret-source.module';
 import { SecretSourceAppController } from './secret-source/secret-source-app.controller';
 import { SecretSourceAppService } from './secret-source/secret-source-app.service';
+import { DomainConflictModule } from '../domain-conflict/domain-conflict.module';
 import { HostPortModule } from '../host-port/host-port.module';
 import { ManagedDatabaseModule } from '../managed-database/managed-database.module';
 import { MonitoringModule } from '../monitoring/monitoring.module';
@@ -133,6 +134,7 @@ import { UpdateApplicationService } from './update-application/update-applicatio
     ServerModule,
     SwarmModule,
     HostPortModule,
+    DomainConflictModule,
   ],
   controllers: [
     ApplicationVariableSetsController,
@@ -219,6 +221,7 @@ import { UpdateApplicationService } from './update-application/update-applicatio
     ConsoleGateway,
   ],
   exports: [
+    DeleteApplicationService,
     EnvResolverService,
     OwnerVariableSetsService,
     ApplicationService,

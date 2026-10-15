@@ -47,6 +47,13 @@ interface Paths {
   src: string;
 }
 
+/** Result of one helper run; `code` is null when the helper never produced an exit code. */
+export interface RunOutcome {
+  ok: boolean;
+  code: number | null;
+  message: string | null;
+}
+
 export type ComposeAction = 'deploy' | 'stop' | 'start' | 'down';
 
 /** Where a run came from; recorded on the ComposeDeployment row. */
@@ -56,6 +63,8 @@ export interface RunOptions {
   commitSha?: string | null;
   /** Row created by `queue()`; `run()` creates one itself when absent. */
   runId?: string;
+  /** `down` only: leave the stack's own named volumes in place (no `--volumes`). */
+  keepVolumes?: boolean;
 }
 
 /**
@@ -123,7 +132,7 @@ export class ComposeRunnerService {
     app: ComposeApp,
     action: ComposeAction,
     options: RunOptions = {},
-  ): Promise<void> {
+  ): Promise<RunOutcome> {
     const secrets: string[] = [];
     const paths = await this.paths(app);
     const run = options.runId
@@ -131,6 +140,7 @@ export class ComposeRunnerService {
       : await this.newRun(app, action, options);
     let log = '';
     let lastFlush = 0;
+    let exitCode: number | null = null;
     const redact = (text: string) => {
       let out = text;
       for (const s of secrets) out = out.split(s).join('***');
@@ -154,9 +164,16 @@ export class ComposeRunnerService {
       errorMessage: null,
     });
     try {
-      const { script, files } = await this.plan(app, action, secrets, paths);
+      const { script, files } = await this.plan(
+        app,
+        action,
+        secrets,
+        paths,
+        options,
+      );
       append(`==> compose ${action} (${composeProjectFor(app)})\n`);
       const code = await this.runHelper(app, paths, script, files, append);
+      exitCode = code;
       if (code !== 0)
         throw new Error(`docker compose exited with code ${code}`);
 
@@ -169,6 +186,7 @@ export class ComposeRunnerService {
         errorMessage: null,
         ...(action === 'deploy' ? { deployedAt: new Date() } : {}),
       });
+      return { ok: true, code: 0, message: null };
     } catch (err) {
       const message = redact(err instanceof Error ? err.message : String(err));
       append(`\nERROR: ${message}\n`);
@@ -177,6 +195,7 @@ export class ComposeRunnerService {
         errorMessage: message,
       });
       if (action === 'deploy') this.notifyFailure(app, message);
+      return { ok: false, code: exitCode, message };
     }
   }
 
@@ -238,6 +257,7 @@ export class ComposeRunnerService {
     action: ComposeAction,
     secrets: string[],
     { work: WORK, src: SRC }: Paths,
+    options: RunOptions = {},
   ): Promise<{ script: string; files: Array<[string, string]> }> {
     const project = composeProjectFor(app);
     // No --project-directory: relative paths (build contexts, volumes) resolve
@@ -345,7 +365,8 @@ export class ComposeRunnerService {
       if (action === 'stop') lines.push(`docker compose ${args} stop`);
       if (action === 'start') lines.push(`docker compose ${args} start`);
       if (action === 'down') {
-        lines.push(`docker compose ${args} down --volumes --remove-orphans`);
+        const volumes = options.keepVolumes ? '' : ' --volumes';
+        lines.push(`docker compose ${args} down${volumes} --remove-orphans`);
       }
     }
     return { script: lines.join('\n'), files };
@@ -402,9 +423,26 @@ export class ComposeRunnerService {
     }
   }
 
-  /** Removes stack, volumes and the checkout volume (used by delete). */
-  async destroy(app: ComposeApp): Promise<void> {
-    await this.run(app, 'down');
+  /**
+   * Removes the stack's containers and the checkout volume (used by delete).
+   * `keepVolumes` leaves the volumes the stack declares itself in place.
+   * `run()` never throws for a failed helper, so the outcome is checked here:
+   * a stack that could not be taken down must not lose its row (its
+   * containers would keep serving). Exit code 3 means there was no checkout,
+   * i.e. nothing was ever deployed, which is fine.
+   */
+  async destroy(
+    app: ComposeApp,
+    options: { keepVolumes?: boolean } = {},
+  ): Promise<void> {
+    const outcome = await this.run(app, 'down', {
+      keepVolumes: options.keepVolumes,
+    });
+    if (!outcome.ok && outcome.code !== 3) {
+      throw new Error(
+        `compose down failed for "${app.name}": ${outcome.message ?? 'unknown error'}`,
+      );
+    }
     await this.docker.engine
       .removeVolume(composeVolumeFor(app))
       .catch(() => undefined);

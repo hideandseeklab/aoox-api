@@ -32,6 +32,7 @@ export class RunCleanupController {
     return this.maintenance.cleanup({
       registryGc: dto.registryGc ?? true,
       pruneVolumes: dto.pruneVolumes ?? false,
+      pruneContainers: dto.pruneContainers ?? false,
     });
   }
 }

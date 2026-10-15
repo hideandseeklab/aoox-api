@@ -1,15 +1,34 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BadGatewayException, Injectable, Logger } from '@nestjs/common';
 import { CertificateSyncService } from '../../certificate/certificate-sync.service';
 import { IsNull, Not } from 'typeorm';
+import { DockerEngineError } from '../../docker/docker-engine.client';
 import { RemoteDockerService } from '../../server/remote-docker.service';
+import { Application } from '../application.entity';
 import { ApplicationService, containerNameFor } from '../application.service';
+import { filesVolumeFor, volumeNameFor } from '../mounts';
 import { MetricRetentionService } from '../../monitoring/metric-retention.service';
 import { MaintenanceModeService } from '../../maintenance-mode/maintenance-mode.service';
 import { DomainDnsService } from '../domain-dns.service';
 import { PreviewService } from '../preview.service';
 import { SwarmDeployService } from '../swarm-deploy.service';
 
-/** Removes the container (if any) and the row; images in the registry are kept. */
+/** A resource that is already gone is what a delete wants; anything else is a real failure. */
+function ignoreMissing(err: unknown): void {
+  if (err instanceof DockerEngineError && err.status === 404) return;
+  throw err;
+}
+
+function describe(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * Removes the container (if any) and the row; images in the registry are
+ * kept, and so are the volumes unless `purge` is set. Docker problems that
+ * leave a container behind (daemon or remote server unreachable) are
+ * reported and the row is kept, so the delete can be retried: a row without
+ * its container would leave the app reachable through its domain.
+ */
 @Injectable()
 export class DeleteApplicationService {
   private readonly logger = new Logger(DeleteApplicationService.name);
@@ -27,15 +46,55 @@ export class DeleteApplicationService {
 
   async execute(ownerId: string, id: string): Promise<void> {
     const app = await this.applications.findOwnedOrFail(id, ownerId);
+    await this.destroy(app);
+  }
+
+  /** The cleanup without the access check; the project delete calls this per application. */
+  async destroy(
+    app: Application,
+    options: { purge?: boolean } = {},
+  ): Promise<void> {
     // Preview containers are not covered by the FK cascade of their rows.
     await this.previews.destroyAll(app);
-    const docker = await this.remote.forServer(app.serverId);
-    const c = await docker
-      .findContainerByName(containerNameFor(app))
-      .catch(() => null);
-    if (c) await docker.engine.removeContainer(c.Id, true);
-    if (app.deployMode === 'service') {
-      await this.swarmDeploy.remove(app).catch(() => undefined);
+    const name = containerNameFor(app);
+    let docker: Awaited<ReturnType<RemoteDockerService['forServer']>>;
+    try {
+      docker = await this.remote.forServer(app.serverId);
+      // `-next` is the blue/green candidate of an interrupted deploy; it carries
+      // the same Traefik labels, so it would keep serving the domain too.
+      for (const n of [name, `${name}-next`]) {
+        const c = await docker.findContainerByName(n);
+        if (c) {
+          await docker.engine.removeContainer(c.Id, true).catch(ignoreMissing);
+        }
+      }
+      if (app.deployMode === 'service') {
+        await this.swarmDeploy.remove(app).catch(ignoreMissing);
+      }
+    } catch (err) {
+      throw new BadGatewayException(
+        `Could not remove the container of "${app.name}": ${describe(err)}. The application was kept; try again once the Docker daemon is reachable.`,
+      );
+    }
+    if (options.purge) {
+      const mounts = await this.applications.mounts.find({
+        where: { applicationId: app.id },
+      });
+      const volumes = [
+        ...mounts
+          .filter((m) => m.type === 'volume')
+          .map((m) => volumeNameFor(app, m)),
+        filesVolumeFor(app),
+      ];
+      for (const v of volumes) {
+        try {
+          await docker.engine.removeVolume(v).catch(ignoreMissing);
+        } catch (err) {
+          throw new BadGatewayException(
+            `Could not remove volume ${v} of "${app.name}": ${describe(err)}`,
+          );
+        }
+      }
     }
     // Routers and the page file would otherwise outlive the application.
     await this.maintenance

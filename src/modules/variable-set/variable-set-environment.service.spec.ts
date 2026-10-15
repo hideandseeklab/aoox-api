@@ -1032,6 +1032,93 @@ describe('VariableSetEnvironmentService history, restore, diff, promote and secr
     });
   });
 
+  describe('notes', () => {
+    const noted = '# Section\n\n# Base URL\n# with /v1\nAPI=http://x/v1\nB=2';
+
+    it('recomputes notes on every write, shows them to viewers and snapshots them per version', async () => {
+      const { svc, rows, versions } = build();
+      const saved = await as('PUT', () =>
+        svc.update(dev, 's1', 'e-dev', noted),
+      );
+      expect(saved.notes).toEqual({ API: 'Base URL\nwith /v1' });
+      expect(rows.find((r) => r.id === 'e-dev')!.notes).toEqual({
+        API: 'Base URL\nwith /v1',
+      });
+      expect((versions.at(-1) as unknown as { notes: object }).notes).toEqual({
+        API: 'Base URL\nwith /v1',
+      });
+      // A viewer never reveals values but reads names, flags and notes.
+      const view = svc.view(
+        rows.find((r) => r.id === 'e-dev')!,
+        [],
+      );
+      expect(view.notes).toEqual({ API: 'Base URL\nwith /v1' });
+      const revealed = await as('POST', () => svc.reveal(dev, 's1', 'e-dev'));
+      expect(revealed.notes).toEqual({ API: 'Base URL\nwith /v1' });
+      // Removing the comment removes the note.
+      const after = await as('PUT', () =>
+        svc.update(dev, 's1', 'e-dev', 'API=http://x/v1\nB=2'),
+      );
+      expect(after.notes).toEqual({});
+      const list = await as('GET', () =>
+        svc.listVersions('view', 's1', 'e-dev'),
+      );
+      expect(list.map((v) => v.notes)).toEqual([
+        {},
+        { API: 'Base URL\nwith /v1' },
+      ]);
+    });
+
+    it('a note-only change is a change; an identical save is not', async () => {
+      const { svc, versions } = build();
+      await as('PUT', () => svc.update(dev, 's1', 'e-dev', noted));
+      const count = versions.length;
+      await as('PUT', () => svc.update(dev, 's1', 'e-dev', noted + '\n'));
+      expect(versions).toHaveLength(count);
+      await as('PUT', () =>
+        svc.update(dev, 's1', 'e-dev', noted.replace('Base URL', 'Root URL')),
+      );
+      expect(versions).toHaveLength(count + 1);
+    });
+
+    it('restore brings the notes of the old text back', async () => {
+      const { svc, versions } = build();
+      await as('PUT', () => svc.update(dev, 's1', 'e-dev', noted));
+      await as('PUT', () => svc.update(dev, 's1', 'e-dev', 'API=other'));
+      const first = versions.find(
+        (v) => v.environmentId === 'e-dev' && v.action === 'edit',
+      )!;
+      const view = await as('POST', () =>
+        svc.restoreVersion(dev, 's1', 'e-dev', first.id),
+      );
+      expect(view.notes).toEqual({ API: 'Base URL\nwith /v1' });
+      const shown = await as('POST', () =>
+        svc.revealVersion(dev, 's1', 'e-dev', first.id),
+      );
+      expect(shown.notes).toEqual({ API: 'Base URL\nwith /v1' });
+    });
+
+    it('promote brings the note of a new key; an existing key keeps its own note', async () => {
+      const { svc, rows } = build();
+      await as('PUT', () =>
+        svc.update(dev, 's1', 'e-stg', '# from staging\nA=new\n# new one\nN=1'),
+      );
+      await as('PUT', () =>
+        svc.update(dev, 's1', 'e-dev', '# dev note\nA=old\n# trailing'),
+      );
+      const out = await as('POST', () =>
+        svc.promote(dev, 's1', 'e-dev', 'e-stg', ['A', 'N']),
+      );
+      expect(
+        decryptSecret(
+          rows.find((r) => r.id === 'e-dev')!.variablesEncrypted!,
+          KEY,
+        ),
+      ).toBe('# dev note\nA=new\n# trailing\n\n# new one\nN=1');
+      expect(out.environment.notes).toEqual({ A: 'dev note', N: 'new one' });
+    });
+  });
+
   describe('promote', () => {
     it('copies chosen keys: keeps the target comments and order, appends new keys, brings the flag, stores a version', async () => {
       const { svc, rows, versions } = build();

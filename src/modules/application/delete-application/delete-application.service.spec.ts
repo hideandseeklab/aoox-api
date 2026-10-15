@@ -1,3 +1,5 @@
+import { BadGatewayException } from '@nestjs/common';
+import { DockerEngineError } from '../../docker/docker-engine.client';
 import { MetricRetentionService } from '../../monitoring/metric-retention.service';
 import { RemoteDockerService } from '../../server/remote-docker.service';
 import { Application } from '../application.entity';
@@ -27,6 +29,7 @@ describe('DeleteApplicationService previews', () => {
         Promise.resolve({ Id: `id-${name}` }),
       ),
       engine: {
+        removeVolume: jest.fn().mockResolvedValue(undefined),
         removeContainer: jest.fn((id: string) => {
           if (failPr && id.endsWith(`-pr${failPr}`)) {
             return Promise.reject(new Error('boom'));
@@ -53,10 +56,12 @@ describe('DeleteApplicationService previews', () => {
       {} as never,
     );
     const appRepo = { remove: jest.fn().mockResolvedValue(undefined) };
+    const mountRepo = { find: jest.fn().mockResolvedValue([]) };
     const svc = new DeleteApplicationService(
       {
         findOwnedOrFail: () => Promise.resolve(app),
         repo: appRepo,
+        mounts: mountRepo,
         domains: {
           count: jest.fn().mockResolvedValue(0),
           find: jest.fn().mockResolvedValue([]),
@@ -73,7 +78,7 @@ describe('DeleteApplicationService previews', () => {
       } as never,
       { cleanup: jest.fn().mockResolvedValue(null) } as never,
     );
-    return { svc, forServer, removed, rows, appRepo };
+    return { svc, forServer, removed, rows, appRepo, daemon, mountRepo };
   };
 
   it('removes preview containers and rows on the local daemon', async () => {
@@ -105,7 +110,64 @@ describe('DeleteApplicationService previews', () => {
   it('is unchanged for an app without previews', async () => {
     const t = build(null, []);
     await t.svc.execute('u', 'a1');
-    expect(t.removed).toEqual(['id-aoox-app-web']);
+    expect(t.removed).toEqual(['id-aoox-app-web', 'id-aoox-app-web-next']);
     expect(t.appRepo.remove).toHaveBeenCalled();
+  });
+
+  it('removes a stray blue/green -next container too', async () => {
+    const t = build(null, []);
+    await t.svc.execute('u', 'a1');
+    expect(t.daemon.findContainerByName).toHaveBeenCalledWith(
+      'aoox-app-web-next',
+    );
+    expect(t.removed).toContain('id-aoox-app-web-next');
+  });
+
+  it('keeps the row and answers 502 when the daemon is unreachable', async () => {
+    const t = build(null, []);
+    t.daemon.findContainerByName.mockRejectedValue(new Error('ECONNREFUSED'));
+    await expect(t.svc.execute('u', 'a1')).rejects.toBeInstanceOf(
+      BadGatewayException,
+    );
+    expect(t.appRepo.remove).not.toHaveBeenCalled();
+  });
+
+  it('treats a container that vanished meanwhile (404) as removed', async () => {
+    const t = build(null, []);
+    t.daemon.engine.removeContainer.mockRejectedValue(
+      new DockerEngineError(404, 'no such container'),
+    );
+    await t.svc.execute('u', 'a1');
+    expect(t.appRepo.remove).toHaveBeenCalled();
+  });
+
+  it('purge removes volume mounts and the files volume, not bind mounts', async () => {
+    const t = build(null, []);
+    t.mountRepo.find.mockResolvedValue([
+      { type: 'volume', name: 'data' },
+      { type: 'bind', name: 'host' },
+    ]);
+    await t.svc.destroy(
+      {
+        id: 'a1',
+        appName: 'web',
+        serverId: null,
+        deployMode: 'container',
+      } as never,
+      { purge: true },
+    );
+    expect(t.daemon.engine.removeVolume).toHaveBeenCalledTimes(2);
+    expect(t.daemon.engine.removeVolume).toHaveBeenCalledWith(
+      'aoox_app_web_data',
+    );
+    expect(t.daemon.engine.removeVolume).toHaveBeenCalledWith(
+      'aoox_app_web_files',
+    );
+  });
+
+  it('keeps volumes without purge', async () => {
+    const t = build(null, []);
+    await t.svc.execute('u', 'a1');
+    expect(t.daemon.engine.removeVolume).not.toHaveBeenCalled();
   });
 });

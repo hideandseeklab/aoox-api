@@ -13,6 +13,10 @@ import { RemoteDockerService } from '../../server/remote-docker.service';
 import { proxySettingsOf } from '../../server/server.entity';
 import { ServerService } from '../../server/server.service';
 import { MaintenanceModeService } from '../../maintenance-mode/maintenance-mode.service';
+import {
+  DomainConflict,
+  DomainConflictService,
+} from '../../domain-conflict/domain-conflict.service';
 import { ApplicationService } from '../application.service';
 import { assertCertMode } from '../cert-mode';
 import { DeploymentRunnerService } from '../deployment-runner.service';
@@ -36,6 +40,8 @@ export interface AddDomainResult {
    * itself was added regardless. Null when all is well or DNS is not managed.
    */
   dnsWarning: string | null;
+  /** Other containers already routing this host; empty when fine. Never blocks. */
+  conflicts: DomainConflict[];
 }
 
 @Injectable()
@@ -53,6 +59,7 @@ export class AddDomainService {
     private readonly maintenance: MaintenanceModeService,
     private readonly dnsBindings: ProxyDnsBindingService,
     private readonly domainDns: DomainDnsService,
+    private readonly domainConflicts: DomainConflictService,
   ) {}
 
   async execute(
@@ -149,10 +156,22 @@ export class AddDomainService {
       .catch((err) =>
         this.logger.warn(`Maintenance page for ${host} failed: ${String(err)}`),
       );
+    // Looked up before the recreate: afterwards the app's own container
+    // carries the host too (and is excluded anyway).
+    const conflicts =
+      (await this.domainConflicts.find(docker, app, [host], !app.serverId)).get(
+        host,
+      ) ?? [];
     // Labels live on the container, so apply by recreating it (no rebuild).
     await this.runner.applyRuntimeConfig(app);
     return {
-      domain: toDomainDto(domain, certificate?.name ?? null, dnsConnection),
+      domain: toDomainDto(
+        domain,
+        certificate?.name ?? null,
+        dnsConnection,
+        conflicts,
+      ),
+      conflicts,
       proxyAutoProvisioned,
       dnsWarning: dns && dns.status !== 'ok' ? dns.message : null,
     };

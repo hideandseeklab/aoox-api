@@ -4,8 +4,6 @@ import { DockerModule } from '../docker/docker.module';
 import { MonitoringModule } from '../monitoring/monitoring.module';
 import { CreateProjectController } from './create-project/create-project.controller';
 import { CreateProjectService } from './create-project/create-project.service';
-import { DeleteProjectController } from './delete-project/delete-project.controller';
-import { DeleteProjectService } from './delete-project/delete-project.service';
 import { GetProjectController } from './get-project/get-project.controller';
 import { GetProjectService } from './get-project/get-project.service';
 import { ListProjectsController } from './list-projects/list-projects.controller';
@@ -42,7 +40,6 @@ import { UpdateProjectService } from './update-project/update-project.service';
     ProjectSummaryController,
     GetProjectController,
     UpdateProjectController,
-    DeleteProjectController,
     ProjectResourceUsageController,
   ],
   providers: [
@@ -54,7 +51,6 @@ import { UpdateProjectService } from './update-project/update-project.service';
     ListProjectsService,
     GetProjectService,
     UpdateProjectService,
-    DeleteProjectService,
     ProjectResourceUsageService,
   ],
   exports: [ProjectService, ProjectAccessService],

@@ -51,6 +51,9 @@ function makeService(opts: {
     connectionName: jest.fn().mockResolvedValue('cf'),
     sync: jest.fn().mockResolvedValue(null),
   };
+  const domainConflicts = {
+    find: jest.fn().mockResolvedValue(new Map()),
+  };
   const service = new AddDomainService(
     applications as never,
     runner as never,
@@ -65,12 +68,14 @@ function makeService(opts: {
     } as never,
     { get: jest.fn().mockResolvedValue(null) } as never,
     domainDns as never,
+    domainConflicts as never,
   );
   return {
     certs,
     certSync,
     service,
     domainDns,
+    domainConflicts,
     applications,
     runner,
     proxy,
@@ -238,5 +243,25 @@ describe('AddDomainService with a custom certificate', () => {
       certificateId: null,
       certificateName: null,
     });
+  });
+
+  it('reports other containers routing the host without blocking', async () => {
+    const { service, domainConflicts, runner } = makeService({
+      proxyRunning: true,
+    });
+    const conflict = {
+      containerName: 'aoox-app-old',
+      containerId: 'abc',
+      orphan: true,
+    };
+    domainConflicts.find.mockResolvedValue(
+      new Map([['app.example.com', [conflict]]]),
+    );
+    const result = await service.execute('owner1', 'app1', {
+      host: 'App.Example.com',
+    });
+    expect(result.conflicts).toEqual([conflict]);
+    expect(result.domain.conflicts).toEqual([conflict]);
+    expect(runner.applyRuntimeConfig).toHaveBeenCalledTimes(1);
   });
 });

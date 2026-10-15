@@ -8,6 +8,7 @@ import { ManagedDatabaseService } from '../managed-database/managed-database.ser
 import { RegistryService } from '../registry/registry.service';
 import { SelfHostedRegistryService } from '../registry/self-hosted-registry.service';
 import { RemoteDockerService } from '../server/remote-docker.service';
+import { DomainConflictService } from '../domain-conflict/domain-conflict.service';
 import { MaintenanceService } from './maintenance.service';
 
 describe('MaintenanceService', () => {
@@ -53,6 +54,8 @@ describe('MaintenanceService', () => {
     pruneBuildCache: jest.fn().mockResolvedValue({ reclaimed: 50 }),
     systemDataUsage: jest.fn().mockResolvedValue({ Volumes: [] }),
     removeVolume: jest.fn().mockResolvedValue(undefined),
+    listContainers: jest.fn().mockResolvedValue([]),
+    removeContainer: jest.fn().mockResolvedValue(undefined),
   };
   const client = {
     getTag: jest.fn().mockResolvedValue({ digest: 'sha256:x' }),
@@ -86,6 +89,15 @@ describe('MaintenanceService', () => {
     {
       pruneCache: jest.fn().mockResolvedValue('pruned 1 record'),
     } as never,
+    {
+      knownOwners: () =>
+        Promise.resolve({
+          applications: new Set(['a1']),
+          databases: new Set<string>(),
+          composeApps: new Set<string>(),
+          composeSlugs: new Set<string>(),
+        }),
+    } as unknown as DomainConflictService,
   );
 
   beforeEach(() => jest.clearAllMocks());
@@ -134,5 +146,57 @@ describe('MaintenanceService', () => {
     expect(engine.removeVolume).toHaveBeenCalledWith('aoox_db_gone');
     expect(engine.removeVolume).not.toHaveBeenCalledWith('aoox_db_main');
     expect(engine.removeVolume).not.toHaveBeenCalledWith('aoox_postgres_data');
+  });
+
+  describe('orphan containers', () => {
+    const c = (id: string, labels: Record<string, string>) => ({
+      Id: id,
+      Names: [`/n-${id.slice(0, 4)}`],
+      Image: 'nginx',
+      State: 'running',
+      Status: 'Up',
+      Labels: labels,
+    });
+    const gone = c('a'.repeat(64), {
+      'aoox.component': 'application',
+      'aoox.application': 'deleted',
+    });
+    const alive = c('b'.repeat(64), {
+      'aoox.component': 'application',
+      'aoox.application': 'a1',
+    });
+    const proxy = c('c'.repeat(64), { 'aoox.component': 'proxy' });
+    beforeEach(() =>
+      engine.listContainers.mockResolvedValue([gone, alive, proxy]),
+    );
+
+    it('lists only containers whose row is gone', async () => {
+      const list = await svc.orphanContainerList();
+      expect(list.map((o) => o.id)).toEqual([gone.Id]);
+    });
+
+    it('cleanup removes them only when pruneContainers is true', async () => {
+      await svc.cleanup({ registryGc: false });
+      expect(engine.removeContainer).not.toHaveBeenCalled();
+      const report = await svc.cleanup({
+        registryGc: false,
+        pruneContainers: true,
+      });
+      expect(engine.removeContainer).toHaveBeenCalledTimes(1);
+      expect(engine.removeContainer).toHaveBeenCalledWith(gone.Id, true);
+      expect(report.containersRemoved).toHaveLength(1);
+    });
+
+    it('removing one re-verifies: a live container or the proxy is a 404 and untouched', async () => {
+      await expect(svc.removeOrphanContainer(alive.Id)).rejects.toThrow(
+        'No such orphan',
+      );
+      await expect(svc.removeOrphanContainer(proxy.Id)).rejects.toThrow(
+        'No such orphan',
+      );
+      expect(engine.removeContainer).not.toHaveBeenCalled();
+      await svc.removeOrphanContainer(gone.Id.slice(0, 12));
+      expect(engine.removeContainer).toHaveBeenCalledWith(gone.Id, true);
+    });
   });
 });

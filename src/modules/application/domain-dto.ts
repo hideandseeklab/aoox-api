@@ -1,3 +1,4 @@
+import type { DomainConflict } from '../domain-conflict/domain-conflict.service';
 import { Domain, DomainCertMode } from './domain.entity';
 
 /** What the API returns for a domain: the certificate by id and name only (never its PEM or key). */
@@ -19,6 +20,11 @@ export interface DomainDto {
   /** Last record sync: ok | warning | error (null = never ran / not managed). */
   dnsStatus: 'ok' | 'warning' | 'error' | null;
   dnsMessage: string | null;
+  /**
+   * Other containers already routing this host (never blocks anything).
+   * Filled by the list and add flows; empty elsewhere.
+   */
+  conflicts: DomainConflict[];
   createdAt: Date;
 }
 
@@ -40,6 +46,7 @@ export function toDomainDto(
   >,
   certificateName: string | null,
   dnsConnectionName: string | null = null,
+  conflicts: DomainConflict[] = [],
 ): DomainDto {
   return {
     id: d.id,
@@ -55,6 +62,7 @@ export function toDomainDto(
     dnsProxied: d.dnsProxied ?? false,
     dnsStatus: d.dnsConnectionId ? (d.dnsStatus ?? null) : null,
     dnsMessage: d.dnsConnectionId ? (d.dnsMessage ?? null) : null,
+    conflicts,
     createdAt: d.createdAt,
   };
 }

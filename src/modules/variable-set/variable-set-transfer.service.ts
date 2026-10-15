@@ -225,6 +225,7 @@ export class VariableSetTransferService {
           protected: e.protected === true,
           keys: [],
           secretFlags: {},
+          notes: {},
         });
         if (text.length <= ENV_TEXT_MAX) {
           this.environments.sealImported(row, text, e.secretKeys, e.plainKeys);

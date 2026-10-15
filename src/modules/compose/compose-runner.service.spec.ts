@@ -256,6 +256,27 @@ describe('ComposeRunnerService', () => {
     );
   });
 
+  it('destroy runs down --volumes by default', async () => {
+    await svc.destroy(app());
+    expect(helperBody().Entrypoint[2]).toContain(
+      'down --volumes --remove-orphans',
+    );
+  });
+
+  it('destroy with keepVolumes runs down without --volumes', async () => {
+    await svc.destroy(app(), { keepVolumes: true });
+    const script = helperBody().Entrypoint[2];
+    expect(script).toContain('down --remove-orphans');
+    expect(script).not.toContain('--volumes');
+  });
+
+  it('destroy throws when down fails, but accepts exit 3 (never deployed)', async () => {
+    engine.waitContainer.mockResolvedValueOnce(1);
+    await expect(svc.destroy(app())).rejects.toThrow(/compose down failed/);
+    engine.waitContainer.mockResolvedValueOnce(3);
+    await expect(svc.destroy(app())).resolves.toBeUndefined();
+  });
+
   it('template stacks upload the compose file instead of cloning', async () => {
     await svc.run(
       app({

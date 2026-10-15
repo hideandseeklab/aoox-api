@@ -80,6 +80,8 @@ export interface ProjectVariableSet {
     name: string;
     protected: boolean;
     keys: string[];
+    /** Notes of those variables (plaintext; see `EnvironmentView.notes`). */
+    notes: Record<string, string>;
   }>;
   /** Applications and stacks of this project linking one of its environments. */
   usedBy: Array<
@@ -373,6 +375,7 @@ export class VariableSetService {
           name: e.name,
           protected: e.protected,
           keys: e.keys ?? [],
+          notes: e.notes ?? {},
         })),
         usedBy: own.flatMap((e) =>
           (users.get(e.id) ?? [])

@@ -74,6 +74,15 @@ export class VariableSetEnvironment {
   @Column({ name: 'secret_flags', type: 'jsonb', default: () => "'{}'" })
   secretFlags: Record<string, boolean>;
 
+  /**
+   * Per-variable note (name -> text): the `#` lines directly above the
+   * variable in the text (`extractNotes`), recomputed on every write. Kept
+   * in plaintext so lists show notes without decrypting: anyone who sees the
+   * set (viewers too) can read them, so notes must not hold secrets.
+   */
+  @Column({ type: 'jsonb', default: () => "'{}'" })
+  notes: Record<string, string>;
+
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;
 

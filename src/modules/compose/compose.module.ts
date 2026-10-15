@@ -79,6 +79,6 @@ import { UpdateComposeAppService } from './update-compose-app/update-compose-app
     WebhookDeployComposeService,
     ComposeDownNotifierService,
   ],
-  exports: [ComposeService],
+  exports: [ComposeService, ComposeRunnerService],
 })
 export class ComposeModule {}

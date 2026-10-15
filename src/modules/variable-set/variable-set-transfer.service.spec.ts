@@ -207,7 +207,7 @@ describe('VariableSetTransferService', () => {
             {
               name: 'production',
               protected: true,
-              variables: 'K=${{project.J}}\nJ=1',
+              variables: '# Section\n\n# J doubled\nK=${{project.J}}\nJ=1',
               secretKeys: ['K'],
             },
           ],
@@ -226,8 +226,10 @@ describe('VariableSetTransferService', () => {
       (e) => e.variableSetId === fresh.id,
     )!;
     expect(decryptSecret(freshEnv.variablesEncrypted as string, KEY)).toBe(
-      'K=${{vars.J}}\nJ=1',
+      '# J doubled\nK=${{vars.J}}\nJ=1',
     );
+    // The note travels with its key; the standalone section comment does not.
+    expect(freshEnv.notes).toEqual({ K: 'J doubled' });
     expect(freshEnv.protected).toBe(true);
     expect(freshEnv.secretFlags).toEqual({ K: true });
     expect(warnings.join(' | ')).toMatch(/"Common": already exists/);

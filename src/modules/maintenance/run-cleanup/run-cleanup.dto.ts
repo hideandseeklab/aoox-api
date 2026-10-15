@@ -10,4 +10,9 @@ export class RunCleanupDto {
   @IsOptional()
   @IsBoolean()
   pruneVolumes?: boolean;
+
+  /** Also remove leftover containers of deleted projects/apps (default false). */
+  @IsOptional()
+  @IsBoolean()
+  pruneContainers?: boolean;
 }
