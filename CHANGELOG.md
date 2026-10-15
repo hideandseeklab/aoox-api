@@ -8,6 +8,8 @@ Versions below 1.0.0 may include breaking changes in a minor release.
 
 ## [Unreleased]
 
+## [0.1.0-alpha.11] - 2026-10-15
+
 ### Added
 
 - **Per-variable notes in variable sets.** The `#` comment lines directly above a variable (no blank line in between) are its note. Notes are stored in plaintext next to the key names, so `EnvironmentView`, the reveal responses, the version list and version reveal, `LinkView` and `GET /projects/:id/variable-sets` carry `notes` (name to text) without revealing values. Anyone who can see a set, viewers included, can read its notes: do not put secrets in them. Notes are recomputed on every write and kept per version; promote brings the note of a key that is new to the target; project import keeps notes (standalone comments are still dropped). Migration `VariableNotes` adds the columns and fills them from the stored texts, so `ENCRYPTION_KEY` must be set during the upgrade when any environment has variables.
@@ -619,7 +621,8 @@ Read before upgrading; back up first (Settings → Infrastructure → Instance b
 - Monitoring with metrics history, disk cleanup tooling, and project/instance export-import for
   backup and migration between hosts.
 
-[Unreleased]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-alpha.10...HEAD
+[Unreleased]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-alpha.11...HEAD
+[0.1.0-alpha.11]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-alpha.10...v0.1.0-alpha.11
 [0.1.0-alpha.10]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-alpha.9...v0.1.0-alpha.10
 [0.1.0-alpha.9]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-alpha.8...v0.1.0-alpha.9
 [0.1.0-alpha.8]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-alpha.7...v0.1.0-alpha.8
