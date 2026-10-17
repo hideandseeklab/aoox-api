@@ -8,6 +8,8 @@ Versions below 1.0.0 may include breaking changes in a minor release.
 
 ## [Unreleased]
 
+## [0.1.0-alpha.12] - 2026-10-17
+
 ### Added
 
 - **Remove the panel domain.** `DELETE /instance/domain` (owner, 202, throttled like PATCH) clears the saved hosts, turns `restrictPorts` off, deletes `docker-compose.override.yml`, sets `WEB_ORIGIN`/`PUBLIC_API_URL` back to `http://<PUBLIC_IP>:<WEB_PORT>`/`:<API_PORT>` (`localhost`, 3000 and 3001 when unset, as the installer writes them), blanks `WEB_DOMAIN`/`API_DOMAIN`/`COOKIE_SECURE` and recreates `web`/`api` without the override. The ACME email, the proxy and application domains are left alone. Answers `{settings, reopenUrl}`; 400 without `INSTALL_DIR` or when no domain is set.
@@ -19,6 +21,9 @@ Versions below 1.0.0 may include breaking changes in a minor release.
 - **`DELETE /instance/domain` tells the owner the real web port to reopen.** `reopenUrl` was always `http://<PUBLIC_IP>:3000`; the api container never received `WEB_PORT`. `docker-compose.dist.yml` now passes `WEB_PORT` (default 3000) to the api service and the URL uses it (3000 when the variable is missing, as on installs that have not run `aoox reinstall` yet).
 - **`PATCH /instance/domain` no longer answers 500 when Docker is down.** It (and the new `DELETE`) now answers 502 "The Docker daemon is not reachable (...)" before anything is saved.
 - **The API now sees the real client IP behind Traefik and the web container.** Express `trust proxy` was never set, so `req.ip` was the proxy's address: every anonymous request (including sign-in, throttled per IP) shared one bucket, so one attacker guessing passwords locked every user out, and the audit log and sign-in log recorded the proxy. `main.ts` now sets it from the new `TRUST_PROXY` env (empty = `loopback, linklocal, uniquelocal`: private-network hops only, never a public address, so a client reaching the API port directly from the internet cannot fake `X-Forwarded-For`). Accepts `true`, `false`/`0`, a hop count, or a comma list of IPs/CIDRs/presets; a typo fails at boot. Anyone on the same private network as the API can still set the header. Optional in `docker-compose.dist.yml` (`${TRUST_PROXY:-}`, copied to the CLI installer) and commented in `.env.dist.example`.
+
+### Changed
+
 - **Rate limits are now per user instead of per IP.** People behind the same NAT or reverse proxy shared one quota, so one developer revealing variables could lock an admin out. Requests with a valid session or API token are counted per user (a user's tokens and sessions share one quota); anonymous requests, and invalid or forged credentials, still count per IP. Sign-in, 2FA, setup, invitation and webhook routes always stay per IP, so brute-force protection is unchanged.
 
 ## [0.1.0-alpha.11] - 2026-10-15
@@ -634,7 +639,8 @@ Read before upgrading; back up first (Settings → Infrastructure → Instance b
 - Monitoring with metrics history, disk cleanup tooling, and project/instance export-import for
   backup and migration between hosts.
 
-[Unreleased]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-alpha.11...HEAD
+[Unreleased]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-alpha.12...HEAD
+[0.1.0-alpha.12]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-alpha.11...v0.1.0-alpha.12
 [0.1.0-alpha.11]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-alpha.10...v0.1.0-alpha.11
 [0.1.0-alpha.10]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-alpha.9...v0.1.0-alpha.10
 [0.1.0-alpha.9]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-alpha.8...v0.1.0-alpha.9
