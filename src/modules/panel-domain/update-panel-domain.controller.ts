@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   HttpCode,
   HttpStatus,
   Patch,
@@ -11,6 +12,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
 import {
+  ClearPanelDomainResult,
   PanelDomainService,
   UpdatePanelDomainResult,
 } from './panel-domain.service';
@@ -28,5 +30,12 @@ export class UpdatePanelDomainController {
   @HttpCode(HttpStatus.ACCEPTED)
   update(@Body() dto: UpdatePanelDomainDto): Promise<UpdatePanelDomainResult> {
     return this.panelDomain.update(dto);
+  }
+
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @Delete()
+  @HttpCode(HttpStatus.ACCEPTED)
+  clear(): Promise<ClearPanelDomainResult> {
+    return this.panelDomain.clear();
   }
 }

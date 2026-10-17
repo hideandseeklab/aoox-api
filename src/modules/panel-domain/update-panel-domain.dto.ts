@@ -1,4 +1,5 @@
 import {
+  IsBoolean,
   IsEmail,
   IsOptional,
   IsString,
@@ -27,4 +28,12 @@ export class UpdatePanelDomainDto {
   @IsOptional()
   @IsEmail()
   acmeEmail?: string;
+
+  /**
+   * "Only allow access through the domain": ports 3000/3001 listen on
+   * 127.0.0.1 only. Omitted = keep the stored value; false = open them again.
+   */
+  @IsOptional()
+  @IsBoolean()
+  restrictPorts?: boolean;
 }

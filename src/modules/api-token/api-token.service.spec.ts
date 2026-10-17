@@ -61,5 +61,15 @@ describe('api tokens', () => {
       rows.get(hashToken(plaintext))!.user = user as ApiToken['user'];
       expect(await svc.resolve(plaintext)).toBeNull();
     });
+
+    it('ownerIdOf returns the owner (cached) and null for unknown tokens', async () => {
+      const { plaintext } = await svc.create('u1', 'ci', null);
+      expect(await svc.ownerIdOf(plaintext)).toBe('u1');
+      const calls = (repo.findOne as jest.Mock).mock.calls.length;
+      expect(await svc.ownerIdOf(plaintext)).toBe('u1');
+      expect((repo.findOne as jest.Mock).mock.calls.length).toBe(calls);
+      expect(await svc.ownerIdOf(generateToken())).toBeNull();
+      expect(await svc.ownerIdOf('not-a-token')).toBeNull();
+    });
   });
 });

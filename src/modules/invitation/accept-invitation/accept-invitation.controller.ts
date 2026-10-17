@@ -3,8 +3,10 @@ import { Throttle } from '@nestjs/throttler';
 import { SignInResponseDto } from '../../auth/sign-in/sign-in.dto';
 import { AcceptInvitationDto } from './accept-invitation.dto';
 import { AcceptInvitationService } from './accept-invitation.service';
+import { ThrottleByIp } from '../../auth/throttle-by-ip.decorator';
 
 /** Public, like sign-in/setup: the token is the credential. */
+@ThrottleByIp()
 @Controller('invitations')
 export class AcceptInvitationController {
   constructor(private readonly service: AcceptInvitationService) {}

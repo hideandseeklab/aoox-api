@@ -2,12 +2,19 @@
 import 'dotenv/config';
 import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
+import type { NestExpressApplication } from '@nestjs/platform-express';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AppModule } from './app.module';
+import { parseTrustProxy } from './modules/auth/trust-proxy';
 
 async function bootstrap() {
   // rawBody: webhook signatures (X-Hub-Signature-256) are computed over the exact bytes.
-  const app = await NestFactory.create(AppModule, { rawBody: true });
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
+    rawBody: true,
+  });
+  // Behind Traefik / the web container `req.ip` must be the real client, not the proxy:
+  // throttling, the audit log and the webhook IP check all read it. See TRUST_PROXY.
+  app.set('trust proxy', parseTrustProxy(process.env.TRUST_PROXY));
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,

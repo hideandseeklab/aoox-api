@@ -14,7 +14,9 @@ import {
   TwoFactorRequiredDto,
 } from './sign-in.dto';
 import { SignInService } from './sign-in.service';
+import { ThrottleByIp } from '../throttle-by-ip.decorator';
 
+@ThrottleByIp()
 @Controller('auth')
 export class SignInController {
   constructor(private readonly signInService: SignInService) {}

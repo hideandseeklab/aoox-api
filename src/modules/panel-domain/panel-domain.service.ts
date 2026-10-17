@@ -9,14 +9,29 @@ import {
   PANEL_DOMAIN_SETTINGS_ID,
   PanelDomainSettings,
 } from './panel-domain-settings.entity';
-import { renderPanelOverride } from './panel-domain.util';
+import {
+  assertRestrictPortsAllowed,
+  RESTRICT_PORTS_RECOVERY,
+  renderClearDomainScript,
+  renderPanelOverride,
+  toDaemonUnreachable,
+} from './panel-domain.util';
 import { UpdatePanelDomainDto } from './update-panel-domain.dto';
 
 const OVERRIDE_FILE = 'docker-compose.override.yml';
 
 export interface PanelDomainStatus {
   settings: PanelDomainSettings;
-  applied: { webOrigin: string | null; publicApiUrl: string | null };
+  applied: {
+    webOrigin: string | null;
+    publicApiUrl: string | null;
+    /**
+     * Read from the running containers: true when web and api are published on
+     * loopback only, false when any binding is public, null when the panel's
+     * containers cannot be inspected (e.g. dev run without compose).
+     */
+    portsRestricted: boolean | null;
+  };
   installDirConfigured: boolean;
 }
 
@@ -31,6 +46,20 @@ export interface UpdatePanelDomainResult {
    * firewall/cloud security group may still be blocking ports 80/443.
    */
   proxyAutoProvisioned: boolean;
+  /**
+   * Set when "only allow access through the domain" is on: what to do if the
+   * domain stops working and IP:port access is gone.
+   */
+  restrictPortsNote: string | null;
+}
+
+export interface ClearPanelDomainResult {
+  settings: PanelDomainSettings;
+  /**
+   * Where to reopen the dashboard after the restart (`http://<PUBLIC_IP>:3000`),
+   * or null when PUBLIC_IP is not configured and the address is unknown.
+   */
+  reopenUrl: string | null;
 }
 
 /**
@@ -65,9 +94,37 @@ export class PanelDomainService {
       applied: {
         webOrigin: this.config.get<string>('WEB_ORIGIN') ?? null,
         publicApiUrl: this.config.get<string>('PUBLIC_API_URL') ?? null,
+        portsRestricted: await this.portsRestricted(),
       },
       installDirConfigured: this.installDir !== null,
     };
+  }
+
+  /**
+   * Whether the panel's published ports are loopback-only right now, from the
+   * running `web`/`api` containers (the truth, not the saved flag: the override
+   * may not have been applied yet, or was edited by hand).
+   */
+  private async portsRestricted(): Promise<boolean | null> {
+    try {
+      const list = await this.docker.engine.listContainers({
+        label: ['com.docker.compose.project=aoox'],
+      });
+      const bound = list.filter(
+        (c) =>
+          ['web', 'api'].includes(
+            c.Labels?.['com.docker.compose.service'] ?? '',
+          ) && c.State === 'running',
+      );
+      if (bound.length < 2) return null;
+      return bound.every((c) =>
+        (c.Ports ?? [])
+          .filter((p) => p.PublicPort !== undefined)
+          .every((p) => p.IP === '127.0.0.1' || p.IP === '::1'),
+      );
+    } catch {
+      return null;
+    }
   }
 
   async settings(): Promise<PanelDomainSettings> {
@@ -81,6 +138,7 @@ export class PanelDomainService {
         webHost: null,
         apiHost: null,
         acmeEmail: null,
+        restrictPorts: false,
         updatedAt: null,
       })
     );
@@ -92,6 +150,10 @@ export class PanelDomainService {
     if (webHost === apiHost) {
       throw new BadRequestException('webHost and apiHost must be different');
     }
+    const row = await this.settings();
+    // Omitted = keep what is stored (like acmeEmail); false opens the ports again.
+    const restrictPorts = dto.restrictPorts ?? row.restrictPorts;
+    assertRestrictPortsAllowed(webHost, apiHost, restrictPorts);
     const installDir = this.installDir;
     if (!installDir) {
       throw new BadRequestException(
@@ -105,14 +167,16 @@ export class PanelDomainService {
     // dashboard whether the proxy is about to be auto-provisioned, and it can
     // show the operator what to double-check (DNS, firewall) rather than
     // leaving them to guess why the new domain isn't reachable yet.
-    const proxyStatus = await this.proxy.status();
+    const proxyStatus = await this.proxy.status().catch((err: unknown) => {
+      throw toDaemonUnreachable(err);
+    });
     const proxyAutoProvisioned = !proxyStatus.running;
 
-    const row = await this.settings();
     const saved = await this.repo.save(
       this.repo.merge(row, {
         webHost,
         apiHost,
+        restrictPorts,
         // acmeEmail is optional so re-applying just the hosts doesn't clobber
         // an ACME email set on a previous call.
         ...(dto.acmeEmail !== undefined
@@ -129,7 +193,61 @@ export class PanelDomainService {
       });
     }, 1500);
 
-    return { settings: saved, proxyAutoProvisioned };
+    return {
+      settings: saved,
+      proxyAutoProvisioned,
+      restrictPortsNote: restrictPorts ? RESTRICT_PORTS_RECOVERY : null,
+    };
+  }
+
+  /**
+   * Removes the panel domain: back to IP access. The stored hosts are cleared
+   * and `restrictPorts` turns off (it needs both hosts). The ACME email stays:
+   * the shared proxy and every application domain keep using it, and the next
+   * domain the owner sets is pre-filled. The proxy container and other
+   * domains are not touched. Detached like `update()` (the web/api containers,
+   * including this one, are recreated).
+   */
+  async clear(): Promise<ClearPanelDomainResult> {
+    const installDir = this.installDir;
+    if (!installDir) {
+      throw new BadRequestException(
+        'INSTALL_DIR is not set — add INSTALL_DIR=<absolute path of the folder ' +
+          'holding docker-compose.dist.yml on this host> to .env.dist and restart, ' +
+          'then try again',
+      );
+    }
+    const row = await this.settings();
+    const origin = this.config.get<string>('WEB_ORIGIN') ?? '';
+    if (!row.webHost && !row.apiHost && !origin.startsWith('https://')) {
+      throw new BadRequestException('No panel domain is set');
+    }
+    // The apply below needs the daemon; fail now, before anything is saved.
+    await this.docker.engine.ping().catch((err: unknown) => {
+      throw toDaemonUnreachable(err);
+    });
+
+    const saved = await this.repo.save(
+      this.repo.merge(row, {
+        webHost: null,
+        apiHost: null,
+        restrictPorts: false,
+        updatedAt: new Date(),
+      }),
+    );
+
+    setTimeout(() => {
+      runComposeHelper(
+        this.docker,
+        installDir,
+        renderClearDomainScript(installDir),
+      ).catch((err: unknown) => {
+        this.logger.error(`Removing panel domain failed: ${String(err)}`);
+      });
+    }, 1500);
+
+    const ip = this.config.get<string>('PUBLIC_IP')?.trim() || null;
+    return { settings: saved, reopenUrl: ip ? `http://${ip}:3000` : null };
   }
 
   private async apply(
@@ -162,6 +280,7 @@ export class PanelDomainService {
     const override = renderPanelOverride(settings.webHost!, settings.apiHost!, {
       httpsPort,
       acme: acmeEmail !== null,
+      restrictPorts: settings.restrictPorts,
     });
 
     const script = [

@@ -13,8 +13,10 @@ import type { Request } from 'express';
 import { Throttle } from '@nestjs/throttler';
 import { WebhookParamsDto, WebhookResponseDto } from './webhook-deploy.dto';
 import { WebhookDeployService } from './webhook-deploy.service';
+import { ThrottleByIp } from '../../auth/throttle-by-ip.decorator';
 
 /** Public endpoint (no JWT): called by GitHub/GitLab on push. */
+@ThrottleByIp()
 @Controller('webhooks')
 export class WebhookDeployController {
   constructor(private readonly service: WebhookDeployService) {}

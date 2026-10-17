@@ -16,6 +16,7 @@ import {
   ComposeWebhookResultDto,
   WebhookDeployComposeService,
 } from './webhook-deploy-compose.service';
+import { ThrottleByIp } from '../../auth/throttle-by-ip.decorator';
 
 export class ComposeWebhookParamsDto {
   @IsString()
@@ -24,6 +25,7 @@ export class ComposeWebhookParamsDto {
 }
 
 /** Public endpoint (no JWT): called by GitHub/GitLab on push to a stack's repo. */
+@ThrottleByIp()
 @Controller('webhooks/compose')
 export class WebhookDeployComposeController {
   constructor(private readonly service: WebhookDeployComposeService) {}

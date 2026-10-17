@@ -8,6 +8,17 @@ Versions below 1.0.0 may include breaking changes in a minor release.
 
 ## [Unreleased]
 
+### Added
+
+- **Remove the panel domain.** `DELETE /instance/domain` (owner, 202, throttled like PATCH) clears the saved hosts, turns `restrictPorts` off, deletes `docker-compose.override.yml`, sets `WEB_ORIGIN`/`PUBLIC_API_URL` back to `http://<PUBLIC_IP>:<WEB_PORT>`/`:<API_PORT>` (`localhost`, 3000 and 3001 when unset, as the installer writes them), blanks `WEB_DOMAIN`/`API_DOMAIN`/`COOKIE_SECURE` and recreates `web`/`api` without the override. The ACME email, the proxy and application domains are left alone. Answers `{settings, reopenUrl}`; 400 without `INSTALL_DIR` or when no domain is set.
+- **Opt-in "only allow access through the domain" for the panel.** `PATCH /instance/domain` takes `restrictPorts` (default off, omitted keeps the stored value, `false` opens the ports again). When on, the generated `docker-compose.override.yml` replaces the web and api port lists with `127.0.0.1:${WEB_PORT:-3000}:3000` / `127.0.0.1:${API_PORT:-3001}:3001` through the Compose `!override` tag (an override cannot replace a base `ports` list otherwise; needs Compose 2.24.4+ for manual commands, the panel's own helper uses its newer Compose), so everything outside goes through Traefik and the per-IP sign-in limit can no longer be bypassed by calling port 3000 with a forged `X-Forwarded-For`. It needs both the dashboard and the API domain, works on existing installs without `aoox reinstall` and leaves the default file byte-identical. `GET /instance/domain` reports `settings.restrictPorts` and `applied.portsRestricted` (read from the running containers); the PATCH answer carries a `restrictPortsNote` with the SSH recovery steps. New column `panel_domain_settings.restrict_ports` (migration `PanelDomainRestrictPorts`, additive).
+
+### Fixed
+
+- **`PATCH /instance/domain` no longer answers 500 when Docker is down.** It (and the new `DELETE`) now answers 502 "The Docker daemon is not reachable (...)" before anything is saved.
+- **The API now sees the real client IP behind Traefik and the web container.** Express `trust proxy` was never set, so `req.ip` was the proxy's address: every anonymous request (including sign-in, throttled per IP) shared one bucket, so one attacker guessing passwords locked every user out, and the audit log and sign-in log recorded the proxy. `main.ts` now sets it from the new `TRUST_PROXY` env (empty = `loopback, linklocal, uniquelocal`: private-network hops only, never a public address, so a client reaching the API port directly from the internet cannot fake `X-Forwarded-For`). Accepts `true`, `false`/`0`, a hop count, or a comma list of IPs/CIDRs/presets; a typo fails at boot. Anyone on the same private network as the API can still set the header. Optional in `docker-compose.dist.yml` (`${TRUST_PROXY:-}`, copied to the CLI installer) and commented in `.env.dist.example`.
+- **Rate limits are now per user instead of per IP.** People behind the same NAT or reverse proxy shared one quota, so one developer revealing variables could lock an admin out. Requests with a valid session or API token are counted per user (a user's tokens and sessions share one quota); anonymous requests, and invalid or forged credentials, still count per IP. Sign-in, 2FA, setup, invitation and webhook routes always stay per IP, so brute-force protection is unchanged.
+
 ## [0.1.0-alpha.11] - 2026-10-15
 
 ### Added

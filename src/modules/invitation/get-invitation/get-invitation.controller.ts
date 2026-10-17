@@ -5,8 +5,10 @@ import {
   InvitationPreviewDto,
   InvitationTokenParamsDto,
 } from './get-invitation.dto';
+import { ThrottleByIp } from '../../auth/throttle-by-ip.decorator';
 
 /** Public: lets the accept page show who the invitation is for. */
+@ThrottleByIp()
 @Controller('invitations')
 export class GetInvitationController {
   constructor(private readonly invitations: InvitationService) {}

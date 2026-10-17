@@ -17,6 +17,13 @@ export class PanelDomainSettings {
   @Column({ name: 'acme_email', type: 'varchar', nullable: true })
   acmeEmail: string | null;
 
+  /**
+   * Opt-in: publish the panel's ports 3000/3001 on 127.0.0.1 only so all
+   * outside access goes through the domain (Traefik). Requires both hosts.
+   */
+  @Column({ name: 'restrict_ports', type: 'boolean', default: false })
+  restrictPorts: boolean;
+
   @Column({ name: 'updated_at', type: 'timestamptz', nullable: true })
   updatedAt: Date | null;
 }

@@ -3,7 +3,9 @@ import { Throttle } from '@nestjs/throttler';
 import { SignInResponseDto } from '../sign-in/sign-in.dto';
 import { SetupDto } from './setup.dto';
 import { SetupService } from './setup.service';
+import { ThrottleByIp } from '../throttle-by-ip.decorator';
 
+@ThrottleByIp()
 @Controller('auth')
 export class SetupController {
   constructor(private readonly service: SetupService) {}

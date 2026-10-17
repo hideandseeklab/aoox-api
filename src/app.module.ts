@@ -1,12 +1,13 @@
 import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
-import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { ThrottlerModule } from '@nestjs/throttler';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { ApiTokenModule } from './modules/api-token/api-token.module';
 import { AuditLogModule } from './modules/audit-log/audit-log.module';
 import { ApplicationModule } from './modules/application/application.module';
+import { IdentityThrottlerGuard } from './modules/auth/identity-throttler.guard';
 import { AuthModule } from './modules/auth/auth.module';
 import { RequestContextMiddleware } from './modules/auth/request-context';
 import { BackupDestinationModule } from './modules/backup-destination/backup-destination.module';
@@ -97,7 +98,10 @@ import { VolumeBackupModule } from './modules/volume-backup/volume-backup.module
     DatabaseBackupModule,
   ],
   controllers: [AppController],
-  providers: [AppService, { provide: APP_GUARD, useClass: ThrottlerGuard }],
+  providers: [
+    AppService,
+    { provide: APP_GUARD, useClass: IdentityThrottlerGuard },
+  ],
 })
 export class AppModule implements NestModule {
   /** Every request runs inside an AsyncLocalStorage store (see request-context.ts). */

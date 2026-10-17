@@ -12,6 +12,8 @@ const ALPHABET =
   'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
 /** `lastUsedAt` is written at most this often per token. */
 const TOUCH_INTERVAL_MS = 60_000;
+const OWNER_CACHE_MS = 60_000;
+const OWNER_CACHE_MAX = 1000;
 
 export function hashToken(token: string): string {
   return createHash('sha256').update(token).digest('hex');
@@ -31,6 +33,8 @@ export function looksLikeApiToken(bearer: string): boolean {
 @Injectable()
 export class ApiTokenService {
   private readonly touched = new Map<string, number>();
+  /** token hash -> owner id, for rate-limit keying only (see IdentityThrottlerGuard). */
+  private readonly owners = new Map<string, { userId: string; at: number }>();
 
   constructor(
     @InjectRepository(ApiToken) readonly repo: Repository<ApiToken>,
@@ -80,6 +84,28 @@ export class ApiTokenService {
     if (token.expiresAt && token.expiresAt.getTime() < Date.now()) return null;
     this.touch(token.id);
     return { token, user: token.user };
+  }
+
+  /**
+   * Owner of a valid-looking token, for rate limiting. Positive results are
+   * cached for a minute so the throttler adds no query per request; unknown
+   * tokens are not cached and return null (the caller falls back to the IP).
+   * Expiry is not checked: the auth guard rejects those requests anyway.
+   */
+  async ownerIdOf(bearer: string): Promise<string | null> {
+    if (!looksLikeApiToken(bearer)) return null;
+    const hash = hashToken(bearer);
+    const now = Date.now();
+    const hit = this.owners.get(hash);
+    if (hit && hit.at > now - OWNER_CACHE_MS) return hit.userId;
+    const row = await this.repo.findOne({
+      where: { tokenHash: hash },
+      select: { id: true, userId: true },
+    });
+    if (!row) return null;
+    if (this.owners.size >= OWNER_CACHE_MAX) this.owners.clear();
+    this.owners.set(hash, { userId: row.userId, at: now });
+    return row.userId;
   }
 
   private touch(id: string): void {

@@ -121,6 +121,9 @@ services:
       # (<app>-pr<N>.<domain>, needs a wildcard DNS record).
       WEBHOOK_VERIFY_GITHUB_IP: ${WEBHOOK_VERIFY_GITHUB_IP:-}
       PREVIEW_DOMAIN: ${PREVIEW_DOMAIN:-}
+      # Which proxy hops may set the client IP (X-Forwarded-For). Empty = private networks
+      # only (Traefik, the web container); see TRUST_PROXY in .env.dist.example.
+      TRUST_PROXY: ${TRUST_PROXY:-}
     # The api container runs as the unprivileged `node` user; add the gid that
     # owns the docker socket on the host (stat -c %g /var/run/docker.sock).
     group_add:
