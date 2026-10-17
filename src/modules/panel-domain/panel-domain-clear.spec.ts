@@ -10,6 +10,7 @@ import { PanelDomainSettings } from './panel-domain-settings.entity';
 import { PanelDomainService } from './panel-domain.service';
 import {
   renderClearDomainScript,
+  reopenUrlFor,
   toDaemonUnreachable,
 } from './panel-domain.util';
 
@@ -179,5 +180,25 @@ describe('PanelDomainService daemon down / clear', () => {
     expect(r.settings.restrictPorts).toBe(false);
     expect(r.settings.acmeEmail).toBe('me@example.com');
     expect(r.reopenUrl).toBe('http://203.0.113.9:3000');
+  });
+});
+
+describe('reopenUrlFor', () => {
+  it('uses the configured web port', () => {
+    expect(reopenUrlFor('203.0.113.9', '3100')).toBe('http://203.0.113.9:3100');
+  });
+
+  it('falls back to 3000 when WEB_PORT is empty, unset or invalid', () => {
+    for (const p of [undefined, null, '', '  ', 'abc', '0', '70000', '30 00']) {
+      expect(reopenUrlFor('203.0.113.9', p)).toBe('http://203.0.113.9:3000');
+    }
+  });
+
+  it('is null without PUBLIC_IP and brackets an IPv6 address', () => {
+    expect(reopenUrlFor('', '3100')).toBeNull();
+    expect(reopenUrlFor(undefined, '3100')).toBeNull();
+    expect(reopenUrlFor('2001:db8::1', '8080')).toBe(
+      'http://[2001:db8::1]:8080',
+    );
   });
 });

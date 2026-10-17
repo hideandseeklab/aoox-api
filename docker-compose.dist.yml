@@ -102,6 +102,9 @@ services:
       CONTAINER_LOG_MAX_FILE: ${CONTAINER_LOG_MAX_FILE:-3}
       # Public IP app domains must point at (DNS check); auto-detected when empty.
       PUBLIC_IP: ${PUBLIC_IP:-}
+      # Host port the web is published on (same value as the `web` port mapping); only used
+      # to tell the owner where to reopen the dashboard after removing the panel domain.
+      WEB_PORT: ${WEB_PORT:-3000}
       STORAGE_PATH: ${STORAGE_PATH:-}
       # Absolute path, on this host, of the folder holding this file — required
       # only for Settings -> "Domain panel" (lets the API write

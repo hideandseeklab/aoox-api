@@ -14,6 +14,7 @@ import {
   RESTRICT_PORTS_RECOVERY,
   renderClearDomainScript,
   renderPanelOverride,
+  reopenUrlFor,
   toDaemonUnreachable,
 } from './panel-domain.util';
 import { UpdatePanelDomainDto } from './update-panel-domain.dto';
@@ -56,7 +57,7 @@ export interface UpdatePanelDomainResult {
 export interface ClearPanelDomainResult {
   settings: PanelDomainSettings;
   /**
-   * Where to reopen the dashboard after the restart (`http://<PUBLIC_IP>:3000`),
+   * Where to reopen the dashboard after the restart (`http://<PUBLIC_IP>:<WEB_PORT>`, port 3000 when unset),
    * or null when PUBLIC_IP is not configured and the address is unknown.
    */
   reopenUrl: string | null;
@@ -246,8 +247,13 @@ export class PanelDomainService {
       });
     }, 1500);
 
-    const ip = this.config.get<string>('PUBLIC_IP')?.trim() || null;
-    return { settings: saved, reopenUrl: ip ? `http://${ip}:3000` : null };
+    return {
+      settings: saved,
+      reopenUrl: reopenUrlFor(
+        this.config.get<string>('PUBLIC_IP'),
+        this.config.get<string>('WEB_PORT'),
+      ),
+    };
   }
 
   private async apply(

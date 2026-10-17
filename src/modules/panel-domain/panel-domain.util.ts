@@ -178,3 +178,24 @@ export function renderClearDomainScript(installDir: string): string {
     'docker compose -f docker-compose.dist.yml --env-file .env.dist up -d',
   ].join('\n');
 }
+
+/**
+ * Address to reopen the dashboard on after the panel domain is removed:
+ * `http://<PUBLIC_IP>:<WEB_PORT>`. `WEB_PORT` falls back to 3000 when empty,
+ * unset (installs whose compose file predates the variable) or not a valid
+ * port. Null when PUBLIC_IP is not configured.
+ */
+export function reopenUrlFor(
+  publicIp?: string | null,
+  webPort?: string | null,
+): string | null {
+  const ip = publicIp?.trim();
+  if (!ip) return null;
+  const raw = webPort?.trim() || '3000';
+  const port =
+    /^\d{1,5}$/.test(raw) && Number(raw) >= 1 && Number(raw) <= 65535
+      ? raw
+      : '3000';
+  const host = ip.includes(':') && !ip.startsWith('[') ? `[${ip}]` : ip;
+  return `http://${host}:${Number(port)}`;
+}
