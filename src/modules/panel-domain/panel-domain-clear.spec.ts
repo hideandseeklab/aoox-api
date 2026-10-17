@@ -1,7 +1,7 @@
 import { BadGatewayException, BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { execFileSync } from 'child_process';
-import { mkdtempSync, readFileSync, writeFileSync } from 'fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { DockerService } from '../docker/docker.service';
@@ -72,8 +72,13 @@ describe('renderClearDomainScript', () => {
         'cd /opt/aoox',
         `cd '${dir.split(String.fromCharCode(92)).join('/')}'`,
       );
-    execFileSync('sh', ['-c', envPart]);
-    const out = readFileSync(join(dir, '.env.dist'), 'utf8');
+    let out: string;
+    try {
+      execFileSync('sh', ['-c', envPart]);
+      out = readFileSync(join(dir, '.env.dist'), 'utf8');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
     expect(out).toContain('WEB_DOMAIN=\n');
     expect(out).toContain('API_DOMAIN=\n');
     expect(out).toContain('COOKIE_SECURE=\n');

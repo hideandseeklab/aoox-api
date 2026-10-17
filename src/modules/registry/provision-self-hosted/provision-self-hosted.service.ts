@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   ServiceUnavailableException,
@@ -30,15 +31,29 @@ export class ProvisionSelfHostedService {
     if (await this.registries.findSelfHosted()) {
       throw new ConflictException('Self-hosted registry already provisioned');
     }
-    if ((await this.selfHosted.status()).installed) {
-      throw new ConflictException(
-        'A registry container already exists; remove it first',
-      );
+    if (dto.purgeVolumes && !dto.replace) {
+      throw new BadRequestException('purgeVolumes requires replace');
+    }
+    const existing = await this.selfHosted.status();
+    if (existing.installed && !dto.replace) {
+      throw new ConflictException({
+        statusCode: 409,
+        code: 'registry-container-exists',
+        message:
+          'A container named aoox-registry already exists on this server but is not registered in aoox. ' +
+          'Provisioning would collide with it. Choose to replace it (its data volumes are kept unless you also purge them), or remove it manually.',
+        error: 'Conflict',
+      });
     }
 
+    // Resolve first: a bad destination must not cost the operator the old container.
     const destination = dto.destinationId
       ? (await this.destinations.resolve(dto.destinationId)).config
       : null;
+
+    if (existing.installed) {
+      await this.selfHosted.remove(dto.purgeVolumes === true);
+    }
 
     const { username, password } = await this.selfHosted.provision(destination);
     const entity = this.registries.repo.create({
