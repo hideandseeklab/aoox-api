@@ -1,4 +1,4 @@
-import { parseImageRef } from './image-reference';
+import { parseImageRef, withTag } from './image-reference';
 
 describe('parseImageRef', () => {
   it('normalizes Docker Hub references', () => {
@@ -36,5 +36,21 @@ describe('parseImageRef', () => {
       tag: 'latest',
       digest: 'sha256:abc',
     });
+  });
+});
+
+describe('withTag', () => {
+  it.each([
+    ['repo:1.0', '1.1', 'repo:1.1'],
+    ['repo', '1.1', 'repo:1.1'],
+    [
+      'localhost:5000/org/app:0.1.0-alpha.2',
+      '0.1.0-alpha.3',
+      'localhost:5000/org/app:0.1.0-alpha.3',
+    ],
+    ['localhost:5000/app', '2', 'localhost:5000/app:2'],
+    ['ghcr.io/o/a:1@sha256:abc', '2', 'ghcr.io/o/a:2'],
+  ])('%s + %s', (ref, tag, out) => {
+    expect(withTag(ref, tag)).toBe(out);
   });
 });

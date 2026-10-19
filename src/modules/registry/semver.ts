@@ -87,3 +87,63 @@ export function isNewer(latest: string, current: string): boolean {
   const c = parseSemver(current);
   return !!l && !!c && compareSemver(l, c) > 0;
 }
+
+/**
+ * Pre-release labels that mean "a build on the way to a release"
+ * (`alpha.3`, `rc.1`). Any other pre-release identifier on an image tag is a
+ * variant suffix (`1.27.0-alpine`, `3.2.1-slim`), not a channel.
+ */
+const CHANNEL_LABEL =
+  /^(alpha|beta|rc|pre|preview|dev|canary|next|nightly|snapshot|a|b)\d*$/i;
+
+function isVariantSuffix(v: Semver): boolean {
+  return v.prerelease.length > 0 && !CHANNEL_LABEL.test(v.prerelease[0]);
+}
+
+export interface NewerTagOptions {
+  /**
+   * Stay on the current compatible line: same major, and for `0.x` the same
+   * minor (semver treats 0.y as unstable, so 0.1 -> 0.2 may break).
+   */
+  compatibleOnly?: boolean;
+}
+
+/**
+ * Newest image tag in `tags` that is strictly newer than `current`, or null.
+ * For deployed-image update hints (unlike `newestVersion`, which only ranks
+ * a list). Rules:
+ * - `current` must be semver; non-semver candidates (`latest`, `sha-…`) are ignored.
+ * - A stable tag is never offered a pre-release; a pre-release is offered
+ *   anything newer, stable included.
+ * - A leading `v` is kept consistent: `v1.2.3` only sees `v…` tags, `1.2.3` only plain ones.
+ * - A variant suffix (`-alpine`) is part of the identity: only tags with the
+ *   very same suffix are offered, so `1.27.0-alpine` never moves to plain `1.27.1`.
+ */
+export function newerImageTag(
+  tags: string[],
+  current: string,
+  opts: NewerTagOptions = {},
+): string | null {
+  const cur = parseSemver(current);
+  if (!cur) return null;
+  const curV = current.trim().startsWith('v');
+  const curVariant = isVariantSuffix(cur) ? cur.prerelease.join('.') : null;
+  const allowPrerelease = cur.prerelease.length > 0;
+  let best: { tag: string; v: Semver } | null = null;
+  for (const tag of tags) {
+    const v = parseSemver(tag);
+    if (!v) continue;
+    if (tag.trim().startsWith('v') !== curV) continue;
+    const variant = isVariantSuffix(v) ? v.prerelease.join('.') : null;
+    if (variant !== curVariant) continue;
+    if (variant === null && v.prerelease.length > 0 && !allowPrerelease)
+      continue;
+    if (compareSemver(v, cur) <= 0) continue;
+    if (opts.compatibleOnly) {
+      if (v.major !== cur.major) continue;
+      if (cur.major === 0 && v.minor !== cur.minor) continue;
+    }
+    if (!best || compareSemver(v, best.v) > 0) best = { tag, v };
+  }
+  return best?.tag ?? null;
+}

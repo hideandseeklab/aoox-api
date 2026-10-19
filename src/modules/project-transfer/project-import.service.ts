@@ -178,6 +178,13 @@ export class ProjectImportService {
           gitUrl: a.gitUrl ?? null,
           gitBranch: a.gitBranch || 'main',
           imageRef: a.imageRef ?? null,
+          autoUpdate:
+            (a.sourceType ?? 'git') === 'image' && a.autoUpdate === true,
+          autoUpdateIntervalMinutes: validInterval(a.autoUpdateIntervalMinutes),
+          autoUpdateFollowTags:
+            (a.sourceType ?? 'git') === 'image' &&
+            a.autoUpdate === true &&
+            a.autoUpdateFollowTags === true,
           imageRegistryId: resolve(
             'registry',
             registryIds,
@@ -593,6 +600,13 @@ export class ProjectImportService {
     }
     return n;
   }
+}
+
+/** Image check interval from a file: 5-1440 whole minutes, else the default 60. */
+function validInterval(v: unknown): number {
+  return typeof v === 'number' && Number.isInteger(v) && v >= 5 && v <= 1440
+    ? v
+    : 60;
 }
 
 function validCron(

@@ -96,7 +96,10 @@ export class UpdateApplicationService {
     if (dto.autoUpdate !== undefined) app.autoUpdate = dto.autoUpdate;
     if (dto.autoUpdateIntervalMinutes !== undefined)
       app.autoUpdateIntervalMinutes = dto.autoUpdateIntervalMinutes;
+    if (dto.autoUpdateFollowTags !== undefined)
+      app.autoUpdateFollowTags = dto.autoUpdateFollowTags;
     if (app.sourceType !== 'image') app.autoUpdate = false;
+    if (!app.autoUpdate) app.autoUpdateFollowTags = false;
     if (app.sourceType === 'image' && !app.imageRef) {
       throw new BadRequestException(
         'imageRef is required for the image source',

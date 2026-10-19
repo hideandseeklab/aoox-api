@@ -12,7 +12,7 @@ import {
   INSTANCE_UPDATE_STATE_ID,
   InstanceUpdateState,
 } from './instance-update-state.entity';
-import { isNewer, newestVersion, parseSemver } from './semver';
+import { isNewer, newestVersion, parseSemver } from '../registry/semver';
 
 const DEFAULT_API_IMAGE = 'hideandseeklab/aoox-api:latest';
 /** Longest a started update still counts as "in progress" for the badge. */

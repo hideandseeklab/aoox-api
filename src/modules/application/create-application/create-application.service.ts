@@ -72,6 +72,10 @@ export class CreateApplicationService {
         dto.sourceType === 'image' ? (dto.imageRegistryId ?? null) : null,
       autoUpdate:
         dto.sourceType === 'image' ? (dto.autoUpdate ?? false) : false,
+      autoUpdateFollowTags:
+        dto.sourceType === 'image'
+          ? (dto.autoUpdate ?? false) && (dto.autoUpdateFollowTags ?? false)
+          : false,
       autoUpdateIntervalMinutes: dto.autoUpdateIntervalMinutes ?? 60,
       gitBranch: dto.gitBranch?.trim() || 'main',
       dockerfilePath: dto.dockerfilePath?.trim() || 'Dockerfile',

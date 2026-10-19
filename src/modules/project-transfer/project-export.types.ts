@@ -40,6 +40,10 @@ export interface ExportedApplication {
   gitUrl: string | null;
   gitBranch: string;
   imageRef: string | null;
+  /** Image auto update (absent in files from before they were exported). */
+  autoUpdate?: boolean;
+  autoUpdateIntervalMinutes?: number;
+  autoUpdateFollowTags?: boolean;
   dockerfilePath: string;
   /** Monorepo subfolder (absent in files from before it existed). */
   rootDirectory?: string | null;

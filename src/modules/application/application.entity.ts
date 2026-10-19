@@ -80,6 +80,22 @@ export class Application {
   })
   autoUpdateIntervalMinutes: number;
 
+  /**
+   * `image` only, with `autoUpdate`: also move to the newest compatible version
+   * tag (same major; 0.x: same minor) before comparing digests.
+   */
+  @Column({ name: 'auto_update_follow_tags', default: false })
+  autoUpdateFollowTags: boolean;
+
+  /** Last tag the watcher switched to; it is never tried again (no retry loop after a failed deploy or a manual revert). */
+  @Column({
+    name: 'auto_update_last_tag',
+    type: 'varchar',
+    length: 128,
+    nullable: true,
+  })
+  autoUpdateLastTag: string | null;
+
   /** Digest of the image currently deployed (`sha256:…`), set after each pull. */
   @Column({ name: 'image_digest', type: 'varchar', nullable: true })
   imageDigest: string | null;

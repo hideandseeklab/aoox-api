@@ -55,4 +55,18 @@ describe('triggerSummary', () => {
       }),
     ).toBe('Triggered by webhook');
   });
+
+  it('names the tag when auto-update followed a new version', () => {
+    const base = { commitSha: null, triggeredBy: null };
+    expect(
+      triggerSummary({
+        ...base,
+        trigger: 'auto-update',
+        commitMessage: 'to 0.1.1 (was 0.1.0)',
+      }),
+    ).toBe('Triggered by auto-update to 0.1.1 (was 0.1.0)');
+    expect(
+      triggerSummary({ ...base, trigger: 'auto-update', commitMessage: null }),
+    ).toBe('Triggered by auto-update (new image digest)');
+  });
 });

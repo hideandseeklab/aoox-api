@@ -88,4 +88,68 @@ describe('fetchRemoteTags', () => {
       /token request failed \(403\)/,
     );
   });
+
+  it('sends Basic credentials on the first request and the token request', async () => {
+    fetchMock
+      .mockResolvedValueOnce(
+        new Response('', {
+          status: 401,
+          headers: {
+            'www-authenticate':
+              'Bearer realm="https://auth.example/t",service="r"',
+          },
+        }),
+      )
+      .mockResolvedValueOnce(json({ token: 'tok' }))
+      .mockResolvedValueOnce(json({ tags: ['1.0.0'] }));
+    await fetchRemoteTags('http://reg', 'org/app', {
+      username: 'u',
+      password: 'p',
+    });
+    const basic = 'Basic ' + Buffer.from('u:p').toString('base64');
+    expect(
+      (fetchMock.mock.calls[0][1]?.headers as Record<string, string>)
+        .Authorization,
+    ).toBe(basic);
+    expect(
+      (fetchMock.mock.calls[1][1]?.headers as Record<string, string>)
+        .Authorization,
+    ).toBe(basic);
+    expect(
+      (fetchMock.mock.calls[2][1]?.headers as Record<string, string>)
+        .Authorization,
+    ).toBe('Bearer tok');
+  });
+
+  it('never puts credentials in an error message', async () => {
+    fetchMock.mockResolvedValueOnce(new Response('', { status: 403 }));
+    await expect(
+      fetchRemoteTags('http://reg', 'org/app', {
+        username: 'u',
+        password: 'hunter2',
+      }),
+    ).rejects.not.toThrow(/hunter2/);
+  });
+
+  it('follows Link rel=next on the same origin and ignores other origins', async () => {
+    fetchMock
+      .mockResolvedValueOnce(
+        json({ tags: ['a'] }, 200, {
+          link: '</v2/org/app/tags/list?last=a&n=1000>; rel="next"',
+        }),
+      )
+      .mockResolvedValueOnce(
+        json({ tags: ['b'] }, 200, {
+          link: '<https://evil.example/v2/x>; rel="next"',
+        }),
+      );
+    await expect(fetchRemoteTags('http://reg', 'org/app')).resolves.toEqual([
+      'a',
+      'b',
+    ]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[1][0] as string).toBe(
+      'http://reg/v2/org/app/tags/list?last=a&n=1000',
+    );
+  });
 });

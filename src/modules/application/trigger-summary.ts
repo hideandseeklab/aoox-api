@@ -20,7 +20,10 @@ export function triggerSummary(d: TriggerSummaryInput): string {
     return `Triggered by webhook${parts.length ? ` (${parts.join(' ')})` : ''}`;
   }
   if (d.trigger === 'auto-update') {
-    return 'Triggered by auto-update (new image digest)';
+    // Version following names the new tag in commitMessage (`to 0.1.1 (was 0.1.0)`).
+    return d.commitMessage
+      ? `Triggered by auto-update ${d.commitMessage}`
+      : 'Triggered by auto-update (new image digest)';
   }
   return d.triggeredBy
     ? `Triggered manually by ${d.triggeredBy}`

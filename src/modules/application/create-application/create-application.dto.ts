@@ -126,6 +126,11 @@ export class CreateApplicationDto {
   @IsIn(['auto', 'start-first', 'stop-first'])
   updateOrder?: UpdateOrder;
 
+  /** `image` source with autoUpdate: also follow newer compatible version tags. */
+  @IsOptional()
+  @IsBoolean()
+  autoUpdateFollowTags?: boolean;
+
   /** Minutes between registry checks (5–1440). */
   @IsOptional()
   @IsInt()

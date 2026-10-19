@@ -1,6 +1,7 @@
 import {
   compareSemver,
   isNewer,
+  newerImageTag,
   newestVersion,
   parseSemver,
   Semver,
@@ -163,5 +164,66 @@ describe('isNewer', () => {
     ['0.2.0', 'latest', false],
   ])('isNewer(%s, %s) = %s', (l, c, want) => {
     expect(isNewer(l, c)).toBe(want);
+  });
+});
+
+describe('newerImageTag', () => {
+  const tags = [
+    'latest',
+    '0.1.0-alpha.1',
+    '0.1.0-alpha.2',
+    '0.1.0-alpha.3',
+    '0.1.1',
+    '0.2.0',
+    'v0.1.5',
+    'sha-abc',
+  ];
+  it('picks the newest higher version, ignoring non-semver and the other v style', () => {
+    expect(newerImageTag(tags, '0.1.0-alpha.2')).toBe('0.2.0');
+  });
+  it('compatibleOnly stays in 0.1.x', () => {
+    expect(newerImageTag(tags, '0.1.0-alpha.2', { compatibleOnly: true })).toBe(
+      '0.1.1',
+    );
+  });
+  it('keeps the v style', () => {
+    expect(newerImageTag(tags, 'v0.1.0', { compatibleOnly: true })).toBe(
+      'v0.1.5',
+    );
+  });
+  it('is null when nothing is newer or the current tag is not semver', () => {
+    expect(newerImageTag(tags, '0.2.0')).toBeNull();
+    expect(newerImageTag(tags, 'latest')).toBeNull();
+    expect(newerImageTag(tags, '0.1.0-alpha.3', { compatibleOnly: true })).toBe(
+      '0.1.1',
+    );
+  });
+  it('never offers a pre-release to a stable tag', () => {
+    expect(newerImageTag(['1.0.0', '1.1.0-beta.1', '1.0.1'], '1.0.0')).toBe(
+      '1.0.1',
+    );
+    expect(newerImageTag(['1.1.0-beta.1'], '1.0.0')).toBeNull();
+  });
+  it('offers a pre-release anything newer, stable included', () => {
+    expect(
+      newerImageTag(['1.0.0-rc.1', '1.0.0-rc.2', '1.0.0'], '1.0.0-rc.1'),
+    ).toBe('1.0.0');
+  });
+  it('compatibleOnly across majors', () => {
+    expect(
+      newerImageTag(['1.4.0', '2.0.0'], '1.2.0', { compatibleOnly: true }),
+    ).toBe('1.4.0');
+    expect(
+      newerImageTag(['2.0.0'], '1.2.0', { compatibleOnly: true }),
+    ).toBeNull();
+  });
+  it('keeps a variant suffix', () => {
+    expect(
+      newerImageTag(
+        ['1.27.1', '1.27.1-alpine', '1.27.2-alpine'],
+        '1.27.0-alpine',
+      ),
+    ).toBe('1.27.2-alpine');
+    expect(newerImageTag(['1.27.1-alpine'], '1.27.0')).toBeNull();
   });
 });

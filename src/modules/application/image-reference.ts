@@ -49,3 +49,13 @@ export function parseImageRef(ref: string): ImageReference {
   if (registry === DOCKER_HUB && !path.includes('/')) path = `library/${path}`;
   return { registry, repository: path, tag, digest };
 }
+
+/** The reference with its tag replaced (`repo:1.0` + `1.1` -> `repo:1.1`); a digest pin is dropped. */
+export function withTag(ref: string, tag: string): string {
+  let rest = ref.trim();
+  const at = rest.indexOf('@');
+  if (at >= 0) rest = rest.slice(0, at);
+  const colon = rest.lastIndexOf(':');
+  if (colon > rest.lastIndexOf('/')) rest = rest.slice(0, colon);
+  return `${rest}:${tag}`;
+}

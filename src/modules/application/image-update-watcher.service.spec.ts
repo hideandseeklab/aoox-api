@@ -3,12 +3,19 @@ import { parseBearerChallenge } from '../registry/remote-digest';
 import type { Application } from './application.entity';
 import { ImageUpdateWatcherService } from './image-update-watcher.service';
 
-function build(remote: () => Promise<string | null>) {
-  const update = jest.fn(() => Promise.resolve());
+function build(
+  remote: () => Promise<string | null>,
+  tags: () => Promise<string[]> = () => Promise.resolve([]),
+  active = 0,
+) {
+  const update = jest.fn(() => Promise.resolve({ affected: 1 }));
   const queue = jest.fn(() => Promise.resolve({ id: 'dep-1' }));
   const service = new ImageUpdateWatcherService(
-    { repo: { update, find: jest.fn() } } as never,
-    { remoteDigest: remote } as never,
+    {
+      repo: { update, find: jest.fn() },
+      deployments: { count: jest.fn(() => Promise.resolve(active)) },
+    } as never,
+    { remoteDigest: remote, remoteTags: tags } as never,
     { queue } as never,
   );
   return { service, update, queue };
@@ -23,6 +30,8 @@ const app = (over: Partial<Application> = {}): Application =>
     imageDigest: 'sha256:old',
     imageCheckedAt: null,
     autoUpdate: true,
+    autoUpdateFollowTags: false,
+    autoUpdateLastTag: null,
     autoUpdateIntervalMinutes: 60,
     status: 'running',
     ...over,
@@ -104,5 +113,154 @@ describe('ImageUpdateWatcherService.check', () => {
     const r = await service.check(app({ imageRef: 'nginx@sha256:x' }), true);
     expect(r).toMatchObject({ remoteDigest: null, changed: false });
     expect(queue).not.toHaveBeenCalled();
+  });
+});
+
+describe('ImageUpdateWatcherService version tags', () => {
+  const TAGS = ['latest', '0.1.0-alpha.2', '0.1.0-alpha.3', '0.1.1', '0.2.0'];
+  const semverApp = (over: Partial<Application> = {}) =>
+    app({ imageRef: 'localhost:5077/demo:0.1.0-alpha.2', ...over });
+
+  it('names the checked tag and reports the newest higher tag without deploying', async () => {
+    const { service, queue } = build(
+      () => Promise.resolve('sha256:old'),
+      () => Promise.resolve(TAGS),
+    );
+    const r = await service.check(semverApp(), false);
+    expect(r).toMatchObject({
+      tag: '0.1.0-alpha.2',
+      changed: false,
+      newerTag: '0.2.0',
+      newerImageRef: 'localhost:5077/demo:0.2.0',
+      tagError: null,
+      switchedTo: null,
+    });
+    expect(queue).not.toHaveBeenCalled();
+  });
+
+  it('a failing tag listing does not fail the check', async () => {
+    const { service } = build(
+      () => Promise.resolve('sha256:old'),
+      () => Promise.reject(new Error('Tag list failed (500) for demo')),
+    );
+    const r = await service.check(semverApp(), false);
+    expect(r).toMatchObject({
+      newerTag: null,
+      tagError: 'Tag list failed (500) for demo',
+      remoteDigest: 'sha256:old',
+    });
+  });
+
+  it('does not list tags for non-semver tags', async () => {
+    const tags = jest.fn(() => Promise.resolve(TAGS));
+    const { service } = build(() => Promise.resolve('sha256:old'), tags);
+    const r = await service.check(app({ imageRef: 'nginx:latest' }), false);
+    expect(tags).not.toHaveBeenCalled();
+    expect(r).toMatchObject({ tag: 'latest', newerTag: null, tagError: null });
+  });
+
+  it('a manual check (no follow) never switches', async () => {
+    const { service, queue } = build(
+      () => Promise.resolve('sha256:old'),
+      () => Promise.resolve(TAGS),
+    );
+    const r = await service.check(
+      semverApp({ autoUpdateFollowTags: true }),
+      true,
+    );
+    expect(r.switchedTo).toBeNull();
+    expect(queue).not.toHaveBeenCalled();
+  });
+
+  it('follow moves to the newest compatible tag, never across a 0.x minor', async () => {
+    const { service, update, queue } = build(
+      () => Promise.resolve('sha256:old'),
+      () => Promise.resolve(TAGS),
+    );
+    const a = semverApp({ autoUpdateFollowTags: true });
+    const r = await service.check(a, true, { follow: true });
+    expect(r).toMatchObject({ switchedTo: '0.1.1', deploymentId: 'dep-1' });
+    expect(update).toHaveBeenCalledWith(
+      { id: 'app-1', imageRef: 'localhost:5077/demo:0.1.0-alpha.2' },
+      expect.objectContaining({
+        imageRef: 'localhost:5077/demo:0.1.1',
+        imageDigest: null,
+        autoUpdateLastTag: '0.1.1',
+      }),
+    );
+    expect(a.imageRef).toBe('localhost:5077/demo:0.1.1');
+    expect(queue).toHaveBeenCalledWith(
+      a,
+      'auto-update',
+      expect.objectContaining({
+        commitMessage: 'to 0.1.1 (was 0.1.0-alpha.2)',
+      }),
+    );
+  });
+
+  it('does not retry the tag it already tried', async () => {
+    const { service, queue } = build(
+      () => Promise.resolve('sha256:old'),
+      () => Promise.resolve(TAGS),
+    );
+    const r = await service.check(
+      semverApp({ autoUpdateFollowTags: true, autoUpdateLastTag: '0.1.1' }),
+      true,
+      { follow: true },
+    );
+    expect(r.switchedTo).toBeNull();
+    expect(queue).not.toHaveBeenCalled();
+  });
+
+  it('skips while a deployment is active and leaves imageRef alone', async () => {
+    const { service, update, queue } = build(
+      () => Promise.resolve('sha256:old'),
+      () => Promise.resolve(TAGS),
+      1,
+    );
+    const a = semverApp({ autoUpdateFollowTags: true });
+    const r = await service.check(a, true, { follow: true });
+    expect(r).toMatchObject({ switchedTo: null, deploymentId: null });
+    expect(queue).not.toHaveBeenCalled();
+    expect(a.imageRef).toBe('localhost:5077/demo:0.1.0-alpha.2');
+    expect(update).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ imageRef: expect.any(String) as string }),
+    );
+  });
+
+  it('puts the reference back when the deployment slot is lost', async () => {
+    const { service, update, queue } = build(
+      () => Promise.resolve('sha256:old'),
+      () => Promise.resolve(TAGS),
+    );
+    queue.mockRejectedValueOnce(new ConflictException('busy'));
+    const a = semverApp({ autoUpdateFollowTags: true });
+    const r = await service.check(a, true, { follow: true });
+    expect(r.switchedTo).toBeNull();
+    expect(a.imageRef).toBe('localhost:5077/demo:0.1.0-alpha.2');
+    expect(update).toHaveBeenNthCalledWith(
+      2,
+      { id: 'app-1', imageRef: 'localhost:5077/demo:0.1.1' },
+      { imageRef: 'localhost:5077/demo:0.1.0-alpha.2', imageDigest: null },
+    );
+  });
+
+  it('a failing tag listing falls back to the digest check while following', async () => {
+    const { service, queue } = build(
+      () => Promise.resolve('sha256:new'),
+      () => Promise.reject(new Error('down')),
+    );
+    const r = await service.check(
+      semverApp({ autoUpdateFollowTags: true }),
+      true,
+      { follow: true },
+    );
+    expect(r).toMatchObject({
+      changed: true,
+      tagError: 'down',
+      switchedTo: null,
+    });
+    expect(queue).toHaveBeenCalledWith(expect.anything(), 'auto-update');
   });
 });
