@@ -21,11 +21,14 @@ function build(
     readyCode?: number;
     mounts?: object[];
     rowExists?: () => boolean;
+    image?: object | null;
+    legacyData?: boolean;
   } = {},
 ) {
   const calls: string[] = [];
   const update = jest.fn().mockResolvedValue(undefined);
   const engine = {
+    inspectImage: jest.fn(() => Promise.resolve(opts.image ?? null)),
     createVolume: jest.fn(() => Promise.resolve()),
     removeContainer: jest.fn(() => Promise.resolve()),
     createContainer: jest.fn(() => {
@@ -49,7 +52,14 @@ function build(
     ensureImage: jest.fn(() => Promise.resolve()),
     ensureNetwork: jest.fn(() => Promise.resolve()),
     findContainerByName: jest.fn(() => Promise.resolve(null)),
-    runOnceWithOutput: jest.fn(() => {
+    runOnceWithOutput: jest.fn((body: { Image: string }) => {
+      if (body.Image === 'busybox:stable') {
+        calls.push('layout-check');
+        return Promise.resolve({
+          code: opts.legacyData ? 0 : 1,
+          output: '',
+        });
+      }
       calls.push('ready-check');
       return Promise.resolve({
         code: opts.readyCode ?? 0,
@@ -107,6 +117,52 @@ describe('ManagedDatabaseService readiness', () => {
     };
     expect(body.Env).toContain('DB_PASSWORD=secretpw');
     expect(body.Entrypoint.join(' ')).not.toContain('secretpw');
+  });
+});
+
+describe('ManagedDatabaseService PostgreSQL data path', () => {
+  const pg18 = {
+    Config: {
+      Volumes: { '/var/lib/postgresql': {} },
+      Env: ['PGDATA=/var/lib/postgresql/18/docker'],
+    },
+  };
+  const pg17 = {
+    Config: {
+      Volumes: { '/var/lib/postgresql/data': {} },
+      Env: ['PGDATA=/var/lib/postgresql/data'],
+    },
+  };
+  const binds = (engine: { createContainer: jest.Mock }) =>
+    (
+      (engine.createContainer.mock.calls[0] as unknown[])[0] as {
+        HostConfig: { Binds: string[] };
+      }
+    ).HostConfig.Binds;
+
+  it('mounts the volume on the root the image declares for 18+', async () => {
+    const { svc, engine } = build({ image: pg18 });
+    await svc.provision(db, 'pw');
+    expect(binds(engine)[0]).toBe('aoox_db_main_abc:/var/lib/postgresql');
+  });
+
+  it('keeps the legacy path for images up to 17 and for unknown images', async () => {
+    for (const image of [pg17, null]) {
+      const { svc, engine, calls } = build({ image });
+      await svc.provision(db, 'pw');
+      expect(binds(engine)[0]).toBe(
+        'aoox_db_main_abc:/var/lib/postgresql/data',
+      );
+      expect(calls).not.toContain('layout-check');
+    }
+  });
+
+  it('refuses an 18+ image on a volume that holds old-layout data', async () => {
+    const { svc, engine } = build({ image: pg18, legacyData: true });
+    await expect(svc.provision(db, 'pw')).rejects.toThrow(
+      /old layout.*dump and restore/,
+    );
+    expect(engine.createContainer).not.toHaveBeenCalled();
   });
 });
 

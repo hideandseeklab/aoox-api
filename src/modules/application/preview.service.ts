@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { Redactor } from './log-redaction';
+import { Redactor, StreamRedactor } from './log-redaction';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
@@ -206,6 +206,7 @@ class PreviewLog implements BuildLog {
   private text = '';
   private lastFlush = 0;
   private readonly redactor = new Redactor();
+  private readonly stream = new StreamRedactor(this.redactor);
 
   constructor(
     private readonly preview: PreviewDeployment,
@@ -217,10 +218,11 @@ class PreviewLog implements BuildLog {
   }
 
   private append(raw: string): void {
-    this.text += this.redactor.apply(raw);
+    this.text += this.stream.push(raw);
   }
 
   async step(_status: DeploymentStatus, line: string): Promise<void> {
+    this.text += this.stream.flush();
     this.append(`\n==> ${line}\n`);
     await this.flush(true);
   }
@@ -245,6 +247,7 @@ class PreviewLog implements BuildLog {
     errorMessage: string | null = null,
   ): Promise<void> {
     this.append(`\n${line}\n`);
+    this.text += this.stream.flush();
     await this.repo.update(this.preview.id, {
       logs: this.text,
       status,

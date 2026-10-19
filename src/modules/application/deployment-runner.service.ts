@@ -1,5 +1,9 @@
 import { ConflictException, Injectable, Logger } from '@nestjs/common';
-import { envTextValuesToRedact, Redactor } from './log-redaction';
+import {
+  envTextValuesToRedact,
+  Redactor,
+  StreamRedactor,
+} from './log-redaction';
 import { In } from 'typeorm';
 import { hostPortBinding } from '../docker/host-port-bind';
 import { startWithPortRetry } from '../docker/start-with-port-retry';
@@ -839,6 +843,7 @@ export class DeploymentLog implements BuildLog {
   private buffer = '';
   private lastFlush = 0;
   private readonly redactor = new Redactor();
+  private readonly stream = new StreamRedactor(this.redactor);
 
   constructor(
     private readonly deployment: Deployment,
@@ -853,7 +858,16 @@ export class DeploymentLog implements BuildLog {
 
   /** Appends text: emitted live immediately, persisted in batches. */
   private append(raw: string): void {
-    const chunk = this.redactor.apply(raw);
+    this.emit(this.stream.push(raw));
+  }
+
+  /** Releases text held back because it might have been the start of a secret. */
+  private drain(): void {
+    this.emit(this.stream.flush());
+  }
+
+  private emit(chunk: string): void {
+    if (!chunk) return;
     this.buffer += chunk;
     this.events.emitLog({
       deploymentId: this.deployment.id,
@@ -879,6 +893,7 @@ export class DeploymentLog implements BuildLog {
   }
 
   async step(status: DeploymentStatus, line: string): Promise<void> {
+    this.drain();
     this.setStatus(status);
     this.append(`\n==> ${line}\n`);
     await this.flush(true);
@@ -915,6 +930,7 @@ export class DeploymentLog implements BuildLog {
       errorMessage === null ? null : this.redactor.apply(errorMessage);
     this.deployment.finishedAt = new Date();
     this.append(`\n${line}\n`);
+    this.drain();
     // Persist before announcing the terminal status so subscribers that
     // re-read the row on "finished" see the complete log.
     this.deployment.status = status;

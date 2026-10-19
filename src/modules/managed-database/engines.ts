@@ -202,3 +202,30 @@ export function defaultTagFor(
     return POSTGRES_VARIANTS[variant].defaultTag;
   return ENGINES[engine].defaultTag;
 }
+
+/** Data root of the PostgreSQL images before version 18 (`VOLUME` and `PGDATA` are both `.../data`). */
+export const POSTGRES_LEGACY_DATA_PATH = '/var/lib/postgresql/data';
+
+/**
+ * Where the named data volume must be mounted for a PostgreSQL image.
+ * Decided from the pulled image, not from its tag: the images from 18 on
+ * declare `VOLUME /var/lib/postgresql` and keep the cluster in
+ * `PGDATA=/var/lib/postgresql/<major>/docker`; older images (and their
+ * pgvector/postgis/timescaledb variants) declare `.../data`. The mount is the
+ * declared volume that contains `PGDATA` (the deepest one), so `latest`, dated
+ * and unparsable tags work, and anything the image does not describe keeps the
+ * legacy path.
+ */
+export function postgresDataPath(
+  declaredVolumes: string[] | undefined,
+  env: string[] | undefined,
+): string {
+  const pgdata = env
+    ?.find((e) => e.startsWith('PGDATA='))
+    ?.slice('PGDATA='.length);
+  if (!pgdata || !declaredVolumes?.length) return POSTGRES_LEGACY_DATA_PATH;
+  const covering = declaredVolumes
+    .filter((v) => pgdata === v || pgdata.startsWith(`${v}/`))
+    .sort((a, b) => b.length - a.length);
+  return covering[0] ?? POSTGRES_LEGACY_DATA_PATH;
+}

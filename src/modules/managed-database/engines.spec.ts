@@ -3,6 +3,7 @@ import {
   ENGINES,
   imageNameFor,
   POSTGRES_VARIANTS,
+  postgresDataPath,
 } from './engines';
 
 describe('database engine recipes', () => {
@@ -84,5 +85,26 @@ describe('database engine recipes', () => {
         expect(stmt).toMatch(/^CREATE EXTENSION IF NOT EXISTS /);
       }
     }
+  });
+
+  it('postgresDataPath follows the image: the declared volume that contains PGDATA', () => {
+    expect(
+      postgresDataPath(
+        ['/var/lib/postgresql/data'],
+        ['PGDATA=/var/lib/postgresql/data'],
+      ),
+    ).toBe('/var/lib/postgresql/data');
+    expect(
+      postgresDataPath(
+        ['/var/lib/postgresql'],
+        ['PATH=/x', 'PGDATA=/var/lib/postgresql/18/docker'],
+      ),
+    ).toBe('/var/lib/postgresql');
+    expect(postgresDataPath(undefined, undefined)).toBe(
+      '/var/lib/postgresql/data',
+    );
+    expect(postgresDataPath([], ['PGDATA=/var/lib/postgresql/18/docker'])).toBe(
+      '/var/lib/postgresql/data',
+    );
   });
 });

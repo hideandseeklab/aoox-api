@@ -1,4 +1,5 @@
 import {
+  ConflictException,
   Injectable,
   Logger,
   NotFoundException,
@@ -28,7 +29,13 @@ import { ProjectAccessService } from '../project/project-access.service';
 import { decryptSecret, encryptSecret } from '../docker/secret.util';
 import { APP_NETWORK } from '../proxy/proxy.service';
 import { companionContainerName } from '../database-companion/companion-names';
-import { ENGINES, imageNameFor, POSTGRES_VARIANTS } from './engines';
+import {
+  ENGINES,
+  imageNameFor,
+  POSTGRES_LEGACY_DATA_PATH,
+  POSTGRES_VARIANTS,
+  postgresDataPath,
+} from './engines';
 import { readinessScript, READY_TIMEOUT_SECONDS } from './readiness';
 import { ManagedDatabase } from './managed-database.entity';
 
@@ -188,6 +195,7 @@ export class ManagedDatabaseService implements OnApplicationBootstrap {
     await this.assertRowExists(db);
     await this.docker.ensureNetwork(APP_NETWORK);
     await this.docker.engine.createVolume(volume);
+    const dataPath = await this.dataPathFor(db, image, volume);
 
     // `v`: also drops the anonymous volumes the image declares and the recipe
     // does not mount by name (named data and mount volumes are never touched).
@@ -224,7 +232,7 @@ export class ManagedDatabaseService implements OnApplicationBootstrap {
           LogConfig: this.docker.logConfig,
           NetworkMode: APP_NETWORK,
           Binds: [
-            `${volume}:${spec.dataPath}`,
+            `${volume}:${dataPath}`,
             ...bindsFor(db, mounts, filesMountpoint),
           ],
           PortBindings: db.hostPort
@@ -256,6 +264,48 @@ export class ManagedDatabaseService implements OnApplicationBootstrap {
     if (db.engine === 'mongodb') {
       await this.initMongoDatabase(db, password);
     }
+  }
+
+  /**
+   * Container path of the data volume. PostgreSQL asks the pulled image (see
+   * `postgresDataPath`); the other engines use their recipe. An image that
+   * wants the 18+ layout is refused on a volume that still holds a cluster in
+   * the old `.../data` layout: initdb would otherwise start an empty cluster
+   * next to it and the data would look lost (major upgrades need dump/restore).
+   */
+  private async dataPathFor(
+    db: ManagedDatabase,
+    image: string,
+    volume: string,
+  ): Promise<string> {
+    if (db.engine !== 'postgres') return ENGINES[db.engine].dataPath;
+    const info = await this.docker.engine.inspectImage(image);
+    const config = (info?.Config ?? {}) as {
+      Volumes?: Record<string, unknown> | null;
+      Env?: string[] | null;
+    };
+    const path = postgresDataPath(
+      Object.keys(config.Volumes ?? {}),
+      config.Env ?? undefined,
+    );
+    if (path === POSTGRES_LEGACY_DATA_PATH) return path;
+    await this.docker.ensureImage('busybox:stable');
+    const { code } = await this.docker.runOnceWithOutput({
+      Image: 'busybox:stable',
+      // An old-layout volume was mounted at .../data, so the cluster is its root.
+      Entrypoint: ['sh', '-c', 'test -e /v/PG_VERSION'],
+      Labels: {
+        'aoox.component': 'query',
+        ...composeLabels('db-layout-check'),
+      },
+      HostConfig: { NetworkMode: 'none', Binds: [`${volume}:/v:ro`] },
+    });
+    if (code === 0) {
+      throw new ConflictException(
+        `The data volume of this database holds PostgreSQL data in the old layout (${POSTGRES_LEGACY_DATA_PATH}), but ${image} expects the PostgreSQL 18+ layout (${path}). A major version change needs a dump and restore: create a new database with this version and restore a backup into it.`,
+      );
+    }
+    return path;
   }
 
   private async assertRowExists(db: ManagedDatabase): Promise<void> {

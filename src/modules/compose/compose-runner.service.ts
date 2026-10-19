@@ -1,5 +1,5 @@
 import { composeHostPrefix } from '../docker/host-port-bind';
-import { Redactor } from '../application/log-redaction';
+import { Redactor, StreamRedactor } from '../application/log-redaction';
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -150,6 +150,13 @@ export class ComposeRunnerService {
       redactor.addAll(secrets);
       return redactor.apply(text);
     };
+    // A secret split over two chunks is held back until it can be masked, so
+    // the log row that is polled mid-run never shows half of it.
+    const stream = new StreamRedactor(redactor);
+    const drain = () => {
+      redactor.addAll(secrets);
+      log += stream.flush();
+    };
     // Live output goes to the run row only; `ComposeApp.logs` is written
     // once at the end, so a chatty build does not double the write rate
     // (get-compose-app reads the running run's logs while it lasts).
@@ -158,7 +165,8 @@ export class ComposeRunnerService {
       await this.runs.update(run.id, { logs: log });
     };
     const append = (text: string) => {
-      log += redact(text);
+      redactor.addAll(secrets);
+      log += stream.push(text);
       if (Date.now() - lastFlush > 1000) void flush();
     };
 
@@ -184,6 +192,7 @@ export class ComposeRunnerService {
       const status: ComposeApp['status'] =
         action === 'stop' ? 'stopped' : action === 'down' ? 'idle' : 'running';
       append(`\n==> done\n`);
+      drain();
       log = redact(log);
       await this.finish(app, run.id, log, {
         status,
@@ -194,6 +203,7 @@ export class ComposeRunnerService {
     } catch (err) {
       const message = redact(err instanceof Error ? err.message : String(err));
       append(`\nERROR: ${message}\n`);
+      drain();
       await this.finish(app, run.id, log, {
         status: 'error',
         errorMessage: message,

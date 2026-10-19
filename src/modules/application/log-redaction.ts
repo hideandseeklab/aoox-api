@@ -35,6 +35,81 @@ export class Redactor {
   get size(): number {
     return this.known.size;
   }
+
+  /** Every masked form (raw and URL-encoded), longest first. */
+  get patterns(): readonly string[] {
+    return this.forms;
+  }
+}
+
+/**
+ * Masks a secret that arrives split over two chunks of a live stream. The
+ * tail of each chunk that could still become a secret (a proper prefix of a
+ * masked form) is held back and joined with the next chunk; everything before
+ * it is masked and released at once, so output that cannot start a secret
+ * (any line that ends in a newline, for example) is never delayed. Call
+ * `flush()` when the stream ends or changes phase. What `push` returns is
+ * exactly what must be emitted and stored, so live and stored text agree.
+ */
+export class StreamRedactor {
+  private pending = '';
+
+  constructor(private readonly redactor: Redactor) {}
+
+  push(raw: string): string {
+    const text = this.pending + raw;
+    if (this.redactor.size === 0) {
+      this.pending = '';
+      return text;
+    }
+    const cut = this.safeLength(text);
+    this.pending = text.slice(cut);
+    return this.redactor.apply(text.slice(0, cut));
+  }
+
+  /** Releases whatever is still held (masked; a partial secret is not a secret). */
+  flush(): string {
+    const text = this.pending;
+    this.pending = '';
+    return text ? this.redactor.apply(text) : '';
+  }
+
+  /** Length of the head of `text` that can be released now. */
+  private safeLength(text: string): number {
+    const forms = this.redactor.patterns;
+    let cut = text.length;
+    for (const f of forms) {
+      // Suffixes shorter than the form that are a prefix of it.
+      for (
+        let i = text.indexOf(f[0], Math.max(0, text.length - f.length + 1));
+        i !== -1 && i < text.length;
+        i = text.indexOf(f[0], i + 1)
+      ) {
+        if (f.startsWith(text.slice(i)) && f.length > text.length - i) {
+          cut = Math.min(cut, i);
+          break;
+        }
+      }
+    }
+    // Never cut through a complete secret that sits across the boundary.
+    for (let moved = true; moved;) {
+      moved = false;
+      for (const f of forms) {
+        for (
+          let s = text.indexOf(f, Math.max(0, cut - f.length));
+          s !== -1 && s < cut;
+          s = text.indexOf(f, s + 1)
+        ) {
+          if (s + f.length > cut) {
+            cut = s;
+            moved = true;
+            break;
+          }
+        }
+      }
+    }
+    return cut;
+  }
 }
 
 /** Names every image or shell sets itself; their values are not secrets and are long enough to mangle logs. */
