@@ -107,6 +107,7 @@ describe('certificate files are dropped when their last domain goes', () => {
         deactivate: jest.fn().mockResolvedValue(undefined),
       } as never,
       { cleanup: jest.fn().mockResolvedValue(null) } as never,
+      { purgeApplication: jest.fn().mockResolvedValue(undefined) } as never,
     );
     return { svc, sync };
   }

@@ -1,3 +1,4 @@
+import { BackupPurgeModule } from '../backup-purge/backup-purge.module';
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Mount } from '../application/mount.entity';
@@ -32,6 +33,7 @@ import { StopDatabaseController } from './stop-database/stop-database.controller
     TypeOrmModule.forFeature([ManagedDatabase, Mount, QueryHistoryEntry]),
     DockerModule,
     HostPortModule,
+    BackupPurgeModule,
     ProjectModule,
     MonitoringModule,
     SwarmModule,

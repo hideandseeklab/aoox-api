@@ -1,3 +1,4 @@
+import { BackupPurgeModule } from '../backup-purge/backup-purge.module';
 import { Module } from '@nestjs/common';
 import { ScheduleModule } from '@nestjs/schedule';
 import { TypeOrmModule } from '@nestjs/typeorm';
@@ -134,6 +135,7 @@ import { UpdateApplicationService } from './update-application/update-applicatio
     ServerModule,
     SwarmModule,
     HostPortModule,
+    BackupPurgeModule,
     DomainConflictModule,
   ],
   controllers: [

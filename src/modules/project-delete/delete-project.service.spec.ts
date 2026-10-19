@@ -83,6 +83,16 @@ describe('DeleteProjectService', () => {
       { reloadAll: jest.fn(() => Promise.resolve()) } as never,
       { reloadAll: jest.fn(() => Promise.resolve()) } as never,
       { reloadAll: jest.fn(() => Promise.resolve()) } as never,
+      {
+        purgeDatabase: jest.fn((id: string) => {
+          calls.push(`backups:${id}`);
+          return Promise.resolve({
+            localFiles: 0,
+            remoteObjects: 0,
+            failures: [],
+          });
+        }),
+      } as never,
       { find: jest.fn().mockResolvedValue(apps) } as never,
       {
         find: jest.fn().mockResolvedValue(dbs),
@@ -128,6 +138,19 @@ describe('DeleteProjectService', () => {
     expect(t.removeVolume).toHaveBeenCalledWith('aoox_db_db_1_data');
     expect(t.removeVolume).toHaveBeenCalledWith('aoox_db_db_1_files');
     expect(calls.at(-1)).toBe('project.remove');
+  });
+
+  it('purge removes the database backup files before the database row; no purge keeps them', async () => {
+    const kept = build();
+    await kept.svc.execute('u', 'p1');
+    expect(calls.some((c) => c.startsWith('backups:'))).toBe(false);
+
+    const t = build();
+    await t.svc.execute('u', 'p1', true);
+    expect(calls.indexOf('backups:d1')).toBeGreaterThan(-1);
+    expect(calls.indexOf('backups:d1')).toBeLessThan(
+      calls.indexOf('db.row:d1'),
+    );
   });
 
   it('stops at the failing application and keeps the project', async () => {

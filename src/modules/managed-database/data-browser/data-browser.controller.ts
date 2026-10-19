@@ -69,6 +69,11 @@ export class DataBrowserController {
     @Query() query: DatabaseSelectDto,
   ): Promise<TableInfoDto[]> {
     const db = await this.databases.findOwnedOrFail(params.id, user.sub);
+    // Redis/Valkey "tables" are the keys themselves, which often embed data
+    // (user ids, emails, session ids): treated as data, not as structure.
+    if (db.engine === 'redis' || db.engine === 'valkey') {
+      await this.databases.assertCanReadData(user.sub, db);
+    }
     return this.queries.listTables(db, query.db);
   }
 
@@ -91,7 +96,11 @@ export class DataBrowserController {
     @Param() params: TableRowsParamsDto,
     @Query() query: TableRowsQueryDto,
   ): Promise<TableRowsDto> {
-    const db = await this.databases.findOwnedOrFail(params.id, user.sub);
+    // Row values are data: developer or higher (viewers keep names/structure).
+    const db = await this.databases.findOwnedForExportOrFail(
+      params.id,
+      user.sub,
+    );
     return this.queries.tableRows(db, params.table, query);
   }
 

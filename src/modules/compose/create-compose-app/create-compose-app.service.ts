@@ -52,7 +52,10 @@ export class CreateComposeAppService {
         ownerId,
       );
     }
-    return saved;
+    // The entity still carries the webhook token it was built with.
+    const { webhookToken: _omit, ...safe } = saved;
+    void _omit;
+    return safe as ComposeApp;
   }
 }
 

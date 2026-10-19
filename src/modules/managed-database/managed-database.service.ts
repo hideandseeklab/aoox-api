@@ -87,6 +87,11 @@ export class ManagedDatabaseService {
     return db;
   }
 
+  /** Developer or higher (404 outsiders, 403 viewers) for a database already loaded. */
+  async assertCanReadData(ownerId: string, db: ManagedDatabase): Promise<void> {
+    await this.access.assertCanExport(ownerId, db.project);
+  }
+
   async password(db: ManagedDatabase): Promise<string> {
     const row = await this.repo
       .createQueryBuilder('d')

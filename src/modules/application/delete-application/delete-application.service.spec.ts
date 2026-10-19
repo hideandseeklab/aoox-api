@@ -55,6 +55,7 @@ describe('DeleteApplicationService previews', () => {
       {} as never,
       {} as never,
     );
+    const purgeApp = jest.fn().mockResolvedValue(undefined);
     const appRepo = { remove: jest.fn().mockResolvedValue(undefined) };
     const mountRepo = { find: jest.fn().mockResolvedValue([]) };
     const svc = new DeleteApplicationService(
@@ -77,9 +78,34 @@ describe('DeleteApplicationService previews', () => {
         deactivate: jest.fn().mockResolvedValue(undefined),
       } as never,
       { cleanup: jest.fn().mockResolvedValue(null) } as never,
+      { purgeApplication: purgeApp } as never,
     );
-    return { svc, forServer, removed, rows, appRepo, daemon, mountRepo };
+    return {
+      svc,
+      forServer,
+      removed,
+      rows,
+      appRepo,
+      daemon,
+      mountRepo,
+      purgeApp,
+    };
   };
+
+  it('purge removes the volume backup files of the app (on its server) before the row; plain delete keeps them', async () => {
+    const plain = build('srv1', []);
+    await plain.svc.execute('u', 'a1');
+    expect(plain.purgeApp).not.toHaveBeenCalled();
+
+    const t = build('srv1', []);
+    t.daemon.engine.removeVolume = jest.fn().mockResolvedValue(undefined);
+    const app = { id: 'a1', appName: 'web', serverId: 'srv1', name: 'web' };
+    await t.svc.destroy(app as never, { purge: true });
+    expect(t.purgeApp).toHaveBeenCalledWith('a1', 'srv1');
+    expect(t.purgeApp.mock.invocationCallOrder[0]).toBeLessThan(
+      t.appRepo.remove.mock.invocationCallOrder[0],
+    );
+  });
 
   it('removes preview containers and rows on the local daemon', async () => {
     const t = build(null, [3, 7]);

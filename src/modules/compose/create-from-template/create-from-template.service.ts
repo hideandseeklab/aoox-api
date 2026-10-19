@@ -103,7 +103,10 @@ export class CreateFromTemplateService {
       );
     }
     this.runner.start(app, 'deploy');
-    return { ...app, status: 'deploying' };
+    // The saved entity still carries the webhook token it was built with.
+    const { webhookToken: _omit, ...safe } = app;
+    void _omit;
+    return { ...safe, status: 'deploying' } as ComposeApp;
   }
 }
 

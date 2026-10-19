@@ -8,7 +8,10 @@ import {
   ManagedDatabaseService,
 } from '../managed-database.service';
 
-/** Password and connection URLs, kept off GET /databases/:id so lists never carry secrets. */
+/**
+ * Password and connection URLs, kept off GET /databases/:id so lists never carry secrets.
+ * Developer or higher: a viewer who could read the password could bypass the data rules.
+ */
 @Controller('databases')
 @UseGuards(JwtAuthGuard)
 export class DatabaseCredentialsController {
@@ -19,7 +22,10 @@ export class DatabaseCredentialsController {
     @CurrentUser() user: JwtPayload,
     @Param() params: DatabaseParamsDto,
   ): Promise<DatabaseConnection> {
-    const db = await this.databases.findOwnedOrFail(params.id, user.sub);
+    const db = await this.databases.findOwnedForExportOrFail(
+      params.id,
+      user.sub,
+    );
     return this.databases.connection(db);
   }
 }

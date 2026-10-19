@@ -145,7 +145,7 @@ export class ProjectAccessService {
     const role = await this.assertAccess(userId, project);
     if (role === 'viewer') {
       throw new ForbiddenException(
-        'Viewers cannot export or download project data',
+        'Viewers cannot read data or credentials, or export and download them',
       );
     }
     return role;

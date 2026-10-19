@@ -82,4 +82,17 @@ describe('CreateDatabaseService host port', () => {
     ).rejects.toThrow('404');
     expect(t.assertFree).not.toHaveBeenCalled();
   });
+
+  it('never returns the password ciphertext to the client', async () => {
+    const t = make();
+    const db = await t.svc.execute('u1', base);
+    expect(db).not.toHaveProperty('passwordEncrypted');
+    // The background provisioning still got the stored row and the plain password.
+    const [saved, password] = t.provisionInBackground.mock.calls[0] as [
+      Record<string, unknown>,
+      string,
+    ];
+    expect(saved.passwordEncrypted).toBe('enc:' + password);
+    expect(JSON.stringify(db)).not.toContain(password);
+  });
 });

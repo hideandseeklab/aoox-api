@@ -13,6 +13,7 @@ import { DeleteApplicationService } from '../application/delete-application/dele
 import { filesVolumeFor, volumeNameFor } from '../application/mounts';
 import { ComposeApp } from '../compose/compose-app.entity';
 import { ComposeRunnerService } from '../compose/compose-runner.service';
+import { BackupPurgeService } from '../backup-purge/backup-purge.service';
 import { BackupSchedulerService } from '../database-backup/backup-scheduler.service';
 import { DockerEngineError } from '../docker/docker-engine.client';
 import { DockerService } from '../docker/docker.service';
@@ -34,7 +35,7 @@ import { VolumeBackupSchedulerService } from '../volume-backup/volume-backup-sch
  * (typically the Docker daemon or a remote server is unreachable) the delete
  * stops with a 502 naming it, and the project plus whatever was not reached
  * stay, so retrying resumes where it stopped. `purge` also deletes the data
- * volumes; without it they stay and show up as orphan volumes in the Disk card.
+ * volumes, the backup files and their S3 copies; without it they stay and show up as orphan volumes in the Disk card.
  */
 @Injectable()
 export class DeleteProjectService {
@@ -50,6 +51,7 @@ export class DeleteProjectService {
     private readonly jobScheduler: JobSchedulerService,
     private readonly backupScheduler: BackupSchedulerService,
     private readonly volumeScheduler: VolumeBackupSchedulerService,
+    private readonly backupPurge: BackupPurgeService,
     @InjectRepository(Application)
     private readonly appRepo: Repository<Application>,
     @InjectRepository(ManagedDatabase)
@@ -88,6 +90,7 @@ export class DeleteProjectService {
       for (const db of dbs) {
         await this.step(`database "${db.name}"`, async () => {
           await this.databases.remove(db, purge);
+          if (purge) await this.backupPurge.purgeDatabase(db.id);
           if (purge) await this.purgeMountVolumes(db);
           await this.dbRepo.remove(db);
         });

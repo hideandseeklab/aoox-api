@@ -1,3 +1,4 @@
+import { BackupPurgeModule } from '../backup-purge/backup-purge.module';
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Application } from '../application/application.entity';
@@ -31,6 +32,7 @@ import { DeleteProjectService } from './delete-project.service';
     JobModule,
     VolumeBackupModule,
     DatabaseBackupModule,
+    BackupPurgeModule,
   ],
   controllers: [DeleteProjectController],
   providers: [DeleteProjectService],

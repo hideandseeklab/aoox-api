@@ -1,4 +1,5 @@
 import { BadGatewayException, Injectable, Logger } from '@nestjs/common';
+import { BackupPurgeService } from '../../backup-purge/backup-purge.service';
 import { CertificateSyncService } from '../../certificate/certificate-sync.service';
 import { IsNull, Not } from 'typeorm';
 import { DockerEngineError } from '../../docker/docker-engine.client';
@@ -42,6 +43,7 @@ export class DeleteApplicationService {
     private readonly certSync: CertificateSyncService,
     private readonly maintenance: MaintenanceModeService,
     private readonly domainDns: DomainDnsService,
+    private readonly backupPurge: BackupPurgeService,
   ) {}
 
   async execute(ownerId: string, id: string): Promise<void> {
@@ -95,6 +97,11 @@ export class DeleteApplicationService {
           );
         }
       }
+    }
+    // Volume backup files (and their S3 copies) are only reachable through the
+    // rows, which go with the application: remove them while the rows exist.
+    if (options.purge) {
+      await this.backupPurge.purgeApplication(app.id, app.serverId);
     }
     // Routers and the page file would otherwise outlive the application.
     await this.maintenance

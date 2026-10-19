@@ -63,6 +63,10 @@ export class CreateDatabaseService {
       }),
     );
     this.databases.provisionInBackground(db, password);
-    return db;
+    // `save` returns the entity as built, ciphertext included (the column is
+    // only `select: false` on reads): never send it back to the client.
+    const { passwordEncrypted: _omit, ...safe } = db;
+    void _omit;
+    return safe as ManagedDatabase;
   }
 }

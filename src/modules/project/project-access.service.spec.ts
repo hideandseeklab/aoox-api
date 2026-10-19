@@ -259,6 +259,22 @@ describe('export/download helpers refuse viewers', () => {
           acc,
         ).findOwnedForDownloadOrFail('x', u),
     ],
+    [
+      'database credentials and rows (assertCanReadData)',
+      async (u) => {
+        const svc = new ManagedDatabaseService(
+          repoWith({ id: 'x', project }) as never,
+          {} as never,
+          {} as never,
+          { getOrThrow: () => 'k' } as never,
+          {} as never,
+          acc,
+        );
+        // Redis key listing loads the row first, then asks for data access.
+        await svc.assertCanReadData(u, await svc.findOwnedOrFail('x', u));
+        return true;
+      },
+    ],
   ];
 
   it.each(cases)(
