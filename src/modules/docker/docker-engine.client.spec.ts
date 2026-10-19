@@ -124,3 +124,34 @@ describe('DockerEngineClient', () => {
     );
   });
 });
+
+describe('DockerEngineClient.removeContainer', () => {
+  let server: http.Server;
+  let socketPath: string;
+  const urls: string[] = [];
+  beforeAll(async () => {
+    server = http.createServer((req, res) => {
+      urls.push(`${req.method} ${req.url}`);
+      res.statusCode = 204;
+      res.end();
+    });
+    socketPath =
+      process.platform === 'win32'
+        ? `\\\\.\\pipe\\aoox-test-rm-${process.pid}`
+        : `/tmp/aoox-test-rm-${process.pid}.sock`;
+    await new Promise<void>((r) => server.listen(socketPath, r));
+  });
+  afterAll(() => new Promise<void>((r) => server.close(() => r())));
+
+  it('only asks the daemon to remove anonymous volumes when told to', async () => {
+    const c = new DockerEngineClient(socketPath, 'v1.44');
+    await c.removeContainer('a');
+    await c.removeContainer('b', true);
+    await c.removeContainer('c', true, true);
+    expect(urls).toEqual([
+      'DELETE /v1.44/containers/a?force=false',
+      'DELETE /v1.44/containers/b?force=true',
+      'DELETE /v1.44/containers/c?force=true&v=true',
+    ]);
+  });
+});

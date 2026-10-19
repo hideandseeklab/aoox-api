@@ -202,7 +202,9 @@ export class ProxyConfigSyncService {
         ),
       );
     } finally {
-      await docker.engine.removeContainer(helper, true).catch(() => undefined);
+      await docker.engine
+        .removeContainer(helper, true, true)
+        .catch(() => undefined);
     }
   }
 

@@ -75,7 +75,7 @@ export class DockerHandle {
       const output = await this.engine.containerLogs(id, 200).catch(() => '');
       return { code, output };
     } finally {
-      await this.engine.removeContainer(id, true).catch(() => undefined);
+      await this.engine.removeContainer(id, true, true).catch(() => undefined);
     }
   }
 
@@ -86,7 +86,7 @@ export class DockerHandle {
       await this.engine.startContainer(id);
       return await this.engine.waitContainer(id);
     } finally {
-      await this.engine.removeContainer(id, true).catch(() => undefined);
+      await this.engine.removeContainer(id, true, true).catch(() => undefined);
     }
   }
 

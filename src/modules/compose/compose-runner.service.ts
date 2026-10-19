@@ -420,7 +420,9 @@ export class ComposeRunnerService {
       await Promise.race([streamed, new Promise((r) => setTimeout(r, 2000))]);
       return code;
     } finally {
-      await this.docker.engine.removeContainer(id, true).catch(() => undefined);
+      await this.docker.engine
+        .removeContainer(id, true, true)
+        .catch(() => undefined);
     }
   }
 

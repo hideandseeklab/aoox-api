@@ -156,6 +156,7 @@ describe('CertificateSyncService', () => {
     expect(t.local.engine.removeContainer).toHaveBeenCalledWith(
       'helper-local',
       true,
+      true,
     );
   });
 

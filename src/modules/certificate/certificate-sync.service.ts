@@ -131,7 +131,9 @@ export class CertificateSyncService {
     try {
       await docker.engine.putArchive(helper, '/certs', tarFiles(files));
     } finally {
-      await docker.engine.removeContainer(helper, true).catch(() => undefined);
+      await docker.engine
+        .removeContainer(helper, true, true)
+        .catch(() => undefined);
     }
     await this.pruneStale(
       docker,

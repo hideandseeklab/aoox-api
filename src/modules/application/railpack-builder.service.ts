@@ -130,7 +130,9 @@ export class RailpackBuilderService {
         );
       }
     } finally {
-      await this.docker.engine.removeContainer(id, true).catch(() => undefined);
+      await this.docker.engine
+        .removeContainer(id, true, true)
+        .catch(() => undefined);
     }
   }
 

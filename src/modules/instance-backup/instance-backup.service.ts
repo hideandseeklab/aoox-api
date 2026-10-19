@@ -361,7 +361,7 @@ export class InstanceBackupService {
         (err) => (err ? reject(err) : resolve()),
       ),
     ).finally(() =>
-      this.docker.engine.removeContainer(id, true).catch(() => undefined),
+      this.docker.engine.removeContainer(id, true, true).catch(() => undefined),
     );
   }
 
@@ -416,7 +416,9 @@ export class InstanceBackupService {
         tarFiles([[filename.slice(DIR.length + 1), content]]),
       );
     } finally {
-      await this.docker.engine.removeContainer(id, true).catch(() => undefined);
+      await this.docker.engine
+        .removeContainer(id, true, true)
+        .catch(() => undefined);
     }
   }
 
@@ -434,7 +436,9 @@ export class InstanceBackupService {
         `${MOUNT}/${filename}`,
       );
     } finally {
-      await this.docker.engine.removeContainer(id, true).catch(() => undefined);
+      await this.docker.engine
+        .removeContainer(id, true, true)
+        .catch(() => undefined);
     }
   }
 

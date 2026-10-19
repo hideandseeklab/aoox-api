@@ -23,7 +23,7 @@ import {
   normalizePath,
 } from '../application/add-mount/add-mount.service';
 import { Mount } from '../application/mount.entity';
-import { volumeNameFor } from '../application/mounts';
+import { mountView, MountView, volumeNameFor } from '../application/mounts';
 import { UpdateMountDto } from '../application/update-mount/update-mount.dto';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -32,6 +32,7 @@ import { ComposeAppParamsDto } from '../compose/compose-app.dto';
 import { ComposeApp } from '../compose/compose-app.entity';
 import { ComposeService } from '../compose/compose.service';
 import { DockerService } from '../docker/docker.service';
+import { ProjectAccessService } from '../project/project-access.service';
 import { AddComposeMountDto, ComposeMountParamsDto } from './compose-mount.dto';
 
 class DeleteMountQueryDto {
@@ -56,18 +57,21 @@ export class ComposeMountController {
     private readonly docker: DockerService,
     @InjectRepository(Mount)
     private readonly mounts: Repository<Mount>,
+    private readonly access: ProjectAccessService,
   ) {}
 
   @Get(':id/mounts')
   async list(
     @CurrentUser() user: JwtPayload,
     @Param() params: ComposeAppParamsDto,
-  ): Promise<Mount[]> {
+  ): Promise<MountView[]> {
     const app = await this.compose.findOwnedOrFail(params.id, user.sub);
-    return this.mounts.find({
+    const canRead = await this.access.canReadSecrets(user.sub, app.project);
+    const mounts = await this.mounts.find({
       where: { composeAppId: app.id },
       order: { createdAt: 'ASC' },
     });
+    return mounts.map((m) => mountView(m, canRead));
   }
 
   @Post(':id/mounts')

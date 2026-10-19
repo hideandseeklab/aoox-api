@@ -323,7 +323,9 @@ export class JobRunnerService {
       }
       return { code: res, output, timedOut: false };
     } finally {
-      await docker.engine.removeContainer(id, true).catch(() => undefined);
+      await docker.engine
+        .removeContainer(id, true, true)
+        .catch(() => undefined);
     }
   }
 

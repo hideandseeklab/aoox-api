@@ -151,6 +151,18 @@ export class ProjectAccessService {
     return role;
   }
 
+  /**
+   * Whether the user may see secret material (webhook tokens, file mount
+   * contents): `developer` or higher. Same rule as `assertCanExport`, but as a
+   * boolean for responses that stay readable and just leave the secret out.
+   * Call after `assertAccess`/`findOwnedOrFail`; a read-only API token follows
+   * its owner's project role.
+   */
+  async canReadSecrets(userId: string, project: Project): Promise<boolean> {
+    const role = await this.roleFor(userId, project);
+    return role !== null && role !== 'viewer';
+  }
+
   /** 404 for outsiders, 403 for members who are not project admins. */
   async assertAdmin(userId: string, project: Project): Promise<void> {
     const role = await this.assertAccess(userId, project);

@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { ProjectAccessService } from '../../project/project-access.service';
 import { decryptSecret } from '../../docker/secret.util';
 import { ComposeApp } from '../compose-app.entity';
 import { ComposeService } from '../compose.service';
@@ -21,10 +22,13 @@ export class ComposeWebhookService {
   constructor(
     private readonly compose: ComposeService,
     private readonly config: ConfigService,
+    private readonly access: ProjectAccessService,
   ) {}
 
   async info(ownerId: string, id: string): Promise<ComposeWebhookInfoDto> {
     const app = await this.compose.findOwnedOrFail(id, ownerId);
+    // The token alone triggers deploys, so viewers do not get it.
+    await this.access.assertCanExport(ownerId, app.project);
     const { webhookToken, webhookSecretEncrypted } = await this.withSecrets(
       app.id,
     );

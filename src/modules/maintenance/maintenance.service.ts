@@ -18,6 +18,8 @@ import {
   expectedVolumes,
   OrphanComposeVolume,
   orphanedComposeVolumes,
+  danglingAnonymousVolumes,
+  DanglingAnonymousVolumes,
   orphanedVolumes,
 } from './orphan-volumes';
 
@@ -40,6 +42,12 @@ export interface DiskUsage {
    * Never removed by cleanup, the nightly run or any endpoint.
    */
   orphanComposeVolumes: OrphanComposeVolume[];
+  /**
+   * Report-only: anonymous volumes no container uses, counted over the whole
+   * daemon (they carry no label that says who created them). Never removed by
+   * cleanup or the nightly run.
+   */
+  danglingAnonymousVolumes: DanglingAnonymousVolumes;
   /** Local-daemon aoox containers whose project/app/database/stack row is gone. */
   orphanContainers: OrphanContainer[];
   lastCleanup: CleanupReport | null;
@@ -118,6 +126,7 @@ export class MaintenanceService {
       orphanComposeVolumes: await this.orphanComposeVolumeList(df).catch(
         () => [],
       ),
+      danglingAnonymousVolumes: danglingAnonymousVolumes(df.Volumes),
       orphanContainers: await this.orphanContainerList().catch(() => []),
       lastCleanup: this.last,
     };

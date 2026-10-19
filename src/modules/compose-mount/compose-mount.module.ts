@@ -3,11 +3,17 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { Mount } from '../application/mount.entity';
 import { ComposeModule } from '../compose/compose.module';
 import { DockerModule } from '../docker/docker.module';
+import { ProjectModule } from '../project/project.module';
 import { ComposeMountController } from './compose-mount.controller';
 
 /** One controller = one flow group (list/add/update/delete mounts of a compose stack). */
 @Module({
-  imports: [TypeOrmModule.forFeature([Mount]), ComposeModule, DockerModule],
+  imports: [
+    TypeOrmModule.forFeature([Mount]),
+    ComposeModule,
+    DockerModule,
+    ProjectModule,
+  ],
   controllers: [ComposeMountController],
 })
 export class ComposeMountModule {}

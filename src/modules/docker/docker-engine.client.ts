@@ -543,9 +543,26 @@ export class DockerEngineClient {
     return res.StatusCode;
   }
 
-  /** `DELETE /containers/{id}?force=..` */
-  async removeContainer(id: string, force = false): Promise<void> {
-    await this.request('DELETE', `/containers/${id}?force=${force}`);
+  /**
+   * `DELETE /containers/{id}?force=..&v=..`
+   *
+   * `removeVolumes` sets `v=true`, which per the Engine API only removes the
+   * container's ANONYMOUS volumes (the ones an image's `VOLUME` instruction
+   * creates). Named volumes and bind mounts are never removed by it. Use it
+   * for one-shot helpers only: images such as postgres or redis otherwise
+   * leave a dangling anonymous volume behind on every run. Long-running
+   * containers keep the default (`false`), because removing their anonymous
+   * data is a decision for the user, not for a redeploy.
+   */
+  async removeContainer(
+    id: string,
+    force = false,
+    removeVolumes = false,
+  ): Promise<void> {
+    await this.request(
+      'DELETE',
+      `/containers/${id}?force=${force}${removeVolumes ? '&v=true' : ''}`,
+    );
   }
 
   /** `POST /containers/{id}/rename?name=...` */

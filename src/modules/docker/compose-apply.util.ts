@@ -62,6 +62,6 @@ export async function runComposeHelper(
     await docker.engine.startContainer(id);
     await docker.engine.waitContainer(id);
   } finally {
-    await docker.engine.removeContainer(id, true).catch(() => undefined);
+    await docker.engine.removeContainer(id, true, true).catch(() => undefined);
   }
 }

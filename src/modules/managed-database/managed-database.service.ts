@@ -242,7 +242,9 @@ export class ManagedDatabaseService {
         `Could not activate ${db.variant} extension for ${db.slug}: ${err instanceof Error ? err.message : String(err)}`,
       );
     } finally {
-      await this.docker.engine.removeContainer(id, true).catch(() => undefined);
+      await this.docker.engine
+        .removeContainer(id, true, true)
+        .catch(() => undefined);
     }
   }
 
@@ -293,7 +295,9 @@ export class ManagedDatabaseService {
         `Could not initialize database for ${db.slug}: ${err instanceof Error ? err.message : String(err)}`,
       );
     } finally {
-      await this.docker.engine.removeContainer(id, true).catch(() => undefined);
+      await this.docker.engine
+        .removeContainer(id, true, true)
+        .catch(() => undefined);
     }
   }
 

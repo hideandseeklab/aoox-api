@@ -198,7 +198,7 @@ export class VolumeBackupService {
         (err) => (err ? reject(err) : resolve()),
       ),
     ).finally(() =>
-      docker.engine.removeContainer(id, true).catch(() => undefined),
+      docker.engine.removeContainer(id, true, true).catch(() => undefined),
     );
   }
 

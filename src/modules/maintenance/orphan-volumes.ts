@@ -172,3 +172,35 @@ export function orphanedComposeVolumes(
   }
   return out.sort((a, b) => a.name.localeCompare(b.name));
 }
+
+export interface DanglingAnonymousVolumes {
+  count: number;
+  /** Sum of the sizes the daemon could compute (volumes reported as -1 count 0). */
+  bytes: number;
+}
+
+/** Docker names anonymous volumes with 64 hex characters (a random id). */
+const ANONYMOUS_VOLUME_NAME = /^[0-9a-f]{64}$/;
+
+/**
+ * Report-only: anonymous volumes no container uses (an explicit `RefCount` of
+ * 0). They cannot be attributed to aoox: the daemon gives them no labels that
+ * name the container that created them, so this counts every dangling
+ * anonymous volume on the daemon, whoever created it. Never deleted by aoox.
+ */
+export function danglingAnonymousVolumes(
+  volumes: Array<{
+    Name: string;
+    UsageData?: { Size?: number; RefCount?: number } | null;
+  }>,
+): DanglingAnonymousVolumes {
+  let count = 0;
+  let bytes = 0;
+  for (const v of volumes) {
+    if (!ANONYMOUS_VOLUME_NAME.test(v.Name)) continue;
+    if (v.UsageData?.RefCount !== 0) continue;
+    count += 1;
+    bytes += Math.max(0, v.UsageData?.Size ?? 0);
+  }
+  return { count, bytes };
+}

@@ -145,7 +145,7 @@ describe('JobRunnerService', () => {
     expect(body.Image).toBe('img:1');
     expect(body.Env).toEqual(['A=1']);
     expect(body.Labels['aoox.component']).toBe('job');
-    expect(engine.removeContainer).toHaveBeenCalledWith('c1', true);
+    expect(engine.removeContainer).toHaveBeenCalledWith('c1', true, true);
     expect(runs.update).toHaveBeenCalledWith(
       'run1',
       expect.objectContaining({

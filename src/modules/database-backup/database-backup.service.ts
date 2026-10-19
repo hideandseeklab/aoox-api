@@ -207,7 +207,7 @@ export class DatabaseBackupService {
         (err) => (err ? reject(err) : resolve()),
       ),
     ).finally(() =>
-      this.docker.engine.removeContainer(id, true).catch(() => undefined),
+      this.docker.engine.removeContainer(id, true, true).catch(() => undefined),
     );
   }
 

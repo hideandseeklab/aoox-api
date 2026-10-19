@@ -538,7 +538,7 @@ export class DatabaseQueryService {
       );
     } finally {
       await this.docker.engine
-        .removeContainer(run.id, true)
+        .removeContainer(run.id, true, true)
         .catch(() => undefined);
     }
   }
@@ -826,7 +826,7 @@ export class DatabaseQueryService {
       return { code: run.code, stdout, stderr: run.stderr };
     } finally {
       await this.docker.engine
-        .removeContainer(run.id, true)
+        .removeContainer(run.id, true, true)
         .catch(() => undefined);
     }
   }
@@ -885,7 +885,9 @@ export class DatabaseQueryService {
       const [code, stderr] = await Promise.all([read('code'), read('stderr')]);
       return { id, code: Number(code.trim()), stderr };
     } catch (err) {
-      await this.docker.engine.removeContainer(id, true).catch(() => undefined);
+      await this.docker.engine
+        .removeContainer(id, true, true)
+        .catch(() => undefined);
       throw err;
     }
   }

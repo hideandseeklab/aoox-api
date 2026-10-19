@@ -117,7 +117,9 @@ export class NixpacksBuilderService {
       }
       context = await docker.engine.readFileFromContainer(id, CONTEXT_TAR);
     } finally {
-      await docker.engine.removeContainer(id, true).catch(() => undefined);
+      await docker.engine
+        .removeContainer(id, true, true)
+        .catch(() => undefined);
     }
 
     onLine({

@@ -97,7 +97,7 @@ describe('NixpacksBuilderService', () => {
       },
       onLine,
     );
-    expect(engine.removeContainer).toHaveBeenCalledWith('helper', true);
+    expect(engine.removeContainer).toHaveBeenCalledWith('helper', true, true);
     expect(lines.some((l) => l.stream?.includes('planned'))).toBe(true);
   });
 
@@ -142,7 +142,7 @@ describe('NixpacksBuilderService', () => {
         onLine,
       ),
     ).rejects.toThrow('Root directory "apps/nope" was not found');
-    expect(engine.removeContainer).toHaveBeenCalledWith('helper', true);
+    expect(engine.removeContainer).toHaveBeenCalledWith('helper', true, true);
   });
 
   it('refuses a hostile root directory before creating any container', async () => {
@@ -180,6 +180,6 @@ describe('NixpacksBuilderService', () => {
       svc.build({ remote: 'r', branch: 'b', tag: 't', buildArgs: {} }, onLine),
     ).rejects.toThrow('nixpacks could not plan this repository (exit 1)');
     expect(engine.buildFromTar).not.toHaveBeenCalled();
-    expect(engine.removeContainer).toHaveBeenCalledWith('helper', true);
+    expect(engine.removeContainer).toHaveBeenCalledWith('helper', true, true);
   });
 });

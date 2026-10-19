@@ -164,7 +164,9 @@ export class StaticSiteBuilderService {
       }
       context = await docker.engine.readFileFromContainer(id, CONTEXT_TAR);
     } finally {
-      await docker.engine.removeContainer(id, true).catch(() => undefined);
+      await docker.engine
+        .removeContainer(id, true, true)
+        .catch(() => undefined);
     }
     onLine({
       stream: `Building ${input.tag} with nginx (${Math.round(context.length / 1024)} KB context)\n`,

@@ -105,7 +105,25 @@ export async function prepareMounts(
       tarFiles(files.map((f) => [filePath(f), f.content ?? ''])),
     );
   } finally {
-    await docker.engine.removeContainer(id, true).catch(() => undefined);
+    await docker.engine.removeContainer(id, true, true).catch(() => undefined);
   }
   return (await docker.engine.inspectVolume(volume)).Mountpoint;
+}
+
+/** A mount as returned by the list endpoints. */
+export type MountView = Mount & {
+  /** True when the file body was left out because the caller is a viewer. */
+  contentHidden: boolean;
+};
+
+/**
+ * `file` mount bodies are usually config files and often hold secrets, so a
+ * project viewer gets the mount (name, path) without its `content`.
+ */
+export function mountView(mount: Mount, canReadContent: boolean): MountView {
+  const hide = !canReadContent && mount.type === 'file';
+  return Object.assign(new Mount(), mount, {
+    content: hide ? null : mount.content,
+    contentHidden: hide,
+  });
 }

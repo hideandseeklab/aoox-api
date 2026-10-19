@@ -144,7 +144,7 @@ describe('ComposeRunnerService', () => {
       '/var/lib/docker/volumes/v/_data',
       expect.any(Buffer),
     );
-    expect(engine.removeContainer).toHaveBeenCalledWith('helper', true);
+    expect(engine.removeContainer).toHaveBeenCalledWith('helper', true, true);
     const last = lastUpdate();
     expect(last).toMatchObject({ status: 'running', errorMessage: null });
     expect(last.deployedAt).toBeInstanceOf(Date);

@@ -1,4 +1,5 @@
 import {
+  danglingAnonymousVolumes,
   expectedVolumes,
   isCandidateVolume,
   orphanedComposeVolumes,
@@ -213,5 +214,22 @@ describe('orphanedComposeVolumes', () => {
 
   it('is not a pruning candidate', () => {
     expect(isCandidateVolume('aoox-gone_data')).toBe(false);
+  });
+});
+
+describe('danglingAnonymousVolumes', () => {
+  const hex = (c: string) => c.repeat(64);
+  it('counts unused 64-hex volumes only, with their sizes', () => {
+    expect(
+      danglingAnonymousVolumes([
+        { Name: hex('a'), UsageData: { RefCount: 0, Size: 100 } },
+        { Name: hex('b'), UsageData: { RefCount: 0, Size: -1 } },
+        { Name: hex('c'), UsageData: { RefCount: 1, Size: 5 } },
+        { Name: hex('d'), UsageData: { RefCount: -1, Size: 5 } },
+        { Name: hex('e'), UsageData: null },
+        { Name: 'aoox_db_main', UsageData: { RefCount: 0, Size: 9 } },
+        { Name: 'a'.repeat(63), UsageData: { RefCount: 0, Size: 9 } },
+      ]),
+    ).toEqual({ count: 2, bytes: 100 });
   });
 });

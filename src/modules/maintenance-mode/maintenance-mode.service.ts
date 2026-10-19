@@ -190,7 +190,7 @@ export class MaintenanceModeService {
       await this.docker.engine.putArchive(helper, path, tarFiles(files));
     } finally {
       await this.docker.engine
-        .removeContainer(helper, true)
+        .removeContainer(helper, true, true)
         .catch(() => undefined);
     }
   }

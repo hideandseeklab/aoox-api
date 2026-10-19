@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { ProjectAccessService } from '../../project/project-access.service';
 import { decryptSecret } from '../../docker/secret.util';
 import { ApplicationService } from '../application.service';
 import { WebhookInfoDto } from './get-webhook.dto';
@@ -9,6 +10,7 @@ export class GetWebhookService {
   constructor(
     private readonly applications: ApplicationService,
     private readonly config: ConfigService,
+    private readonly access: ProjectAccessService,
   ) {}
 
   async execute(
@@ -16,6 +18,8 @@ export class GetWebhookService {
     applicationId: string,
   ): Promise<WebhookInfoDto> {
     const app = await this.applications.findOwnedOrFail(applicationId, ownerId);
+    // The token alone triggers deploys, so viewers do not get it.
+    await this.access.assertCanExport(ownerId, app.project);
     const { webhookToken, webhookSecretEncrypted } =
       await this.applications.repo
         .createQueryBuilder('app')

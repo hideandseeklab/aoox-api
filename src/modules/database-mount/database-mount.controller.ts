@@ -22,12 +22,13 @@ import {
   normalizePath,
 } from '../application/add-mount/add-mount.service';
 import { Mount } from '../application/mount.entity';
-import { volumeNameFor } from '../application/mounts';
+import { mountView, MountView, volumeNameFor } from '../application/mounts';
 import { UpdateMountDto } from '../application/update-mount/update-mount.dto';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import type { JwtPayload } from '../auth/jwt.strategy';
 import { DockerService } from '../docker/docker.service';
+import { ProjectAccessService } from '../project/project-access.service';
 import { DatabaseParamsDto } from '../managed-database/get-database/get-database.dto';
 import { ManagedDatabase } from '../managed-database/managed-database.entity';
 import {
@@ -60,18 +61,21 @@ export class DatabaseMountController {
   constructor(
     private readonly databases: ManagedDatabaseService,
     private readonly docker: DockerService,
+    private readonly access: ProjectAccessService,
   ) {}
 
   @Get(':id/mounts')
   async list(
     @CurrentUser() user: JwtPayload,
     @Param() params: DatabaseParamsDto,
-  ): Promise<Mount[]> {
+  ): Promise<MountView[]> {
     const db = await this.databases.findOwnedOrFail(params.id, user.sub);
-    return this.databases.mounts.find({
+    const canRead = await this.access.canReadSecrets(user.sub, db.project);
+    const mounts = await this.databases.mounts.find({
       where: { databaseId: db.id },
       order: { createdAt: 'ASC' },
     });
+    return mounts.map((m) => mountView(m, canRead));
   }
 
   @Post(':id/mounts')
