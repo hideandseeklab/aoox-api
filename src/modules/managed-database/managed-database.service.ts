@@ -77,6 +77,16 @@ export class ManagedDatabaseService {
     return db;
   }
 
+  /** Like findOwnedOrFail, but viewers are refused (exports and dumps carry data out). */
+  async findOwnedForExportOrFail(
+    id: string,
+    ownerId: string,
+  ): Promise<ManagedDatabase> {
+    const db = await this.findOwnedOrFail(id, ownerId);
+    await this.access.assertCanExport(ownerId, db.project);
+    return db;
+  }
+
   async password(db: ManagedDatabase): Promise<string> {
     const row = await this.repo
       .createQueryBuilder('d')

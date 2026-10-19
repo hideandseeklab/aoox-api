@@ -54,8 +54,12 @@ const users = {
   creator: 'member',
   dev: 'member',
   outsider: 'member',
+  viewer: 'member',
 } as const;
-const memberships = [{ projectId: 'p1', userId: 'dev', role: 'developer' }];
+const memberships = [
+  { projectId: 'p1', userId: 'dev', role: 'developer' },
+  { projectId: 'p1', userId: 'viewer', role: 'viewer' },
+];
 
 describe('ProjectAccessService', () => {
   const svc = access(users, memberships);
@@ -77,6 +81,30 @@ describe('ProjectAccessService', () => {
       ForbiddenException,
     );
     await expect(svc.assertAdmin('creator', project)).resolves.toBeUndefined();
+  });
+
+  it('assertCanExport: viewers 403, developers and admins pass, outsiders 404', async () => {
+    await expect(svc.assertCanExport('viewer', project)).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+    await expect(svc.assertCanExport('dev', project)).resolves.toBe(
+      'developer',
+    );
+    await expect(svc.assertCanExport('creator', project)).resolves.toBe(
+      'admin',
+    );
+    await expect(svc.assertCanExport('ops', project)).resolves.toBe('admin');
+    await expect(
+      svc.assertCanExport('outsider', project),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('a GET export is still refused for a viewer (the rule is the role, not the method)', async () => {
+    await expect(
+      runWithRequestContext({ method: 'GET', path: '/x' }, () =>
+        svc.assertCanExport('viewer', project),
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenException);
   });
 
   it('lists accessible ids: all for platform admins, created + member rows otherwise', async () => {
@@ -183,6 +211,62 @@ describe('findOwnedOrFail across resource types', () => {
       await expect(find('x', 'outsider')).rejects.toBeInstanceOf(
         NotFoundException,
       );
+    },
+  );
+});
+
+/** Data leaves the system through these helpers, so viewers must be refused by each. */
+describe('export/download helpers refuse viewers', () => {
+  const acc = access(users, memberships);
+  const repoWith = (row: unknown) => ({ findOne: () => Promise.resolve(row) });
+  const cases: Array<[string, (u: string) => Promise<unknown>]> = [
+    [
+      'database export',
+      (u) =>
+        new ManagedDatabaseService(
+          repoWith({ id: 'x', project }) as never,
+          {} as never,
+          {} as never,
+          { getOrThrow: () => 'k' } as never,
+          {} as never,
+          acc,
+        ).findOwnedForExportOrFail('x', u),
+    ],
+    [
+      'database backup download',
+      (u) =>
+        new DatabaseBackupService(
+          repoWith({ id: 'x', database: { project } }) as never,
+          {} as never,
+          {} as never,
+          {} as never,
+          {} as never,
+          {} as never,
+          acc,
+        ).findOwnedForDownloadOrFail('x', u),
+    ],
+    [
+      'volume backup download',
+      (u) =>
+        new VolumeBackupService(
+          repoWith({ id: 'x', application: { project } }) as never,
+          {} as never,
+          {} as never,
+          {} as never,
+          {} as never,
+          {} as never,
+          {} as never,
+          acc,
+        ).findOwnedForDownloadOrFail('x', u),
+    ],
+  ];
+
+  it.each(cases)(
+    '%s: developer 200, viewer 403, outsider 404',
+    async (_n, find) => {
+      await expect(find('dev')).resolves.toBeTruthy();
+      await expect(find('viewer')).rejects.toBeInstanceOf(ForbiddenException);
+      await expect(find('outsider')).rejects.toBeInstanceOf(NotFoundException);
     },
   );
 });

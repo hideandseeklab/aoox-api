@@ -51,6 +51,16 @@ export class DatabaseBackupService {
     return b;
   }
 
+  /** Like findOwnedOrFail, but viewers are refused (a backup file is the whole database). */
+  async findOwnedForDownloadOrFail(
+    id: string,
+    ownerId: string,
+  ): Promise<DatabaseBackup> {
+    const b = await this.findOwnedOrFail(id, ownerId);
+    await this.access.assertCanExport(ownerId, b.database.project);
+    return b;
+  }
+
   /**
    * Creates the row and runs the dump; always ends in success/failed. With a
    * destination set, the file is also copied off-site — an upload failure

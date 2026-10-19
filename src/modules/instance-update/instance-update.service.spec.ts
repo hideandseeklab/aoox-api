@@ -1,3 +1,5 @@
+import { BadGatewayException } from '@nestjs/common';
+import { fetchRemoteDigest } from '../registry/remote-digest';
 import { InstanceUpdateService } from './instance-update.service';
 import { INSTANCE_UPDATE_STATE_ID } from './instance-update-state.entity';
 
@@ -78,6 +80,36 @@ describe('InstanceUpdateService', () => {
     );
     const saved = repo.save.mock.calls[0][0];
     expect(saved.applyStartedAt).toBeInstanceOf(Date);
+  });
+
+  it('check() reports a lookup failure per image instead of throwing', async () => {
+    const { service, repo } = build({
+      API_IMAGE: 'aoox-local/aoox-api:test',
+    });
+    mockVersion(service, '0.1.0-alpha.2');
+    (fetchRemoteDigest as jest.Mock).mockRejectedValueOnce(
+      new Error('Manifest lookup failed (401)'),
+    );
+    const status = await service.check();
+    expect(status.api.remoteDigest).toBeNull();
+    expect(status.api.updateAvailable).toBe(false);
+    expect(status.api.error).toContain('aoox-local/aoox-api:test');
+    expect(status.api.error).toContain('Manifest lookup failed (401)');
+    expect(status.web.error).toBeNull();
+    expect(status.web.remoteDigest).toBe('sha256:remote');
+    // The failed image gets no baseline; the healthy one does.
+    const saved = repo.save.mock.calls.at(-1)?.[0];
+    expect(saved?.apiDigest).toBeNull();
+    expect(saved?.webDigest).toBe('sha256:remote');
+  });
+
+  it('apply() refuses with 502 and does not mark applying when a lookup fails', async () => {
+    const { service, repo } = build({ INSTALL_DIR: '/opt/aoox' });
+    (fetchRemoteDigest as jest.Mock).mockRejectedValueOnce(
+      new Error('Manifest lookup failed (401)'),
+    );
+    await expect(service.apply()).rejects.toBeInstanceOf(BadGatewayException);
+    expect(repo.save).not.toHaveBeenCalled();
   });
 
   it('apply() rejects when INSTALL_DIR is unset', async () => {

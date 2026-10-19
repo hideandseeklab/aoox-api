@@ -1,4 +1,9 @@
-import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import {
+  BadGatewayException,
+  BadRequestException,
+  Injectable,
+  Logger,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { readFileSync } from 'fs';
@@ -26,8 +31,11 @@ const DEFAULT_WEB_IMAGE = 'hideandseeklab/aoox-web:latest';
 export interface ImageUpdateStatus {
   image: string;
   currentDigest: string | null;
-  remoteDigest: string;
+  /** Null when the registry lookup failed (see `error`). */
+  remoteDigest: string | null;
   updateAvailable: boolean;
+  /** Short reason the lookup failed, null when it worked. */
+  error: string | null;
 }
 
 export interface InstanceUpdateStatus {
@@ -160,6 +168,37 @@ export class InstanceUpdateService {
     );
   }
 
+  /** One lookup, never throws: a bad image reference or a registry refusal becomes a short message. */
+  private async tryRemoteDigest(
+    imageRef: string,
+  ): Promise<{ digest: string | null; error: string | null }> {
+    try {
+      return { digest: await this.remoteDigestFor(imageRef), error: null };
+    } catch (err) {
+      const raw = err instanceof Error ? err.message : String(err);
+      const error = `Could not look up ${imageRef}: ${raw}`.slice(0, 240);
+      this.logger.warn(error);
+      return { digest: null, error };
+    }
+  }
+
+  private imageStatus(
+    image: string,
+    baseline: string | null,
+    lookup: { digest: string | null; error: string | null },
+  ): ImageUpdateStatus {
+    return {
+      image,
+      currentDigest: baseline,
+      remoteDigest: lookup.digest,
+      updateAvailable:
+        lookup.digest !== null &&
+        baseline !== null &&
+        baseline !== lookup.digest,
+      error: lookup.error,
+    };
+  }
+
   /**
    * `currentDigest: null` on the very first check ever run (no baseline yet)
    * — that check's digests become the baseline and `updateAvailable` reads
@@ -171,26 +210,18 @@ export class InstanceUpdateService {
     const currentVersion = this.currentVersion;
     this.clearApplyingIfDone(row, currentVersion);
 
-    const [apiDigest, webDigest] = await Promise.all([
-      this.remoteDigestFor(this.apiImage),
-      this.remoteDigestFor(this.webImage),
+    const [apiLookup, webLookup] = await Promise.all([
+      this.tryRemoteDigest(this.apiImage),
+      this.tryRemoteDigest(this.webImage),
     ]);
 
-    const api: ImageUpdateStatus = {
-      image: this.apiImage,
-      currentDigest: row.apiDigest,
-      remoteDigest: apiDigest,
-      updateAvailable: row.apiDigest !== null && row.apiDigest !== apiDigest,
-    };
-    const web: ImageUpdateStatus = {
-      image: this.webImage,
-      currentDigest: row.webDigest,
-      remoteDigest: webDigest,
-      updateAvailable: row.webDigest !== null && row.webDigest !== webDigest,
-    };
+    const api = this.imageStatus(this.apiImage, row.apiDigest, apiLookup);
+    const web = this.imageStatus(this.webImage, row.webDigest, webLookup);
 
-    if (row.apiDigest === null) row.apiDigest = apiDigest;
-    if (row.webDigest === null) row.webDigest = webDigest;
+    if (row.apiDigest === null && apiLookup.digest)
+      row.apiDigest = apiLookup.digest;
+    if (row.webDigest === null && webLookup.digest)
+      row.webDigest = webLookup.digest;
     row.checkedAt = new Date();
     await this.repo.save(row);
     // The manual check also refreshes the cached version the sidebar reads.
@@ -244,13 +275,22 @@ export class InstanceUpdateService {
       );
     }
 
-    const [apiDigest, webDigest] = await Promise.all([
-      this.remoteDigestFor(this.apiImage),
-      this.remoteDigestFor(this.webImage),
+    const [apiLookup, webLookup] = await Promise.all([
+      this.tryRemoteDigest(this.apiImage),
+      this.tryRemoteDigest(this.webImage),
     ]);
+    const failures = [apiLookup.error, webLookup.error].filter(
+      (e): e is string => Boolean(e),
+    );
+    if (failures.length > 0) {
+      const reasons = failures.map((e) => (e.endsWith('.') ? e : `${e}.`));
+      throw new BadGatewayException(
+        `Not updating: ${reasons.join(' ')} Check API_IMAGE / WEB_IMAGE and that the registry is reachable.`,
+      );
+    }
     const row = await this.state();
-    row.apiDigest = apiDigest;
-    row.webDigest = webDigest;
+    row.apiDigest = apiLookup.digest;
+    row.webDigest = webLookup.digest;
     row.checkedAt = new Date();
     row.applyStartedAt = new Date();
     row.applyFromVersion = this.currentVersion;

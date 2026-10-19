@@ -131,6 +131,26 @@ export class ProjectAccessService {
     return role;
   }
 
+  /**
+   * Reading data out in bulk (SQL dumps, CSV exports, backup files) needs
+   * `developer` or higher: a viewer may look at a project but must not carry
+   * its data away. Outsiders still get 404. A read-only API token may export:
+   * an export is a read, and the token acts as its owner, so only the owner's
+   * own role decides.
+   */
+  async assertCanExport(
+    userId: string,
+    project: Project,
+  ): Promise<ProjectRole> {
+    const role = await this.assertAccess(userId, project);
+    if (role === 'viewer') {
+      throw new ForbiddenException(
+        'Viewers cannot export or download project data',
+      );
+    }
+    return role;
+  }
+
   /** 404 for outsiders, 403 for members who are not project admins. */
   async assertAdmin(userId: string, project: Project): Promise<void> {
     const role = await this.assertAccess(userId, project);

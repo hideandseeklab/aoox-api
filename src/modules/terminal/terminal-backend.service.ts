@@ -27,7 +27,7 @@ export type TerminalKeySource = 'env-key' | 'env-password' | 'generated';
  * Login used for the SSH-to-host backend when `TERMINAL_SSH_USER` is empty —
  * the same default the installers write into `.env.dist` (the install itself
  * needs root). Installs made before that default existed have no such line,
- * and `aoox update` never touches `.env.dist`. Not applied to remote servers,
+ * and `aoox update panel` never touches `.env.dist`. Not applied to remote servers,
  * which carry their own `username`.
  */
 export const DEFAULT_TERMINAL_SSH_USER = 'root';

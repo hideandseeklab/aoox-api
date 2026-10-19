@@ -30,7 +30,10 @@ export class DownloadVolumeBackupController {
     @Param() params: VolumeBackupParamsDto,
     @Res() res: Response,
   ): Promise<void> {
-    const backup = await this.backups.findOwnedOrFail(params.id, user.sub);
+    const backup = await this.backups.findOwnedForDownloadOrFail(
+      params.id,
+      user.sub,
+    );
     try {
       await this.files.ensureLocal(
         backup,

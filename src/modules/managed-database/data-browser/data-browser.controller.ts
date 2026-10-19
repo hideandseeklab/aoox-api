@@ -103,7 +103,10 @@ export class DataBrowserController {
     @Query() query: TableExportQueryDto,
     @Res() res: Response,
   ): Promise<void> {
-    const db = await this.databases.findOwnedOrFail(params.id, user.sub);
+    const db = await this.databases.findOwnedForExportOrFail(
+      params.id,
+      user.sub,
+    );
     const { csv, truncated } = await this.queries.exportTableCsv(
       db,
       params.table,
@@ -204,7 +207,10 @@ export class DataBrowserController {
     @Query() query: DatabaseSelectDto,
     @Res() res: Response,
   ): Promise<void> {
-    const db = await this.databases.findOwnedOrFail(params.id, user.sub);
+    const db = await this.databases.findOwnedForExportOrFail(
+      params.id,
+      user.sub,
+    );
     const name = `${db.slug}${query.db ? `-${query.db}` : ''}.sql`;
     res.setHeader('Content-Type', 'application/sql; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="${name}"`);

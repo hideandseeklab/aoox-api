@@ -7,7 +7,7 @@ import { ProxyService } from '../proxy/proxy.service';
  * uses for app stacks. Named `docker-compose.override.yml` (not `.domain.yml`)
  * on purpose: Compose picks that filename up automatically next to
  * `docker-compose.dist.yml` on every future `up`, so once this is written the
- * domain survives `aoox update`/manual restarts without needing an explicit
+ * domain survives `aoox update panel`/manual restarts without needing an explicit
  * `-f` flag forever after.
  */
 export function renderPanelOverride(

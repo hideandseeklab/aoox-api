@@ -64,6 +64,16 @@ export class VolumeBackupService {
     return b;
   }
 
+  /** Like findOwnedOrFail, but viewers are refused (a volume archive is the app's data). */
+  async findOwnedForDownloadOrFail(
+    id: string,
+    ownerId: string,
+  ): Promise<VolumeBackup> {
+    const b = await this.findOwnedOrFail(id, ownerId);
+    await this.access.assertCanExport(ownerId, b.application.project);
+    return b;
+  }
+
   /** Volume mounts of an app that can be backed up. */
   async volumeMounts(app: Application): Promise<Mount[]> {
     return this.applications.mounts.find({
