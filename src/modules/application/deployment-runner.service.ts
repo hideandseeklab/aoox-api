@@ -14,7 +14,11 @@ import {
   DockerService,
 } from '../docker/docker.service';
 import { resourceLimits } from '../docker/resource-limits';
-import { HEALTHCHECK_WAIT_MS, healthcheckFor } from './healthcheck';
+import {
+  HEALTHCHECK_WAIT_MS,
+  describeHealthFailure,
+  healthcheckFor,
+} from './healthcheck';
 import { dnsRouting } from './cert-mode';
 import { bindsFor, prepareMounts } from './mounts';
 import { exposedPortsNote, readExposedPorts } from './exposed-ports';
@@ -143,7 +147,7 @@ export class DeploymentRunnerService {
       // A failed build/push leaves the previous container untouched, so only
       // mark the app as errored when the container itself was replaced.
       if (deployment.status === 'starting') {
-        await this.recordFailure(app, log, baseline);
+        await this.recordFailure(app, log, baseline, err);
       }
       await log.finish('failed', `ERROR: ${message}`, message);
     }
@@ -387,7 +391,7 @@ export class DeploymentRunnerService {
       );
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      await this.recordFailure(app, log);
+      await this.recordFailure(app, log, undefined, err);
       await log.finish('failed', `ERROR: ${message}`, message);
     }
   }
@@ -437,11 +441,14 @@ export class DeploymentRunnerService {
     app: Application,
     log: DeploymentLog,
     baseline?: DigestBaseline,
+    err?: unknown,
   ): Promise<void> {
     const status = await this.statusAfterFailure(app);
     await this.persistOutcome(app, status, undefined, baseline).catch(
       () => undefined,
     );
+    // The recovery already said so in the log.
+    if (err instanceof RecoveredDeployError && status === 'running') return;
     await log
       .note(
         status === 'running'
@@ -718,44 +725,57 @@ export class DeploymentRunnerService {
     } else if (existing) {
       await docker.engine.removeContainer(existing.Id, true);
     }
-    const id = await docker.engine.createContainer(
-      {
-        Image: imageRef,
-        Env: env,
-        Healthcheck: healthcheck,
-        Labels: {
-          ...containerLabels,
-          ...proxyLabels,
-          ...override?.labels,
+    let createdId: string | undefined;
+    try {
+      createdId = await docker.engine.createContainer(
+        {
+          Image: imageRef,
+          Env: env,
+          Healthcheck: healthcheck,
+          Labels: {
+            ...containerLabels,
+            ...proxyLabels,
+            ...override?.labels,
+          },
+          ExposedPorts: { [port]: {} },
+          HostConfig: {
+            RestartPolicy: { Name: 'unless-stopped' },
+            LogConfig: this.docker.logConfig,
+            NetworkMode: APP_NETWORK,
+            PortBindings: hostPort
+              ? { [port]: [hostPortBinding(hostPort, app.hostPortBind)] }
+              : {},
+            Binds: bindsFor(app, mounts, filesMountpoint),
+            ...resourceLimits(app.cpuMillicores, app.memoryMb),
+          },
         },
-        ExposedPorts: { [port]: {} },
-        HostConfig: {
-          RestartPolicy: { Name: 'unless-stopped' },
-          LogConfig: this.docker.logConfig,
-          NetworkMode: APP_NETWORK,
-          PortBindings: hostPort
-            ? { [port]: [hostPortBinding(hostPort, app.hostPortBind)] }
-            : {},
-          Binds: bindsFor(app, mounts, filesMountpoint),
-          ...resourceLimits(app.cpuMillicores, app.memoryMb),
-        },
-      },
-      createName,
-    );
-    await startWithPortRetry(() => docker.engine.startContainer(id), hostPort);
-    if (healthcheck) {
-      await log?.step(
-        'starting',
-        `Waiting for health check at ${app.healthcheckPath}${blueGreen ? ' (old container keeps serving)' : ''}`,
+        createName,
       );
-      try {
-        await this.waitHealthy(docker, id);
-      } catch (err) {
-        if (blueGreen) {
-          await docker.engine.removeContainer(id, true).catch(() => undefined);
-        }
-        throw err;
+      await startWithPortRetry(
+        () => docker.engine.startContainer(createdId as string),
+        hostPort,
+      );
+      if (healthcheck) {
+        await log?.step(
+          'starting',
+          `Waiting for health check at ${app.healthcheckPath}${blueGreen ? ' (old container keeps serving)' : ''}`,
+        );
+        await this.waitHealthy(docker, createdId, {
+          port: app.containerPort,
+          path: app.healthcheckPath as string,
+        });
       }
+    } catch (err) {
+      // Whatever came up is not serving a working version: never leave it
+      // answering (a plain replace used to keep the broken container up).
+      if (!override) await this.removeFailed(docker, createdId, createName);
+      if (!blueGreen && existing && !override) {
+        throw await this.recoverPrevious(app, imageRef, log, err);
+      }
+      throw err;
+    }
+    const id = createdId;
+    if (healthcheck) {
       if (blueGreen && existing) {
         // Traefik learns about the healthy container from a Docker event a
         // moment later; give it time to add the server before the old one goes.
@@ -811,8 +831,75 @@ export class DeploymentRunnerService {
   /** Grace for the proxy to pick up the new container before the old one is removed. */
   proxySettleMs = 3000;
 
-  /** Polls Docker's own health status; rejects with the probe's last output. */
-  private async waitHealthy(docker: DockerHandle, id: string): Promise<void> {
+  /** Removes a container that came up wrong (by id, else by its name). Never throws. */
+  private async removeFailed(
+    docker: DockerHandle,
+    id: string | undefined,
+    name: string,
+  ): Promise<void> {
+    try {
+      const target = id ?? (await docker.findContainerByName(name))?.Id;
+      if (target) await docker.engine.removeContainer(target, true);
+    } catch (err) {
+      this.logger.warn(
+        `${name}: could not remove the failed container: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
+  /**
+   * A plain replace (no blue/green: host port or no health check) removed the
+   * old container before the new one failed. The failed one is already gone;
+   * put the previous image back from `currentImage` through the same
+   * `replaceContainer` path (resolved env, mounts, ports, labels), no build.
+   * Returns the error to throw: a `RecoveredDeployError` when the previous
+   * version serves again (the deployment still failed), else the original.
+   */
+  private async recoverPrevious(
+    app: Application,
+    failedRef: string,
+    log: BuildLog | undefined,
+    cause: unknown,
+  ): Promise<unknown> {
+    const note = (line: string) => log?.note?.(line).catch(() => undefined);
+    const previous = app.currentImage;
+    if (!previous) {
+      await note(
+        'There is no previous image to roll back to (first deployment). The failed container was removed; nothing is running.',
+      );
+      return cause;
+    }
+    if (previous === failedRef) {
+      await note(
+        'The failed container was removed. The previous image is the one that just failed, so there is nothing else to roll back to; nothing is running.',
+      );
+      return cause;
+    }
+    await note(
+      `Recreating the previous image ${previous}: the old container was already removed, so the port is unavailable for a moment.`,
+    );
+    try {
+      await this.replaceContainer(app, previous, log);
+    } catch (err) {
+      await note(
+        `Could not restore the previous image ${previous}: ${err instanceof Error ? err.message : String(err)}. Nothing is running; the application is marked as errored.`,
+      );
+      return cause;
+    }
+    await note(
+      `Rolled back to the previous image ${previous}; the application keeps running.`,
+    );
+    return new RecoveredDeployError(
+      cause instanceof Error ? cause.message : String(cause),
+    );
+  }
+
+  /** Polls Docker's own health status; rejects with a short, accurate reason. */
+  private async waitHealthy(
+    docker: DockerHandle,
+    id: string,
+    ctx: { port: number; path: string },
+  ): Promise<void> {
     const deadline = Date.now() + HEALTHCHECK_WAIT_MS;
     let last: { ExitCode: number; Output: string } | undefined;
     let unhealthy = false;
@@ -832,21 +919,20 @@ export class DeploymentRunnerService {
       }
       await new Promise((r) => setTimeout(r, this.healthPollMs));
     }
-    const output = last?.Output.trim().slice(0, 300);
-    // 127 = "command not found" from every probe in the chain.
-    const hint =
-      last?.ExitCode === 127
-        ? ' — the image has none of wget, curl, node or python3, so nothing can probe it'
-        : '';
     throw new Error(
       `Health check ${unhealthy ? 'failed' : 'timed out'}` +
         (last
-          ? ` (probe exit ${last.ExitCode}${output ? `: ${output}` : ''})`
-          : '') +
-        hint,
+          ? `: ${describeHealthFailure(last.ExitCode, last.Output, ctx)} (probe exit ${last.ExitCode})`
+          : ''),
     );
   }
 }
+
+/**
+ * Thrown by `replaceContainer` when the new version failed but the previous
+ * image was put back and serves again. The deployment is still `failed`.
+ */
+export class RecoveredDeployError extends Error {}
 
 /** Auto-update baseline recorded after pulling an `image` source. */
 interface DigestBaseline {

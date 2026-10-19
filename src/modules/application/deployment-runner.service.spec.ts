@@ -475,6 +475,101 @@ describe('DeploymentRunnerService', () => {
       engine.inspectContainer.mockReset();
     });
 
+    describe('plain replace that fails its health check', () => {
+      const PREV = 'localhost:5000/my-project/web-abc123:prev';
+      const probeOutput =
+        'wget: server returned error: HTTP/1.1 500 Internal Server Error';
+      /** Old container exists on the first lookup; afterwards a container named like the app is the recovered one. */
+      const setup = (recoverCreate: () => Promise<string>) => {
+        let lookups = 0;
+        docker.findContainerByName.mockImplementation(() => {
+          lookups += 1;
+          if (lookups === 1) return Promise.resolve({ Id: 'old' });
+          // 2 = the recovery's own "existing" lookup (already removed).
+          return Promise.resolve(lookups === 2 ? null : { Id: 'rec' });
+        });
+        let creates = 0;
+        engine.createContainer.mockImplementation(() => {
+          creates += 1;
+          return creates === 1 ? Promise.resolve('cid') : recoverCreate();
+        });
+        engine.inspectContainer.mockImplementation((id: string) =>
+          Promise.resolve(
+            id === 'cid'
+              ? healthy('unhealthy', probeOutput)
+              : healthy('healthy'),
+          ),
+        );
+      };
+      const reset = () => {
+        docker.findContainerByName.mockReset().mockResolvedValue(null);
+        engine.createContainer.mockReset().mockResolvedValue('cid');
+        engine.inspectContainer.mockReset();
+      };
+      const withPrev = () =>
+        ({
+          ...app(),
+          healthcheckPath: '/health',
+          currentImage: PREV,
+        }) as Application;
+
+      afterEach(reset);
+
+      it('removes the broken container and recreates the previous image', async () => {
+        setup(() => Promise.resolve('rec'));
+        const a = withPrev();
+        dbRow.currentImage = PREV;
+        const d = await runAndWait(deployment(), a);
+        expect(d.status).toBe('failed');
+        expect(d.errorMessage).toContain('returned HTTP 500');
+        expect(d.errorMessage).not.toContain('none of wget');
+        expect(engine.removeContainer).toHaveBeenCalledWith('cid', true);
+        const images = engine.createContainer.mock.calls.map(
+          (c: unknown[]) => (c[0] as { Image: string }).Image,
+        );
+        expect(images[1]).toBe(PREV);
+        expect(d.logs).toContain(
+          `Rolled back to the previous image ${PREV}; the application keeps running.`,
+        );
+        expect(a.status).toBe('running');
+        expect(dbRow).toMatchObject({ status: 'running', currentImage: PREV });
+        expect(applications.repo.save).not.toHaveBeenCalled();
+      });
+
+      it('marks the app errored when the previous image cannot be restored', async () => {
+        setup(() => Promise.reject(new Error('port is already allocated')));
+        docker.findContainerByName.mockImplementation(() =>
+          Promise.resolve(null),
+        );
+        docker.findContainerByName.mockResolvedValueOnce({ Id: 'old' });
+        const a = withPrev();
+        const d = await runAndWait(deployment(), a);
+        expect(d.status).toBe('failed');
+        expect(d.logs).toContain(
+          `Could not restore the previous image ${PREV}: port is already allocated`,
+        );
+        expect(a.status).toBe('error');
+        expect(dbRow.status).toBe('error');
+        expect(d.logs).toContain('No container is serving');
+        expect(d.logs).not.toContain('keeps running');
+      });
+
+      it('leaves nothing running on a first deployment (no currentImage)', async () => {
+        setup(() => Promise.resolve('rec'));
+        const a = {
+          ...withPrev(),
+          currentImage: null,
+        } as unknown as Application;
+        const d = await runAndWait(deployment(), a);
+        expect(d.status).toBe('failed');
+        expect(engine.removeContainer).toHaveBeenCalledWith('cid', true);
+        expect(engine.createContainer).toHaveBeenCalledTimes(1);
+        expect(d.logs).toContain('no previous image to roll back to');
+        docker.findContainerByName.mockResolvedValue(null);
+        expect(a.status).toBe('error');
+      });
+    });
+
     it('keeps the app running when the failure happens before the old container is touched', async () => {
       // e.g. an env reference that no longer resolves: the old one still runs.
       docker.findContainerByName.mockResolvedValue({ Id: 'old' });
