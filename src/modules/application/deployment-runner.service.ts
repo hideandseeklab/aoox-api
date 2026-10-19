@@ -17,6 +17,8 @@ import { resourceLimits } from '../docker/resource-limits';
 import {
   HEALTHCHECK_WAIT_MS,
   describeHealthFailure,
+  isMissingShell,
+  NO_SHELL_NOTE,
   healthcheckFor,
 } from './healthcheck';
 import { dnsRouting } from './cert-mode';
@@ -450,11 +452,7 @@ export class DeploymentRunnerService {
     // The recovery already said so in the log.
     if (err instanceof RecoveredDeployError && status === 'running') return;
     await log
-      .note(
-        status === 'running'
-          ? 'The previous version is still serving; the application stays running.'
-          : 'No container is serving: the previous container was already replaced and the new one failed. The application is marked as errored; fix the problem and deploy again.',
-      )
+      .note(failureNote(status, !app.currentImage, isUnrecovered(err)))
       .catch(() => undefined);
   }
 
@@ -751,6 +749,15 @@ export class DeploymentRunnerService {
         },
         createName,
       );
+      // The probe runs through /bin/sh: say so up front when the image has none
+      // (informational; the health result still decides).
+      if (
+        healthcheck &&
+        log?.note &&
+        (await this.lacksShell(docker, createdId))
+      ) {
+        await log.note(NO_SHELL_NOTE).catch(() => undefined);
+      }
       await startWithPortRetry(
         () => docker.engine.startContainer(createdId as string),
         hostPort,
@@ -831,6 +838,23 @@ export class DeploymentRunnerService {
   /** Grace for the proxy to pick up the new container before the old one is removed. */
   proxySettleMs = 3000;
 
+  /**
+   * True only when the daemon positively says `/bin/sh` is absent in the
+   * created (not started) container. Capped at 3 s; any doubt (error, timeout,
+   * no answer) is false, so a deploy is never blocked or warned by a guess.
+   */
+  private async lacksShell(docker: DockerHandle, id: string): Promise<boolean> {
+    try {
+      const found = await Promise.race([
+        docker.engine.containerPathExists(id, '/bin/sh'),
+        new Promise<null>((r) => setTimeout(() => r(null), 3000).unref()),
+      ]);
+      return found === false;
+    } catch {
+      return false;
+    }
+  }
+
   /** Removes a container that came up wrong (by id, else by its name). Never throws. */
   private async removeFailed(
     docker: DockerHandle,
@@ -884,7 +908,7 @@ export class DeploymentRunnerService {
       await note(
         `Could not restore the previous image ${previous}: ${err instanceof Error ? err.message : String(err)}. Nothing is running; the application is marked as errored.`,
       );
-      return cause;
+      return markUnrecovered(cause);
     }
     await note(
       `Rolled back to the previous image ${previous}; the application keeps running.`,
@@ -913,6 +937,11 @@ export class DeploymentRunnerService {
       }
       if (health?.Status === 'healthy') return;
       last = health?.Log?.at(-1) ?? last;
+      // Docker could not even start the probe: no retry will change that.
+      if (last && isMissingShell(last.ExitCode, last.Output)) {
+        unhealthy = true;
+        break;
+      }
       if (health?.Status === 'unhealthy') {
         unhealthy = true;
         break;
@@ -933,6 +962,41 @@ export class DeploymentRunnerService {
  * image was put back and serves again. The deployment is still `failed`.
  */
 export class RecoveredDeployError extends Error {}
+
+/** Errors whose plain-replace recovery was attempted and failed. */
+const unrecovered = new WeakSet<object>();
+
+function markUnrecovered(err: unknown): unknown {
+  if (typeof err === 'object' && err !== null) unrecovered.add(err);
+  return err;
+}
+
+function isUnrecovered(err: unknown): boolean {
+  return typeof err === 'object' && err !== null && unrecovered.has(err);
+}
+
+/**
+ * Last line of the log after a failed start, matched to what actually
+ * happened: something still serves, this was the first deployment, the
+ * previous version could not be put back, or the previous container was
+ * replaced by the failing one.
+ */
+export function failureNote(
+  status: ApplicationStatus,
+  firstDeployment: boolean,
+  recoveryFailed: boolean,
+): string {
+  if (status === 'running') {
+    return 'The previous version is still serving; the application stays running.';
+  }
+  if (firstDeployment) {
+    return 'This was the first deployment, so no previous version exists; nothing is running. The application is marked as errored; fix the problem and deploy again.';
+  }
+  if (recoveryFailed) {
+    return 'No container is serving: the previous version could not be restored (see above). The application is marked as errored; fix the problem and deploy again.';
+  }
+  return 'No container is serving: the previous container was already replaced and the new one failed. The application is marked as errored; fix the problem and deploy again.';
+}
 
 /** Auto-update baseline recorded after pulling an `image` source. */
 interface DigestBaseline {

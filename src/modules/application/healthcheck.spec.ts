@@ -3,6 +3,8 @@ import {
   describeHealthFailure,
   healthcheckFor,
   healthcheckScript,
+  isMissingShell,
+  NO_SHELL_MESSAGE,
 } from './healthcheck';
 
 const ctx = { port: 3000, path: '/health' };
@@ -77,5 +79,39 @@ describe('describeHealthFailure', () => {
       'the probe failed (exit 2: weird)',
     );
     expect(describeHealthFailure(2, '', ctx)).toBe('the probe failed (exit 2)');
+  });
+
+  describe('image without /bin/sh', () => {
+    // Real State.Health.Log entries recorded by Docker for a FROM scratch image.
+    const real =
+      'OCI runtime exec failed: exec failed: unable to start container process: exec: "/bin/sh": stat /bin/sh: no such file or directory';
+    const pathVariant =
+      'OCI runtime exec failed: exec failed: unable to start container process: exec: "/bin/sh": executable file not found in $PATH';
+
+    it.each([real, pathVariant])('says the image has no shell (%#)', (out) => {
+      expect(isMissingShell(-1, out)).toBe(true);
+      const msg = describeHealthFailure(-1, out, ctx);
+      expect(msg).toBe(NO_SHELL_MESSAGE);
+      expect(msg).toContain('no /bin/sh');
+      expect(msg).toContain('clear the health check path');
+    });
+
+    it('does not mistake other failures for a missing shell', () => {
+      expect(isMissingShell(0, real)).toBe(false);
+      expect(isMissingShell(127, '')).toBe(false);
+      expect(
+        isMissingShell(1, 'wget: server returned error: HTTP/1.1 500'),
+      ).toBe(false);
+      // Some other binary missing is not the shell.
+      expect(
+        isMissingShell(
+          -1,
+          'OCI runtime exec failed: exec: "/usr/bin/foo": stat /usr/bin/foo: no such file or directory',
+        ),
+      ).toBe(false);
+      expect(describeHealthFailure(-1, 'something odd', ctx)).toBe(
+        'the probe failed (exit -1: something odd)',
+      );
+    });
   });
 });

@@ -52,6 +52,31 @@ export function healthcheckScript(url: string): string {
   ].join('\n');
 }
 
+/**
+ * Docker runs the health check as `/bin/sh -c <script>`. An image without a
+ * shell (scratch, distroless) records an exec failure instead of a probe result:
+ * exit code -1 and the runtime's text, e.g. `OCI runtime exec failed: exec
+ * failed: unable to start container process: exec: "/bin/sh": stat /bin/sh: no
+ * such file or directory` (or `executable file not found in $PATH`). The probe
+ * itself never ran, so this says nothing about the app.
+ */
+export function isMissingShell(exitCode: number, output: string): boolean {
+  if (exitCode === 0 || exitCode === 127) return false;
+  return (
+    /exec(?:ution)? failed|OCI runtime/i.test(output) &&
+    /["'\s]\/?bin\/sh["'\s:]|exec: "sh"/.test(output) &&
+    /no such file|not found/i.test(output)
+  );
+}
+
+/** The one sentence for a missing `/bin/sh`, shared by the failure and the early note. */
+export const NO_SHELL_MESSAGE =
+  'the image has no /bin/sh, so the health check cannot run (Docker runs it through a shell); clear the health check path or use an image that includes a shell';
+
+/** Log line written before the health wait when the created container has no `/bin/sh`. */
+export const NO_SHELL_NOTE =
+  'Warning: this image has no /bin/sh, so the health check at the configured path cannot run and the deployment will fail. Clear the health check path or use an image that includes a shell.';
+
 export interface HealthFailureContext {
   port: number;
   path: string;
@@ -68,6 +93,7 @@ export function describeHealthFailure(
   ctx: HealthFailureContext,
 ): string {
   const out = output.trim();
+  if (isMissingShell(exitCode, out)) return NO_SHELL_MESSAGE;
   if (exitCode === 127) {
     return 'no probe tool exists in the image (none of wget, curl, node or python3), so nothing can check it';
   }

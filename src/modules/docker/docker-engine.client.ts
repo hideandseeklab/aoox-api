@@ -1206,6 +1206,24 @@ export class DockerEngineClient {
     req.end();
   }
 
+  /**
+   * `HEAD /containers/{id}/archive?path=` — whether a path exists in the
+   * container's filesystem (works before start). true/false on 200/404, null
+   * when the daemon cannot tell. A symlink counts as existing.
+   */
+  async containerPathExists(id: string, path: string): Promise<boolean | null> {
+    try {
+      await this.request(
+        'HEAD',
+        `/containers/${encodeURIComponent(id)}/archive?path=${encodeURIComponent(path)}`,
+      );
+      return true;
+    } catch (err) {
+      if (err instanceof DockerEngineError && err.status === 404) return false;
+      return null;
+    }
+  }
+
   /** `PUT /containers/{id}/archive?path=` — extracts a tar into the container (works before start). */
   async putArchive(id: string, path: string, tar: Buffer): Promise<void> {
     await this.request(

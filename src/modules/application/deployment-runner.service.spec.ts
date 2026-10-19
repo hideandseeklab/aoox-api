@@ -18,7 +18,10 @@ import { EnvResolverService, parseEnvLines } from './env-resolver.service';
 import { NixpacksBuilderService } from './nixpacks-builder.service';
 import { StaticSiteBuilderService } from './static-site-builder.service';
 import { SecretSourceError } from '../secret-source/infisical.client';
-import { DeploymentRunnerService } from './deployment-runner.service';
+import {
+  DeploymentRunnerService,
+  failureNote,
+} from './deployment-runner.service';
 
 const nixpacksBuild = jest
   .fn<Promise<void>, unknown[]>()
@@ -51,6 +54,7 @@ describe('DeploymentRunnerService', () => {
     removeContainer: jest.fn().mockResolvedValue(undefined),
     renameContainer: jest.fn(),
     inspectContainer: jest.fn(),
+    containerPathExists: jest.fn().mockResolvedValue(true),
   };
   const docker = {
     engine,
@@ -470,7 +474,7 @@ describe('DeploymentRunnerService', () => {
       expect(d.status).toBe('failed');
       expect(a.status).toBe('error');
       expect(dbRow.status).toBe('error');
-      expect(d.logs).toContain('No container is serving');
+      expect(d.logs).toContain('This was the first deployment');
       docker.findContainerByName.mockResolvedValue(null);
       engine.inspectContainer.mockReset();
     });
@@ -550,7 +554,10 @@ describe('DeploymentRunnerService', () => {
         );
         expect(a.status).toBe('error');
         expect(dbRow.status).toBe('error');
-        expect(d.logs).toContain('No container is serving');
+        expect(d.logs).toContain('could not be restored');
+        expect(d.logs).not.toContain(
+          'the previous container was already replaced',
+        );
         expect(d.logs).not.toContain('keeps running');
       });
 
@@ -565,8 +572,90 @@ describe('DeploymentRunnerService', () => {
         expect(engine.removeContainer).toHaveBeenCalledWith('cid', true);
         expect(engine.createContainer).toHaveBeenCalledTimes(1);
         expect(d.logs).toContain('no previous image to roll back to');
+        expect(d.logs).toContain(
+          'This was the first deployment, so no previous version exists; nothing is running.',
+        );
+        expect(d.logs).not.toContain('No container is serving');
         docker.findContainerByName.mockResolvedValue(null);
         expect(a.status).toBe('error');
+      });
+
+      it('uses the first-deployment wording when there was no old container at all', async () => {
+        docker.findContainerByName.mockResolvedValue(null);
+        engine.inspectContainer.mockResolvedValue(
+          healthy('unhealthy', probeOutput),
+        );
+        const a = {
+          ...withPrev(),
+          currentImage: null,
+        } as unknown as Application;
+        const d = await runAndWait(deployment(), a);
+        expect(d.status).toBe('failed');
+        expect(d.logs).toContain('This was the first deployment');
+        expect(d.logs).not.toContain('previous container was already replaced');
+        expect(a.status).toBe('error');
+      });
+    });
+
+    describe('image without /bin/sh', () => {
+      const noShell =
+        'OCI runtime exec failed: exec failed: unable to start container process: exec: "/bin/sh": stat /bin/sh: no such file or directory';
+      const failing = () => ({
+        State: {
+          Running: true,
+          ExitCode: 0,
+          Health: {
+            Status: 'starting',
+            Log: [{ ExitCode: -1, Output: noShell }],
+          },
+        },
+      });
+      afterEach(() => {
+        engine.containerPathExists.mockReset().mockResolvedValue(true);
+        engine.inspectContainer.mockReset();
+        docker.findContainerByName.mockResolvedValue(null);
+      });
+
+      it('warns up front, then fails at once with the accurate message', async () => {
+        engine.containerPathExists.mockResolvedValue(false);
+        engine.inspectContainer.mockResolvedValue(failing());
+        const a = { ...app(), healthcheckPath: '/health' } as Application;
+        const d = await runAndWait(deployment(), a);
+        expect(engine.containerPathExists).toHaveBeenCalledWith(
+          'cid',
+          '/bin/sh',
+        );
+        expect(d.logs).toContain('this image has no /bin/sh');
+        expect(d.status).toBe('failed');
+        expect(d.errorMessage).toContain('the image has no /bin/sh');
+        expect(d.errorMessage).not.toContain('the probe failed');
+        // Failed on the first probe entry, not after the 90 s retries.
+        expect(engine.inspectContainer).toHaveBeenCalledTimes(1);
+        expect(d.logs).toContain('This was the first deployment');
+      });
+
+      it('still reports the accurate message when the early check is unsure', async () => {
+        engine.containerPathExists.mockResolvedValue(null);
+        engine.inspectContainer.mockResolvedValue(failing());
+        const a = { ...app(), healthcheckPath: '/health' } as Application;
+        const d = await runAndWait(deployment(), a);
+        expect(d.logs).not.toContain('this image has no /bin/sh');
+        expect(d.errorMessage).toContain('the image has no /bin/sh');
+      });
+
+      it('writes no warning and fails nothing for an image that has a shell', async () => {
+        engine.containerPathExists.mockResolvedValue(true);
+        engine.inspectContainer.mockResolvedValue(healthy('healthy'));
+        const a = { ...app(), healthcheckPath: '/health' } as Application;
+        const d = await runAndWait(deployment(), a);
+        expect(d.status).toBe('success');
+        expect(d.logs).not.toContain('no /bin/sh');
+      });
+
+      it('does not check without a health check path', async () => {
+        const a = { ...app(), healthcheckPath: null } as Application;
+        await runAndWait(deployment(), a);
+        expect(engine.containerPathExists).not.toHaveBeenCalled();
       });
     });
 
@@ -772,5 +861,23 @@ describe('DeploymentRunnerService', () => {
     // Domains are looked up and labelled with the server's own proxy settings.
     expect(applications.domains.find).toHaveBeenCalled();
     expect(servers.findOrFail).toHaveBeenCalledWith('srv1');
+  });
+});
+
+describe('failureNote', () => {
+  it('matches the case', () => {
+    expect(failureNote('running', false, false)).toContain('still serving');
+    expect(failureNote('error', true, false)).toContain(
+      'This was the first deployment, so no previous version exists; nothing is running.',
+    );
+    expect(failureNote('error', false, true)).toContain(
+      'could not be restored',
+    );
+    expect(failureNote('error', false, false)).toContain(
+      'the previous container was already replaced',
+    );
+    // First deployment wins over a recovery flag; a running app never gets the error text.
+    expect(failureNote('error', true, true)).toContain('first deployment');
+    expect(failureNote('running', true, true)).toContain('still serving');
   });
 });
