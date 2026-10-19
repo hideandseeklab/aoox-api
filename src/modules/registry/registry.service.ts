@@ -5,6 +5,7 @@ import { Repository } from 'typeorm';
 import { RegistryClient } from './registry-client';
 import { decryptSecret, encryptSecret } from '../docker/secret.util';
 import { Registry } from './registry.entity';
+import { runningInDocker, selfHostedApiBaseUrl } from './registry-api-url';
 
 /** Public shape (never includes the password). */
 export interface RegistryDto {
@@ -91,12 +92,12 @@ export class RegistryService {
    */
   apiBaseUrl(registry: Registry): string {
     if (registry.type === 'self-hosted') {
-      // `?? fallback` doesn't catch an empty string, and `.env`'s
-      // `REGISTRY_INTERNAL_URL=` (unset, left blank) is exactly that — same
-      // pitfall already hit with DOCKER_SOCKET (see AGENTS.md "Docker & Registry").
-      return (
-        this.config.get<string>('REGISTRY_INTERNAL_URL') ||
-        `http://${registry.url}`
+      // `.env`'s `REGISTRY_INTERNAL_URL=` (left blank) is an empty string, not
+      // undefined: see selfHostedApiBaseUrl (also covers the loopback binding).
+      return selfHostedApiBaseUrl(
+        this.config.get<string>('REGISTRY_INTERNAL_URL'),
+        registry.url,
+        runningInDocker(),
       );
     }
     return registry.url.startsWith('http')

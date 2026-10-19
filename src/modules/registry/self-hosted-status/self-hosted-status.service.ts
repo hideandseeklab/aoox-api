@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { DockerService } from '../../docker/docker.service';
 import { RegistryService } from '../registry.service';
+import { RegistryAddressService } from '../registry-address.service';
 import { deriveSelfHostedState } from '../registry-state';
 import {
   SelfHostedRegistryService,
@@ -14,6 +15,7 @@ export class SelfHostedStatusService {
     private readonly docker: DockerService,
     private readonly selfHosted: SelfHostedRegistryService,
     private readonly registries: RegistryService,
+    private readonly address: RegistryAddressService,
   ) {}
 
   async execute(): Promise<SelfHostedStatusResponseDto> {
@@ -28,9 +30,16 @@ export class SelfHostedStatusService {
           containerId: null,
           image: null,
         };
+    const address = await this.address.describe(
+      registry?.domain ?? null,
+      container.publishedOn,
+    );
     return {
       dockerAvailable,
       publicUrl: this.selfHosted.publicUrl,
+      publishAddress: address.publishAddress,
+      localOnly: address.localOnly,
+      externalAddress: address.externalAddress,
       state: deriveSelfHostedState(
         dockerAvailable,
         container,

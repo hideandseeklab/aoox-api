@@ -2,6 +2,7 @@ import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { UserService } from '../../user/user.service';
 import { InstanceVersionService } from '../../instance-update/instance-version.service';
 import { appVersion } from './app-version';
+import { serverTimeZone } from './server-time-zone';
 import { MeResponseDto } from './me.dto';
 
 @Injectable()
@@ -24,6 +25,7 @@ export class MeService {
       role: user.role,
       twoFactorEnabled: user.totpEnabled,
       version: appVersion(),
+      timeZone: serverTimeZone(),
       ...(update ? { updateAvailable: update } : {}),
     };
   }

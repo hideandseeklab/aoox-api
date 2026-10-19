@@ -5,6 +5,11 @@ import { randomBytes } from 'crypto';
 import type { DestinationConfig } from '../backup-destination/backup-destination.service';
 import { composeLabels, DockerService } from '../docker/docker.service';
 import { APP_NETWORK } from '../proxy/proxy.service';
+import {
+  effectivePublishAddress,
+  publishAddressFrom,
+  registryPortBinding,
+} from './registry-address';
 import { registryS3Env } from './registry-s3-env';
 
 /** Names are fixed: there is exactly one self-hosted registry per install. */
@@ -21,6 +26,8 @@ export interface SelfHostedStatus {
   state: string | null;
   containerId: string | null;
   image: string | null;
+  /** Host interface port 5000 is bound to right now (running containers only). */
+  publishedOn?: string | null;
 }
 
 /** Runs the official `registry` (OCI Distribution) image on the local Docker engine. */
@@ -35,6 +42,17 @@ export class SelfHostedRegistryService {
 
   get port(): number {
     return Number(this.config.get<string>('REGISTRY_PORT') ?? 5000);
+  }
+
+  /**
+   * Interface the registry's host port is published on (`REGISTRY_PUBLISH_ADDRESS`,
+   * default 127.0.0.1 = this server only; `0.0.0.0` exposes it by IP). Applied
+   * when the container is (re)created.
+   */
+  get publishAddress(): string {
+    return publishAddressFrom(
+      this.config.get<string>('REGISTRY_PUBLISH_ADDRESS'),
+    );
   }
 
   /** Host[:port] clients use for `docker push`; localhost is exempt from the insecure-registry rule. */
@@ -60,6 +78,10 @@ export class SelfHostedRegistryService {
       state: c.State,
       containerId: c.Id,
       image: c.Image,
+      publishedOn:
+        c.State === 'running'
+          ? effectivePublishAddress(c.Ports, '') || null
+          : null,
     };
   }
 
@@ -68,8 +90,7 @@ export class SelfHostedRegistryService {
     destination: DestinationConfig | null = null,
   ): Promise<{ username: string; password: string }> {
     const password = randomBytes(24).toString('base64url');
-    // Distribution only accepts bcrypt entries in htpasswd.
-    const htpasswd = `${REGISTRY_USERNAME}:${await hash(password, 10)}\n`;
+    const htpasswd = await this.htpasswdFor(password);
 
     await this.docker.ensureImage(REGISTRY_IMAGE);
     // Auth is always local, even with S3 storage — htpasswd isn't "registry data".
@@ -80,15 +101,7 @@ export class SelfHostedRegistryService {
       await this.docker.engine.createVolume(name);
     }
 
-    // Write /auth/htpasswd into the auth volume via a throwaway container, so
-    // this works whether the API runs on the host or inside Docker.
-    const code = await this.docker.runOnce({
-      Image: REGISTRY_IMAGE,
-      Entrypoint: ['sh', '-c', 'printf "%s" "$HTPASSWD" > /auth/htpasswd'],
-      Env: [`HTPASSWD=${htpasswd}`],
-      HostConfig: { Binds: [`${REGISTRY_AUTH_VOLUME}:/auth`] },
-    });
-    if (code !== 0) throw new Error(`writing htpasswd failed (exit ${code})`);
+    await this.writeHtpasswd(htpasswd, false);
 
     await this.createContainer({}, destination);
     this.logger.log(
@@ -96,6 +109,49 @@ export class SelfHostedRegistryService {
         (destination ? ` (S3: ${destination.bucket})` : ''),
     );
     return { username: REGISTRY_USERNAME, password };
+  }
+
+  /**
+   * Writes /auth/htpasswd into the auth volume through a throwaway container, so
+   * this works whether the API runs on the host or inside Docker. The file is
+   * replaced atomically (temp file + mv); with `keepBackup` the previous file is
+   * kept as htpasswd.bak so a failed password reset can be undone.
+   */
+  async writeHtpasswd(htpasswd: string, keepBackup: boolean): Promise<void> {
+    const backup = keepBackup
+      ? '[ -f /auth/htpasswd ] && cp -p /auth/htpasswd /auth/htpasswd.bak; '
+      : '';
+    const code = await this.docker.runOnce({
+      Image: REGISTRY_IMAGE,
+      Entrypoint: [
+        'sh',
+        '-c',
+        backup +
+          'printf "%s" "$HTPASSWD" > /auth/htpasswd.new && mv /auth/htpasswd.new /auth/htpasswd',
+      ],
+      Env: [`HTPASSWD=${htpasswd}`],
+      HostConfig: { Binds: [`${REGISTRY_AUTH_VOLUME}:/auth`] },
+    });
+    if (code !== 0) throw new Error(`writing htpasswd failed (exit ${code})`);
+  }
+
+  /** Puts the htpasswd.bak made by writeHtpasswd(…, true) back. */
+  async restoreHtpasswd(): Promise<void> {
+    const code = await this.docker.runOnce({
+      Image: REGISTRY_IMAGE,
+      Entrypoint: [
+        'sh',
+        '-c',
+        '[ -f /auth/htpasswd.bak ] && mv /auth/htpasswd.bak /auth/htpasswd',
+      ],
+      HostConfig: { Binds: [`${REGISTRY_AUTH_VOLUME}:/auth`] },
+    });
+    if (code !== 0) throw new Error(`restoring htpasswd failed (exit ${code})`);
+  }
+
+  /** bcrypt htpasswd line for the registry user (Distribution only accepts bcrypt). */
+  async htpasswdFor(password: string): Promise<string> {
+    return `${REGISTRY_USERNAME}:${await hash(password, 10)}\n`;
   }
 
   /**
@@ -116,7 +172,7 @@ export class SelfHostedRegistryService {
     await this.createContainer(labels, destination);
   }
 
-  /** Joins the `aoox` network (for Traefik) and publishes the host port either way. */
+  /** Joins the `aoox` network (for Traefik) and publishes the host port (on `publishAddress`) either way. */
   private async createContainer(
     extraLabels: Record<string, string>,
     destination: DestinationConfig | null,
@@ -142,7 +198,7 @@ export class SelfHostedRegistryService {
           RestartPolicy: { Name: 'unless-stopped' },
           LogConfig: this.docker.logConfig,
           NetworkMode: APP_NETWORK,
-          PortBindings: { '5000/tcp': [{ HostPort: String(this.port) }] },
+          PortBindings: registryPortBinding(this.publishAddress, this.port),
           Binds: [
             ...(destination
               ? []

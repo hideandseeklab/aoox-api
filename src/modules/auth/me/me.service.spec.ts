@@ -47,6 +47,16 @@ describe('MeService', () => {
     },
   );
 
+  it.each(['owner', 'admin', 'member'])(
+    'exposes the server time zone to a %s',
+    async (role) => {
+      const { svc } = build(role);
+      await expect(svc.execute('u1')).resolves.toMatchObject({
+        timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      });
+    },
+  );
+
   it('rejects a token whose user is gone', async () => {
     const { svc } = build(null);
     await expect(svc.execute('u1')).rejects.toBeInstanceOf(

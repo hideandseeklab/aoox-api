@@ -8,6 +8,18 @@ Versions below 1.0.0 may include breaking changes in a minor release.
 
 ## [Unreleased]
 
+### Added
+
+- **Multi-arch images.** The Docker publish workflow now builds `linux/amd64` and `linux/arm64` (QEMU + buildx, GitHub Actions layer cache) and pushes one manifest, so ARM VPSes (Ampere, Graviton) can run the panel from the next release. The published 0.1.0-alpha.12 images are still amd64 only. `node-pty` compiles from source in the existing build stage (python3, make, g++ are installed there); an arm64 build under QEMU was started locally but did not finish within 15 minutes, so the first CI run is the real check.
+- **Show and reset the local registry password.** `POST /registries/:id/credentials/reveal` (owner/admin, throttled 20/min) returns the same payload as `GET /registries/:id/credentials` but, being a POST, is written to the audit log (GETs are not; the CLI keeps using the GET). `POST /registries/self-hosted/password` (owner, throttled 5/min) generates a new password, replaces `htpasswd` atomically in the auth volume (the previous file is kept as `htpasswd.bak`), restarts the registry container and stores the new encrypted password; the data volume or S3 storage is never touched, and a failure at any step restores the old file and keeps the old password.
+- **`TZ` for schedules.** The api service passes `TZ` (default `UTC`) so job, backup and nightly maintenance crons run in the zone you choose; `GET /auth/me` returns `timeZone` (any role) so the web can show it next to schedule fields. The node image already ships tzdata, and the `cron` package (Luxon) follows the process zone. Documented in `.env.dist.example`. Installs made before this release need `aoox reinstall` for the compose file to pass `TZ`.
+- `GET /registries/self-hosted` also returns `publishAddress`, `localOnly` and `externalAddress` (the address other machines use: the registry domain, or `REGISTRY_PUBLIC_HOST` / `PUBLIC_IP` / the detected public IP when the port is exposed). `registries.url` is deliberately unchanged (`localhost:5000` or the domain): it is the image-reference prefix the host daemon pushes to and pulls from, and Docker refuses plain-HTTP registries other than localhost without `insecure-registries`.
+
+### Changed
+
+- **The local registry's host port is bound to `127.0.0.1` by default** (it used to listen on every interface, exposing a password-protected registry to the internet over plain HTTP). `REGISTRY_PUBLISH_ADDRESS` (default empty = `127.0.0.1`; `0.0.0.0` or an interface IP exposes it) sets the `HostIp` of the binding. A registry with a custom domain is served through Traefik and needs no exposed port. **Migration:** the binding only changes when the `aoox-registry` container is recreated (re-enable the registry, or apply or remove its custom domain); until then an existing registry keeps listening on every interface, and the status endpoint reports what the running container is actually bound to. Pushing to `<ip>:5000` from another machine stops working after the recreate unless `REGISTRY_PUBLISH_ADDRESS=0.0.0.0` is set or a domain is used.
+- **The API reaches the registry over the `aoox` network.** `REGISTRY_INTERNAL_URL` in `docker-compose.dist.yml` is now `http://aoox-registry:5000` (a loopback-only host port is not reachable through `host.docker.internal` on Linux). An older compose file that still sets `http://host.docker.internal:5000` is mapped to the same address when the API runs in Docker, so updating the image alone does not break the registry. Outside Docker (dev) the stored address is used as before.
+
 ## [0.1.0-alpha.12] - 2026-10-17
 
 ### Added

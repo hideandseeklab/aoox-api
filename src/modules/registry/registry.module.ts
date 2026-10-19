@@ -24,10 +24,13 @@ import { ListTagsController } from './list-tags/list-tags.controller';
 import { ListTagsService } from './list-tags/list-tags.service';
 import { ProvisionSelfHostedController } from './provision-self-hosted/provision-self-hosted.controller';
 import { ProvisionSelfHostedService } from './provision-self-hosted/provision-self-hosted.service';
+import { ResetRegistryPasswordController } from './reset-registry-password/reset-registry-password.controller';
+import { ResetRegistryPasswordService } from './reset-registry-password/reset-registry-password.service';
 import { Registry } from './registry.entity';
 import { RegistryService } from './registry.service';
 import { RemoveSelfHostedController } from './remove-self-hosted/remove-self-hosted.controller';
 import { RemoveSelfHostedService } from './remove-self-hosted/remove-self-hosted.service';
+import { RegistryAddressService } from './registry-address.service';
 import { SelfHostedRegistryService } from './self-hosted-registry.service';
 import { SelfHostedStatusController } from './self-hosted-status/self-hosted-status.controller';
 import { SelfHostedStatusService } from './self-hosted-status/self-hosted-status.service';
@@ -47,6 +50,7 @@ import { TestRegistryService } from './test-registry/test-registry.service';
     // Static routes before ':id' routes so "self-hosted" is not read as an id.
     SelfHostedStatusController,
     ProvisionSelfHostedController,
+    ResetRegistryPasswordController,
     RemoveSelfHostedController,
     GarbageCollectController,
     CreateRegistryController,
@@ -66,12 +70,14 @@ import { TestRegistryService } from './test-registry/test-registry.service';
   providers: [
     RegistryService,
     SelfHostedRegistryService,
+    RegistryAddressService,
     CreateRegistryService,
     ListRegistriesService,
     DeleteRegistryService,
     TestRegistryService,
     SelfHostedStatusService,
     ProvisionSelfHostedService,
+    ResetRegistryPasswordService,
     RemoveSelfHostedService,
     GarbageCollectService,
     ListRepositoriesService,
