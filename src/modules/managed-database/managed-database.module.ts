@@ -17,6 +17,7 @@ import { GetDatabaseService } from './get-database/get-database.service';
 import { ListDatabasesController } from './list-databases/list-databases.controller';
 import { ManagedDatabase } from './managed-database.entity';
 import { ManagedDatabaseService } from './managed-database.service';
+import { ReprovisionDatabaseController } from './reprovision-database/reprovision-database.controller';
 import { StartDatabaseController } from './start-database/start-database.controller';
 import { UpdateDatabaseController } from './update-database/update-database.controller';
 import { DataBrowserController } from './data-browser/data-browser.controller';
@@ -45,6 +46,7 @@ import { StopDatabaseController } from './stop-database/stop-database.controller
     DatabaseCredentialsController,
     DeleteDatabaseController,
     StartDatabaseController,
+    ReprovisionDatabaseController,
     UpdateDatabaseController,
     DataBrowserController,
     QueryHistoryController,

@@ -5,6 +5,7 @@ import type { ProjectRole } from '../../project/project-member.entity';
 import { ManagedDatabase } from '../managed-database.entity';
 import {
   containerNameForDb,
+  INTERRUPTED_MESSAGE,
   ManagedDatabaseService,
 } from '../managed-database.service';
 
@@ -12,6 +13,11 @@ export interface ManagedDatabaseDetail extends ManagedDatabase {
   container: { id: string; state: string; status: string } | null;
   /** The actor's role in the owning project (UI hides what a viewer cannot do). */
   projectRole: ProjectRole;
+  /**
+   * `POST /databases/:id/reprovision` would be accepted: status `error`, and
+   * not the row an API restart interrupted (that one must be recreated).
+   */
+  retryable: boolean;
 }
 
 @Injectable()
@@ -32,6 +38,8 @@ export class GetDatabaseService {
       ...db,
       container: c ? { id: c.Id, state: c.State, status: c.Status } : null,
       projectRole,
+      retryable:
+        db.status === 'error' && db.errorMessage !== INTERRUPTED_MESSAGE,
     };
   }
 }

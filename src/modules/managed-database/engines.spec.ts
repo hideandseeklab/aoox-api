@@ -107,4 +107,21 @@ describe('database engine recipes', () => {
       '/var/lib/postgresql/data',
     );
   });
+
+  it('postgresDataPath matches the real timescale/timescaledb images (inspected 2026-10-19)', () => {
+    // latest-pg18: VOLUME /var/lib/postgresql, PGDATA /var/lib/postgresql/18/docker
+    expect(
+      postgresDataPath(
+        ['/var/lib/postgresql'],
+        ['PG_MAJOR=18', 'PGDATA=/var/lib/postgresql/18/docker'],
+      ),
+    ).toBe('/var/lib/postgresql');
+    // latest-pg17: VOLUME and PGDATA /var/lib/postgresql/data
+    expect(
+      postgresDataPath(
+        ['/var/lib/postgresql/data'],
+        ['PG_MAJOR=17', 'PGDATA=/var/lib/postgresql/data'],
+      ),
+    ).toBe('/var/lib/postgresql/data');
+  });
 });

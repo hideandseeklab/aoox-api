@@ -1,4 +1,9 @@
-import { BadRequestException, ConflictException } from '@nestjs/common';
+import {
+  BadGatewayException,
+  BadRequestException,
+  ConflictException,
+} from '@nestjs/common';
+import * as managed from '../managed-database/managed-database.service';
 import { DatabaseMountController } from './database-mount.controller';
 
 function build(status: string) {
@@ -8,7 +13,7 @@ function build(status: string) {
     findOne: jest.fn().mockResolvedValue({ id: 'm1', type: 'volume' }),
     create: jest.fn((x: object) => x),
     save: jest.fn((x: object) => Promise.resolve(x)),
-    remove: jest.fn(),
+    remove: jest.fn().mockResolvedValue(undefined),
   };
   const databases = {
     findOwnedOrFail: jest.fn().mockResolvedValue(db),
@@ -86,6 +91,89 @@ describe('DatabaseMountController data path guard', () => {
       ),
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(mounts.save).not.toHaveBeenCalled();
+    expect(databases.reprovision).not.toHaveBeenCalled();
+  });
+});
+
+describe('DatabaseMountController undo when the apply fails', () => {
+  const params = { id: 'db1', mountId: 'm1' } as never;
+  const existing = () => ({
+    id: 'm1',
+    type: 'volume',
+    name: 'x',
+    containerPath: '/x',
+    databaseId: 'db1',
+    readOnly: false,
+  });
+
+  /** Fails before the old container was touched (no marker on the error). */
+  const untouched = () => new BadGatewayException('pull failed');
+
+  it('deletes the new row on add and rethrows the same error', async () => {
+    const { ctrl, databases, mounts } = build('running');
+    mockAdd(databases);
+    const err = untouched();
+    databases.reprovision.mockRejectedValue(err);
+    await expect(
+      ctrl.add(user, { id: 'db1' }, {
+        type: 'volume',
+        name: 'x',
+        containerPath: '/x',
+      } as never),
+    ).rejects.toBe(err);
+    expect(mounts.remove).toHaveBeenCalledTimes(1);
+  });
+
+  it('restores the old values on update', async () => {
+    const { ctrl, databases, mounts } = build('running');
+    mounts.findOne.mockResolvedValue(existing());
+    const err = untouched();
+    databases.reprovision.mockRejectedValue(err);
+    await expect(ctrl.update(user, params, { readOnly: true })).rejects.toBe(
+      err,
+    );
+    expect(mounts.save).toHaveBeenCalledTimes(2);
+    expect(mounts.save.mock.calls[1][0]).toMatchObject({
+      id: 'm1',
+      readOnly: false,
+    });
+  });
+
+  it('re-inserts the same row on delete', async () => {
+    const { ctrl, databases, mounts } = build('running');
+    mounts.findOne.mockResolvedValue(existing());
+    mounts.remove.mockImplementation((m: { id?: string }) => {
+      delete m.id; // TypeORM clears the id of a removed entity
+      return Promise.resolve(m);
+    });
+    const err = untouched();
+    databases.reprovision.mockRejectedValue(err);
+    await expect(ctrl.remove(user, params, {})).rejects.toBe(err);
+    expect(mounts.save).toHaveBeenCalledTimes(1);
+    expect(mounts.save.mock.calls[0][0]).toMatchObject({
+      id: 'm1',
+      containerPath: '/x',
+    });
+  });
+
+  it('keeps the change when the container was already touched', async () => {
+    const { ctrl, databases, mounts } = build('running');
+    mounts.findOne.mockResolvedValue(existing());
+    const err = new BadGatewayException('no space');
+    const spy = jest
+      .spyOn(managed, 'reprovisionTouchedContainer')
+      .mockReturnValue(true);
+    databases.reprovision.mockRejectedValue(err);
+    await expect(ctrl.remove(user, params, {})).rejects.toBe(err);
+    expect(mounts.save).not.toHaveBeenCalled();
+    spy.mockRestore();
+  });
+
+  it('applies nothing while the database is in error, so a mount can be deleted', async () => {
+    const { ctrl, databases, mounts } = build('error');
+    mounts.findOne.mockResolvedValue(existing());
+    await ctrl.remove(user, params, {});
+    expect(mounts.remove).toHaveBeenCalledTimes(1);
     expect(databases.reprovision).not.toHaveBeenCalled();
   });
 });

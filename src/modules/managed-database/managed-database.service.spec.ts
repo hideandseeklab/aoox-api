@@ -1,5 +1,9 @@
 import { BadGatewayException, ConflictException } from '@nestjs/common';
-import { ManagedDatabaseService } from './managed-database.service';
+import {
+  INTERRUPTED_MESSAGE,
+  ManagedDatabaseService,
+  reprovisionTouchedContainer,
+} from './managed-database.service';
 import { DockerEngineError } from '../docker/docker-engine.client';
 import type { ManagedDatabase } from './managed-database.entity';
 
@@ -306,5 +310,92 @@ describe('ManagedDatabaseService.reprovision', () => {
     await svc.reprovision({ ...db, status: 'stopped' } as never, 'pw');
     expect(stopContainer).toHaveBeenCalledWith('c');
     expect(update).not.toHaveBeenCalled();
+  });
+});
+
+describe('reprovisionTouchedContainer', () => {
+  it('is false before the old container was touched and true after', async () => {
+    const a = build();
+    a.docker.ensureImage.mockRejectedValueOnce(new Error('pull failed'));
+    const before = await a.svc.reprovision(db, 'pw').catch((e: unknown) => e);
+    expect(reprovisionTouchedContainer(before)).toBe(false);
+
+    const b = build();
+    b.engine.createContainer.mockRejectedValueOnce(new Error('no space'));
+    const after = await b.svc.reprovision(db, 'pw').catch((e: unknown) => e);
+    expect(reprovisionTouchedContainer(after)).toBe(true);
+
+    const c = build({
+      image: {
+        Config: {
+          Volumes: { '/var/lib/postgresql': {} },
+          Env: ['PGDATA=/var/lib/postgresql/18/docker'],
+        },
+      },
+      legacyData: true,
+    });
+    const layout = await c.svc.reprovision(db, 'pw').catch((e: unknown) => e);
+    expect(reprovisionTouchedContainer(layout)).toBe(false);
+    expect(reprovisionTouchedContainer(new Error('x'))).toBe(false);
+    expect(reprovisionTouchedContainer(undefined)).toBe(false);
+  });
+});
+
+describe('ManagedDatabaseService.retryProvisioning', () => {
+  it('refuses a database that is not in error', async () => {
+    const { svc, update } = build();
+    for (const status of ['running', 'stopped', 'creating']) {
+      await expect(
+        svc.retryProvisioning({ ...db, status } as never),
+      ).rejects.toBeInstanceOf(ConflictException);
+    }
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('refuses a row the boot recovery marked as interrupted', async () => {
+    const { svc, update } = build();
+    await expect(
+      svc.retryProvisioning({
+        ...db,
+        status: 'error',
+        errorMessage: INTERRUPTED_MESSAGE,
+      } as never),
+    ).rejects.toThrow(/interrupted by an API restart/);
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('sets creating, then running and clears the message when the provision succeeds', async () => {
+    const { svc, update, engine } = build();
+    jest.spyOn(svc, 'password').mockResolvedValue('pw');
+    const out = await svc.retryProvisioning({
+      ...db,
+      status: 'error',
+      errorMessage: 'old failure',
+    } as never);
+    expect(out.status).toBe('creating');
+    expect(update).toHaveBeenNthCalledWith(1, 'db1', {
+      status: 'creating',
+      errorMessage: null,
+    });
+    await new Promise((r) => setTimeout(r, 30));
+    expect(update).toHaveBeenLastCalledWith('db1', {
+      status: 'running',
+      errorMessage: null,
+    });
+    // The data volume is only (re)created, never removed.
+    expect(engine.createVolume).toHaveBeenCalledWith('aoox_db_main_abc');
+    expect(engine.removeVolume).not.toHaveBeenCalled();
+  });
+
+  it('ends in error with the new message when it fails again', async () => {
+    const { svc, update, docker } = build();
+    jest.spyOn(svc, 'password').mockResolvedValue('pw');
+    docker.ensureImage.mockRejectedValueOnce(new Error('pull failed'));
+    await svc.retryProvisioning({ ...db, status: 'error' } as never);
+    await new Promise((r) => setTimeout(r, 30));
+    expect(update).toHaveBeenLastCalledWith('db1', {
+      status: 'error',
+      errorMessage: 'pull failed',
+    });
   });
 });

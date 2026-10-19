@@ -49,8 +49,20 @@ export function volumeNameForDb(db: ManagedDatabase): string {
   return `aoox_db_${db.slug.replace(/-/g, '_')}`;
 }
 
-const INTERRUPTED_MESSAGE =
+export const INTERRUPTED_MESSAGE =
   'Provisioning was interrupted by an API restart. Delete this database and create it again.';
+
+/** Errors thrown by `reprovision` after the old container had been touched. */
+const failedAfterTouch = new WeakSet<object>();
+
+/**
+ * True when a `reprovision` failure happened after the old container was
+ * removed or replaced (the row is then `error`). False means nothing was
+ * changed on the daemon, so callers may undo their own saved change.
+ */
+export function reprovisionTouchedContainer(err: unknown): boolean {
+  return typeof err === 'object' && err !== null && failedAfterTouch.has(err);
+}
 
 /** The row disappeared while the detached provision was still running. */
 export class DatabaseDeletedError extends Error {
@@ -211,9 +223,35 @@ export class ManagedDatabaseService implements OnApplicationBootstrap {
           .update(db.id, { status: 'error', errorMessage: message })
           .catch(() => undefined);
       }
-      if (err instanceof HttpException) throw err;
-      throw new BadGatewayException(message);
+      const out =
+        err instanceof HttpException ? err : new BadGatewayException(message);
+      if (state.touched) failedAfterTouch.add(out);
+      throw out;
     }
+  }
+
+  /**
+   * Retry for a database in `error`: detached like create (readiness can take
+   * 120 s). Refuses anything else, and the rows the boot recovery marked
+   * (their message is `INTERRUPTED_MESSAGE`: a half-initialised data
+   * directory is never repaired). Reuses the data volume, current mounts and
+   * limits.
+   */
+  async retryProvisioning(db: ManagedDatabase): Promise<ManagedDatabase> {
+    if (db.status !== 'error') {
+      throw new ConflictException(
+        'Only a database in error can be provisioned again.',
+      );
+    }
+    if (db.errorMessage === INTERRUPTED_MESSAGE) {
+      throw new ConflictException(INTERRUPTED_MESSAGE);
+    }
+    const password = await this.password(db);
+    await this.repo.update(db.id, { status: 'creating', errorMessage: null });
+    db.status = 'creating';
+    db.errorMessage = null;
+    this.provisionInBackground(db, password);
+    return db;
   }
 
   /** Pulls the image, creates the volume and starts the container. Async caller. */

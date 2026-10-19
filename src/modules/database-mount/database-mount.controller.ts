@@ -11,6 +11,7 @@ import {
   Param,
   Patch,
   Post,
+  Logger,
   Query,
   UseGuards,
 } from '@nestjs/common';
@@ -32,7 +33,10 @@ import { ProjectAccessService } from '../project/project-access.service';
 import { DatabaseParamsDto } from '../managed-database/get-database/get-database.dto';
 import { assertNotStarting } from '../managed-database/database-starting';
 import { ManagedDatabase } from '../managed-database/managed-database.entity';
-import { ManagedDatabaseService } from '../managed-database/managed-database.service';
+import {
+  ManagedDatabaseService,
+  reprovisionTouchedContainer,
+} from '../managed-database/managed-database.service';
 import { assertMountPathAllowed } from '../managed-database/mount-path';
 
 class DatabaseMountParamsDto {
@@ -53,10 +57,20 @@ class DeleteMountQueryDto {
  * Mounts for managed databases (`postgresql.conf`, `my.cnf`, `redis.conf`,
  * extra volumes). Same rules as application mounts; every change
  * re-provisions the container (short restart, data stays in its volume).
+ *
+ * The row change is saved first and applied second. If the apply fails
+ * before the old container was touched (image pull, PostgreSQL layout 409),
+ * the row change is undone and the error rethrown, so the saved state keeps
+ * matching the running container. If it fails after the container was
+ * touched, the database is in `error` and the change is kept: "Retry
+ * provisioning" recovers it, and a mount can be deleted while in `error`
+ * (that applies nothing).
  */
 @Controller('databases')
 @UseGuards(JwtAuthGuard)
 export class DatabaseMountController {
+  private readonly logger = new Logger(DatabaseMountController.name);
+
   constructor(
     private readonly databases: ManagedDatabaseService,
     private readonly docker: DockerService,
@@ -97,7 +111,7 @@ export class DatabaseMountController {
     const saved = await this.databases.mounts.save(
       this.databases.mounts.create({ databaseId: db.id, ...fields }),
     );
-    await this.apply(db);
+    await this.applyOrUndo(db, () => this.databases.mounts.remove(saved));
     return saved;
   }
 
@@ -110,6 +124,7 @@ export class DatabaseMountController {
     const db = await this.databases.findOwnedOrFail(params.id, user.sub);
     assertNotStarting(db);
     const mount = await this.find(db, params.mountId);
+    const previous = { ...mount };
     if (dto.containerPath !== undefined) {
       const containerPath = normalizePath(dto.containerPath);
       assertMountPathAllowed(db.engine, containerPath);
@@ -134,7 +149,7 @@ export class DatabaseMountController {
       mount.readOnly = dto.readOnly;
     }
     const saved = await this.databases.mounts.save(mount);
-    await this.apply(db);
+    await this.applyOrUndo(db, () => this.databases.mounts.save(previous));
     return saved;
   }
 
@@ -148,8 +163,12 @@ export class DatabaseMountController {
     const db = await this.databases.findOwnedOrFail(params.id, user.sub);
     assertNotStarting(db);
     const mount = await this.find(db, params.mountId);
+    // `remove` clears the id of the entity it is given: keep a copy to re-insert.
+    const previous = { ...mount };
     await this.databases.mounts.remove(mount);
-    await this.apply(db);
+    await this.applyOrUndo(db, () =>
+      this.databases.mounts.save(this.databases.mounts.create(previous)),
+    );
     if (mount.type === 'volume' && query.purge === 'true') {
       await this.docker.engine
         .removeVolume(volumeNameFor(db, mount))
@@ -163,6 +182,25 @@ export class DatabaseMountController {
     });
     if (!mount) throw new NotFoundException('Mount not found');
     return mount;
+  }
+
+  /** `apply`, undoing the row change when nothing was touched on the daemon. */
+  private async applyOrUndo(
+    db: ManagedDatabase,
+    undo: () => Promise<unknown>,
+  ): Promise<void> {
+    try {
+      await this.apply(db);
+    } catch (err) {
+      if (!reprovisionTouchedContainer(err)) {
+        await undo().catch((e: unknown) =>
+          this.logger.error(
+            `Could not undo the mount change of ${db.slug}: ${String(e)}`,
+          ),
+        );
+      }
+      throw err;
+    }
   }
 
   /** Re-creates the container with the current mounts (no-op while still provisioning/errored). */
