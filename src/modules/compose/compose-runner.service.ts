@@ -1,3 +1,4 @@
+import { composeHostPrefix } from '../docker/host-port-bind';
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -580,7 +581,9 @@ export function renderOverride(
   }
   for (const p of ports ?? []) {
     const entry = (services[p.service] ??= {});
-    (entry.ports ??= []).push(`${p.hostPort}:${p.port}`);
+    (entry.ports ??= []).push(
+      `${composeHostPrefix(p.bind)}${p.hostPort}:${p.port}`,
+    );
   }
   const volumeDecls: Record<string, OverrideVolumeDecl> = {};
   for (const m of mounts ?? []) {

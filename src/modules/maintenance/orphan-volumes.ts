@@ -126,3 +126,49 @@ export function orphanedVolumes(
     (name) => isCandidateVolume(name) && !expected.has(name),
   );
 }
+
+/** A compose-declared volume left behind by a stack that no longer exists. */
+export interface OrphanComposeVolume {
+  name: string;
+  /** Slug of the deleted stack (compose project `aoox-<stack>`). */
+  stack: string;
+}
+
+const COMPOSE_PROJECT_LABEL = 'com.docker.compose.project';
+const COMPOSE_VOLUME_LABEL = 'com.docker.compose.volume';
+const STACK_PROJECT = /^aoox-([a-z0-9][a-z0-9_-]*)$/;
+
+/**
+ * REPORT-ONLY list of volumes declared inside a deleted stack's compose file
+ * (named `aoox-<slug>_<volume>`). They are deliberately NOT part of
+ * `isCandidateVolume`: nothing may ever remove them automatically, because a
+ * hand-run compose project such as `aoox-dev` is shaped the same way. A volume
+ * is listed only when Docker itself says it belongs to a compose project
+ * `aoox-<slug>` (both compose labels present), no current stack has that slug,
+ * and no container references it (`RefCount` of 0 or unknown is not trusted:
+ * only an explicit 0 counts as unused). The panel's own project `aoox` has no
+ * hyphen suffix and never matches.
+ */
+export function orphanedComposeVolumes(
+  volumes: Array<{
+    Name: string;
+    Labels?: Record<string, string> | null;
+    UsageData?: { RefCount?: number } | null;
+  }>,
+  liveSlugs: Set<string>,
+): OrphanComposeVolume[] {
+  const out: OrphanComposeVolume[] = [];
+  for (const v of volumes) {
+    const labels = v.Labels;
+    if (!labels?.[COMPOSE_VOLUME_LABEL]) continue;
+    const match = STACK_PROJECT.exec(labels[COMPOSE_PROJECT_LABEL] ?? '');
+    if (!match) continue;
+    const stack = match[1];
+    if (liveSlugs.has(stack)) continue;
+    if (v.UsageData?.RefCount !== 0) continue;
+    // Only plain names are ever shown as a copyable command.
+    if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(v.Name)) continue;
+    out.push({ name: v.Name, stack });
+  }
+  return out.sort((a, b) => a.name.localeCompare(b.name));
+}

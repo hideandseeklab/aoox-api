@@ -1,3 +1,4 @@
+import { normalizeBind } from '../docker/host-port-bind';
 import { BadRequestException, Injectable } from '@nestjs/common';
 import {
   isValidRootDirectory,
@@ -192,6 +193,7 @@ export class ProjectImportService {
           staticSpa: a.staticSpa ?? true,
           containerPort: a.containerPort ?? 3000,
           hostPort: await this.freeHostPort(a.hostPort, where, warnings),
+          hostPortBind: normalizeBind(a.hostPortBind),
           // `${{project.KEY}}` of older files is `${{vars.KEY}}` now.
           env: rewriteProjectReferences(a.env ?? ''),
           buildArgs: a.buildArgs ?? '',
@@ -358,6 +360,7 @@ export class ProjectImportService {
           username: d.username || (spec.hasDatabase ? 'app' : 'default'),
           passwordEncrypted: this.databases.encrypt(password),
           hostPort: await this.freeHostPort(d.hostPort, where, warnings),
+          hostPortBind: normalizeBind(d.hostPortBind),
           cpuMillicores: d.cpuMillicores ?? null,
           memoryMb: d.memoryMb ?? null,
           backupCron: validCron(d.backupCron, where, warnings),

@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { randomBytes } from 'crypto';
 import { DockerService } from '../../docker/docker.service';
+import { normalizeBind } from '../../docker/host-port-bind';
 import { HostPortService } from '../../host-port/host-port.service';
 import { ProjectService } from '../../project/project.service';
 import { defaultTagFor, ENGINES } from '../engines';
@@ -52,6 +53,10 @@ export class CreateDatabaseService {
         username: spec.hasDatabase ? 'app' : 'default',
         passwordEncrypted: this.databases.encrypt(password),
         hostPort: dto.hostPort ?? null,
+        // A published database is closed to the internet unless asked otherwise.
+        hostPortBind: dto.hostPortBind
+          ? normalizeBind(dto.hostPortBind)
+          : 'loopback',
         cpuMillicores: dto.cpuMillicores ?? null,
         memoryMb: dto.memoryMb ?? null,
         status: 'creating',

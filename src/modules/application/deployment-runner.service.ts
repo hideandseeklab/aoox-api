@@ -1,5 +1,7 @@
 import { ConflictException, Injectable, Logger } from '@nestjs/common';
 import { In } from 'typeorm';
+import { hostPortBinding } from '../docker/host-port-bind';
+import { startWithPortRetry } from '../docker/start-with-port-retry';
 import { BuildProgress, RegistryAuth } from '../docker/docker-engine.client';
 import {
   composeLabels,
@@ -687,7 +689,7 @@ export class DeploymentRunnerService {
           LogConfig: this.docker.logConfig,
           NetworkMode: APP_NETWORK,
           PortBindings: hostPort
-            ? { [port]: [{ HostPort: String(hostPort) }] }
+            ? { [port]: [hostPortBinding(hostPort, app.hostPortBind)] }
             : {},
           Binds: bindsFor(app, mounts, filesMountpoint),
           ...resourceLimits(app.cpuMillicores, app.memoryMb),
@@ -695,7 +697,7 @@ export class DeploymentRunnerService {
       },
       createName,
     );
-    await docker.engine.startContainer(id);
+    await startWithPortRetry(() => docker.engine.startContainer(id), hostPort);
     if (healthcheck) {
       await log?.step(
         'starting',

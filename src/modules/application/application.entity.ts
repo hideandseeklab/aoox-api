@@ -1,3 +1,4 @@
+import { type HostPortBind } from '../docker/host-port-bind';
 import {
   Column,
   CreateDateColumn,
@@ -301,6 +302,15 @@ export class Application {
   /** Host port to publish; null = not published. */
   @Column({ name: 'host_port', type: 'int', nullable: true })
   hostPort: number | null;
+
+  /** Interface the host port listens on: public (all) or loopback (this server only). */
+  @Column({
+    name: 'host_port_bind',
+    type: 'varchar',
+    length: 16,
+    default: 'public',
+  })
+  hostPortBind: HostPortBind;
 
   /**
    * `KEY=VALUE` lines, injected as container env on top of the linked

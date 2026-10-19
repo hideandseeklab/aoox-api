@@ -1,7 +1,9 @@
+import { HOST_PORT_BINDS, type HostPortBind } from '../docker/host-port-bind';
 import { Type } from 'class-transformer';
 import {
   IsArray,
   IsBoolean,
+  IsIn,
   IsInt,
   IsOptional,
   IsString,
@@ -51,6 +53,11 @@ export class ServicePortDto {
   @Min(1)
   @Max(65535)
   hostPort: number;
+
+  /** Interface the host port listens on; omitted = public. */
+  @IsOptional()
+  @IsIn(HOST_PORT_BINDS)
+  bind?: HostPortBind;
 }
 
 /** A CPU/RAM cap for one service; either field omitted = unlimited for it. */

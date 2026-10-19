@@ -1,6 +1,7 @@
 import {
   expectedVolumes,
   isCandidateVolume,
+  orphanedComposeVolumes,
   orphanedVolumes,
 } from './orphan-volumes';
 
@@ -126,5 +127,91 @@ describe('orphanedVolumes', () => {
   it('returns nothing when every candidate is still expected', () => {
     const expected = new Set(['aoox_buildkit']);
     expect(orphanedVolumes(['aoox_buildkit'], expected)).toEqual([]);
+  });
+});
+
+describe('orphanedComposeVolumes', () => {
+  const labelled = (
+    name: string,
+    project: string,
+    refCount: number | null = 0,
+  ) => ({
+    Name: name,
+    Labels: {
+      'com.docker.compose.project': project,
+      'com.docker.compose.volume': 'data',
+    },
+    UsageData: refCount === null ? {} : { RefCount: refCount },
+  });
+
+  it('lists a volume of a deleted stack', () => {
+    expect(
+      orphanedComposeVolumes(
+        [labelled('aoox-gone_data', 'aoox-gone')],
+        new Set(),
+      ),
+    ).toEqual([{ name: 'aoox-gone_data', stack: 'gone' }]);
+  });
+
+  it('skips a stack that still exists', () => {
+    expect(
+      orphanedComposeVolumes(
+        [labelled('aoox-live_data', 'aoox-live')],
+        new Set(['live']),
+      ),
+    ).toEqual([]);
+  });
+
+  it('never lists the panel project `aoox`', () => {
+    expect(
+      orphanedComposeVolumes(
+        [labelled('aoox_postgres_data', 'aoox')],
+        new Set(),
+      ),
+    ).toEqual([]);
+  });
+
+  it('ignores an aoox-dev name without compose labels', () => {
+    expect(
+      orphanedComposeVolumes(
+        [
+          { Name: 'aoox-dev_data', Labels: null, UsageData: { RefCount: 0 } },
+          { Name: 'aoox-dev_x', Labels: {}, UsageData: { RefCount: 0 } },
+        ],
+        new Set(),
+      ),
+    ).toEqual([]);
+  });
+
+  it('needs the volume label, not only the project label', () => {
+    expect(
+      orphanedComposeVolumes(
+        [
+          {
+            Name: 'aoox-gone_data',
+            Labels: { 'com.docker.compose.project': 'aoox-gone' },
+            UsageData: { RefCount: 0 },
+          },
+        ],
+        new Set(),
+      ),
+    ).toEqual([]);
+  });
+
+  it('skips volumes in use or with unknown usage', () => {
+    expect(
+      orphanedComposeVolumes(
+        [
+          labelled('aoox-gone_a', 'aoox-gone', 1),
+          labelled('aoox-gone_b', 'aoox-gone', -1),
+          labelled('aoox-gone_c', 'aoox-gone', null),
+        ],
+        new Set(),
+      ),
+    ).toEqual([]);
+  });
+
+  it('is not a pruning candidate', () => {
+    expect(isCandidateVolume('aoox-gone_data')).toBe(false);
   });
 });

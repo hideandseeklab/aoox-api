@@ -414,6 +414,27 @@ describe('renderOverride', () => {
     });
   });
 
+  it('publishes a loopback port as 127.0.0.1:host:container, public ones unchanged', () => {
+    const out = renderOverride(
+      [],
+      [
+        { service: 'db', port: 5432, hostPort: 5433, bind: 'loopback' },
+        { service: 'db', port: 80, hostPort: 8082, bind: 'public' },
+        { service: 'db', port: 81, hostPort: 8083 },
+      ],
+      [],
+      [],
+      labelsFor,
+      'st-1',
+      null,
+      'c1',
+    )!;
+    expect(
+      (JSON.parse(out) as { services: { db: { ports: string[] } } }).services.db
+        .ports,
+    ).toEqual(['127.0.0.1:5433:5432', '8082:80', '8083:81']);
+  });
+
   it('combines a domain and a host port on the same service', () => {
     const out = renderOverride(
       [{ service: 'web', port: 80, host: 'w.x.com', https: false }],

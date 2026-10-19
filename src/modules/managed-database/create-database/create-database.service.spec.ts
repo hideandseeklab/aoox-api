@@ -56,6 +56,17 @@ describe('CreateDatabaseService host port', () => {
     expect(t.provisionInBackground).toHaveBeenCalledTimes(1);
   });
 
+  it('binds a new published port to this server only unless public is asked for', async () => {
+    const closed = await make().svc.execute('u1', { ...base, hostPort: 15432 });
+    expect(closed).toMatchObject({ hostPortBind: 'loopback' });
+    const open = await make().svc.execute('u1', {
+      ...base,
+      hostPort: 15432,
+      hostPortBind: 'public',
+    });
+    expect(open).toMatchObject({ hostPortBind: 'public' });
+  });
+
   it('does not check anything when no host port is published', async () => {
     const t = make();
     const db = await t.svc.execute('u1', base);

@@ -14,7 +14,12 @@ import { SelfHostedRegistryService } from '../registry/self-hosted-registry.serv
 import { RemoteDockerService } from '../server/remote-docker.service';
 import { DomainConflictService } from '../domain-conflict/domain-conflict.service';
 import { OrphanContainer, orphanedContainers } from './orphan-containers';
-import { expectedVolumes, orphanedVolumes } from './orphan-volumes';
+import {
+  expectedVolumes,
+  OrphanComposeVolume,
+  orphanedComposeVolumes,
+  orphanedVolumes,
+} from './orphan-volumes';
 
 /** Failed/queued deployment rows (logs only) older than this are deleted. */
 export const FAILED_DEPLOYMENT_DAYS = 30;
@@ -30,6 +35,11 @@ export interface DiskUsage {
   prunableDeployments: number;
   /** Local-daemon volumes named like aoox's own but with no DB row anymore. */
   orphanVolumes: string[];
+  /**
+   * Report-only: volumes declared inside the compose file of a deleted stack.
+   * Never removed by cleanup, the nightly run or any endpoint.
+   */
+  orphanComposeVolumes: OrphanComposeVolume[];
   /** Local-daemon aoox containers whose project/app/database/stack row is gone. */
   orphanContainers: OrphanContainer[];
   lastCleanup: CleanupReport | null;
@@ -105,6 +115,9 @@ export class MaintenanceService {
       reclaimableBytes: Math.max(0, dangling) + buildCache,
       prunableDeployments: prunable,
       orphanVolumes: await this.orphanVolumeNames(df),
+      orphanComposeVolumes: await this.orphanComposeVolumeList(df).catch(
+        () => [],
+      ),
       orphanContainers: await this.orphanContainerList().catch(() => []),
       lastCleanup: this.last,
     };
@@ -280,6 +293,20 @@ export class MaintenanceService {
     return orphanedVolumes(
       usage.Volumes.map((v) => v.Name),
       expected,
+    );
+  }
+
+  /** Report-only list, see `orphanedComposeVolumes`. Local daemon only. */
+  async orphanComposeVolumeList(
+    df?: SystemDataUsage,
+  ): Promise<OrphanComposeVolume[]> {
+    const [usage, composeAppRows] = await Promise.all([
+      df ? Promise.resolve(df) : this.docker.engine.systemDataUsage(),
+      this.composeApps.repo.find({ select: { id: true, slug: true } }),
+    ]);
+    return orphanedComposeVolumes(
+      usage.Volumes,
+      new Set(composeAppRows.map((c) => c.slug)),
     );
   }
 

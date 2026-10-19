@@ -8,6 +8,7 @@ import { In } from 'typeorm';
 import { CertificateSyncService } from '../../certificate/certificate-sync.service';
 import { ProxyDnsBindingService } from '../../dns-provider/proxy-dns-binding.service';
 import { limitsRemoved, resourceLimits } from '../../docker/resource-limits';
+import { normalizeBind, type HostPortBind } from '../../docker/host-port-bind';
 import { HostPortService } from '../../host-port/host-port.service';
 import { ProxyConfigService } from '../../proxy-config/proxy-config.service';
 import { RemoteDockerService } from '../../server/remote-docker.service';
@@ -64,6 +65,7 @@ export class UpdateApplicationService {
   > {
     const app = await this.applications.findOwnedOrFail(id, ownerId);
     const hostPortBefore = app.hostPort;
+    const hostPortBindBefore = app.hostPortBind;
     const containerPortBefore = app.containerPort;
     const serverIdBefore = app.serverId;
     // The maintenance page lives on the proxy of the current server only.
@@ -118,6 +120,7 @@ export class UpdateApplicationService {
     }
     if (dto.containerPort !== undefined) app.containerPort = dto.containerPort;
     if (dto.hostPort !== undefined) app.hostPort = dto.hostPort;
+    if (dto.hostPortBind) app.hostPortBind = normalizeBind(dto.hostPortBind);
     const before = { cpuMillicores: app.cpuMillicores, memoryMb: app.memoryMb };
     if (dto.cpuMillicores !== undefined) app.cpuMillicores = dto.cpuMillicores;
     if (dto.deploymentKeep !== undefined)
@@ -209,7 +212,20 @@ export class UpdateApplicationService {
         );
       }
     }
-    const hostPortChanged = app.hostPort !== hostPortBefore;
+    if (
+      app.deployMode === 'service' &&
+      app.hostPort != null &&
+      app.hostPortBind === 'loopback'
+    ) {
+      throw new BadRequestException(
+        'A Swarm service cannot publish its host port on 127.0.0.1 only; use a public port or container mode',
+      );
+    }
+    // The bind address is part of the container's port binding, so changing it
+    // is applied exactly like a new host port (but only while a port is set).
+    const hostPortChanged =
+      app.hostPort !== hostPortBefore ||
+      (app.hostPort != null && app.hostPortBind !== hostPortBindBefore);
     // The container port lives in the proxy labels (and the Railpack PORT
     // env) of the running container, so it is applied like a host port.
     const containerPortChanged = app.containerPort !== containerPortBefore;
@@ -281,7 +297,11 @@ export class UpdateApplicationService {
     ) {
       await this.applyHostPort(
         saved,
-        { hostPort: hostPortBefore, containerPort: containerPortBefore },
+        {
+          hostPort: hostPortBefore,
+          hostPortBind: hostPortBindBefore,
+          containerPort: containerPortBefore,
+        },
         hostPortChanged ? 'host port' : 'container port',
         actorEmail,
       );
@@ -421,7 +441,11 @@ export class UpdateApplicationService {
    */
   private async applyHostPort(
     saved: Application,
-    before: { hostPort: number | null; containerPort: number },
+    before: {
+      hostPort: number | null;
+      hostPortBind: HostPortBind;
+      containerPort: number;
+    },
     label: string,
     actorEmail: string,
   ): Promise<void> {
@@ -434,6 +458,7 @@ export class UpdateApplicationService {
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
       saved.hostPort = before.hostPort;
+      saved.hostPortBind = before.hostPortBind;
       saved.containerPort = before.containerPort;
       await this.applications.repo.save(saved);
       try {

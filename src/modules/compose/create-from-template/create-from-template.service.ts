@@ -1,3 +1,4 @@
+import { normalizeBind } from '../../docker/host-port-bind';
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { randomBytes } from 'crypto';
 import { OwnerVariableSetsService } from '../../application/variable-set-links/variable-set-links.service';
@@ -82,6 +83,7 @@ export class CreateFromTemplateService {
         service: p.service,
         port: p.port,
         hostPort: p.hostPort,
+        ...(p.bind ? { bind: normalizeBind(p.bind) } : {}),
       })),
       status: 'idle',
     });

@@ -16,6 +16,8 @@ import { ListContainersController } from './list-containers/list-containers.cont
 import { ListContainersService } from './list-containers/list-containers.service';
 import { ListImagesController } from './list-images/list-images.controller';
 import { ListImagesService } from './list-images/list-images.service';
+import { ListOpenPortsController } from './list-open-ports/list-open-ports.controller';
+import { ListOpenPortsService } from './list-open-ports/list-open-ports.service';
 import { ListNetworksController } from './list-networks/list-networks.controller';
 import { ListNetworksService } from './list-networks/list-networks.service';
 import { ListVolumesController } from './list-volumes/list-volumes.controller';
@@ -51,6 +53,7 @@ import { RemoveImageService } from './remove-image/remove-image.service';
     RemoveImageController,
     ListVolumesController,
     ListNetworksController,
+    ListOpenPortsController,
   ],
   providers: [
     DockerTargetService,
@@ -63,6 +66,7 @@ import { RemoveImageService } from './remove-image/remove-image.service';
     RemoveImageService,
     ListVolumesService,
     ListNetworksService,
+    ListOpenPortsService,
   ],
 })
 export class DockerManagerModule {}

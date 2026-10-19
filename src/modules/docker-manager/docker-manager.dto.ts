@@ -101,3 +101,23 @@ export class PruneImagesResultDto {
   deleted: number;
   reclaimedBytes: number;
 }
+
+/** One published host port (containers listing merged per port; see `toOpenPorts`). */
+export class OpenPortDto {
+  /** Host port. */
+  port: number;
+  protocol: string;
+  /** Port inside the container. */
+  containerPort: number;
+  /** IPs Docker reports for the binding (`0.0.0.0`, `::`, `127.0.0.1`...). */
+  addresses: string[];
+  /** `public` = every interface, `loopback` = 127.0.0.1/::1 only, `address` = one specific other IP. */
+  exposure: 'public' | 'loopback' | 'address';
+  /** Anything but loopback: has to be blocked by the provider firewall, ufw does not filter it. */
+  openToInternet: boolean;
+  containerId: string;
+  containerName: string;
+  image: string;
+  /** Owner by aoox labels; null = not managed by aoox. */
+  managed: ManagedInfo | null;
+}

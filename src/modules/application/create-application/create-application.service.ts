@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { randomBytes } from 'crypto';
+import { normalizeBind } from '../../docker/host-port-bind';
 import { HostPortService } from '../../host-port/host-port.service';
 import { RemoteDockerService } from '../../server/remote-docker.service';
 import { ServerService } from '../../server/server.service';
@@ -38,6 +39,15 @@ export class CreateApplicationService {
       const docker = await this.remote.forServer(dto.serverId ?? null);
       await this.hostPorts.assertFree([dto.hostPort], docker);
     }
+    if (
+      dto.deployMode === 'service' &&
+      dto.hostPort != null &&
+      dto.hostPortBind === 'loopback'
+    ) {
+      throw new BadRequestException(
+        'A Swarm service cannot publish its host port on 127.0.0.1 only; use a public port or container mode',
+      );
+    }
     if (dto.deployMode === 'service') {
       if (dto.serverId) {
         throw new BadRequestException(
@@ -71,6 +81,7 @@ export class CreateApplicationService {
       webhookToken: randomBytes(24).toString('base64url'),
       containerPort: dto.containerPort ?? 3000,
       hostPort: dto.hostPort ?? null,
+      hostPortBind: normalizeBind(dto.hostPortBind),
       cpuMillicores: dto.cpuMillicores ?? null,
       healthcheckPath: dto.healthcheckPath?.trim() || null,
       memoryMb: dto.memoryMb ?? null,

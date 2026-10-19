@@ -1,3 +1,4 @@
+import { type HostPortBind } from '../docker/host-port-bind';
 import {
   Column,
   CreateDateColumn,
@@ -38,6 +39,8 @@ export interface ComposeServicePort {
   /** Container port. */
   port: number;
   hostPort: number;
+  /** Absent = public (every interface), the behavior before this option existed. */
+  bind?: HostPortBind;
 }
 
 /**

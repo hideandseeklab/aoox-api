@@ -148,6 +148,29 @@ describe('MaintenanceService', () => {
     expect(engine.removeVolume).not.toHaveBeenCalledWith('aoox_postgres_data');
   });
 
+  it('reports compose-declared volumes of deleted stacks but never removes them', async () => {
+    engine.systemDataUsage.mockResolvedValue({
+      Images: [],
+      Containers: [],
+      LayersSize: 0,
+      Volumes: [
+        {
+          Name: 'aoox-gone_data',
+          Labels: {
+            'com.docker.compose.project': 'aoox-gone',
+            'com.docker.compose.volume': 'data',
+          },
+          UsageData: { Size: 1, RefCount: 0 },
+        },
+      ],
+    });
+    const list = await svc.orphanComposeVolumeList();
+    expect(list).toEqual([{ name: 'aoox-gone_data', stack: 'gone' }]);
+    const report = await svc.cleanup({ registryGc: false, pruneVolumes: true });
+    expect(report.volumesRemoved).toEqual([]);
+    expect(engine.removeVolume).not.toHaveBeenCalled();
+  });
+
   describe('orphan containers', () => {
     const c = (id: string, labels: Record<string, string>) => ({
       Id: id,

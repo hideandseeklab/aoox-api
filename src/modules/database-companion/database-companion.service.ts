@@ -14,6 +14,7 @@ import { Domain } from '../application/domain.entity';
 import { tarFiles } from '../application/nixpacks-builder.service';
 import { composeLabels, DockerService } from '../docker/docker.service';
 import { decryptSecret } from '../docker/secret.util';
+import { hostPortBinding, normalizeBind } from '../docker/host-port-bind';
 import { HostPortService } from '../host-port/host-port.service';
 import { ENGINES } from '../managed-database/engines';
 import { ManagedDatabase } from '../managed-database/managed-database.entity';
@@ -151,6 +152,10 @@ export class DatabaseCompanionService {
           host,
           https: host ? (dto.https ?? false) : false,
           hostPort,
+          // Admin UIs hold full database access: closed to the internet unless asked.
+          hostPortBind: dto.hostPortBind
+            ? normalizeBind(dto.hostPortBind)
+            : 'loopback',
           passwordEncrypted: adminPassword
             ? this.databases.encrypt(adminPassword)
             : null,
@@ -236,7 +241,7 @@ export class DatabaseCompanionService {
           LogConfig: this.docker.logConfig,
           NetworkMode: APP_NETWORK,
           PortBindings: row.hostPort
-            ? { [port]: [{ HostPort: String(row.hostPort) }] }
+            ? { [port]: [hostPortBinding(row.hostPort, row.hostPortBind)] }
             : {},
         },
       },
@@ -338,6 +343,11 @@ export class DatabaseCompanionService {
       host: row.host,
       https: row.https,
       hostPort: row.hostPort,
+      hostPortBind: normalizeBind(row.hostPortBind),
+      loopbackOnly:
+        !row.host &&
+        !!row.hostPort &&
+        normalizeBind(row.hostPortBind) === 'loopback',
       url: this.urlFor(row, db, tool),
       username: tool?.username ?? null,
       createdAt: row.createdAt,
@@ -361,6 +371,10 @@ export class DatabaseCompanionService {
       const defaultPort = row.https ? 443 : 80;
       const suffix = port === defaultPort ? '' : `:${port}`;
       return `${scheme}://${row.host}${suffix}/${query}`;
+    }
+    if (row.hostPort && normalizeBind(row.hostPortBind) === 'loopback') {
+      // Only this server can open it (SSH tunnel from elsewhere).
+      return `http://127.0.0.1:${row.hostPort}/${query}`;
     }
     if (row.hostPort) {
       const publicHost =

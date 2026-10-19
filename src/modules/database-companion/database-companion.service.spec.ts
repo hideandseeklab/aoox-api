@@ -299,6 +299,27 @@ describe('DatabaseCompanionService', () => {
       });
     });
 
+    it('defaults a new admin app host port to this server only, public on request', async () => {
+      const a = makeService();
+      const first = await a.service.create(makeDb(), {
+        tool: 'adminer',
+        hostPort: 9000,
+      });
+      expect(a.rows[0].hostPortBind).toBe('loopback');
+      expect(first).toMatchObject({
+        hostPortBind: 'loopback',
+        loopbackOnly: true,
+        url: expect.stringContaining('http://127.0.0.1:9000/') as string,
+      });
+      const b = makeService();
+      await b.service.create(makeDb(), {
+        tool: 'adminer',
+        hostPort: 9000,
+        hostPortBind: 'public',
+      });
+      expect(b.rows[0].hostPortBind).toBe('public');
+    });
+
     it('stores an encrypted generated password only for tools without the database login', async () => {
       const a = makeService();
       await a.service.create(makeDb({ engine: 'mongodb' }), {
@@ -340,6 +361,28 @@ describe('DatabaseCompanionService', () => {
         '8080/tcp': [{ HostPort: '9000' }],
       });
       expect(engine.startContainer).toHaveBeenCalledWith('cid');
+    });
+
+    it('publishes the host port on 127.0.0.1 when the row is loopback', async () => {
+      const { service, engine } = makeService();
+      await service.provision(
+        {
+          id: 'c-2',
+          host: null,
+          https: false,
+          hostPort: 9000,
+          hostPortBind: 'loopback',
+        } as DatabaseCompanion,
+        makeDb(),
+        getCompanionTool('adminer')!,
+        null,
+      );
+      const [body] = engine.createContainer.mock.calls[0] as [
+        { HostConfig: { PortBindings: unknown } },
+      ];
+      expect(body.HostConfig.PortBindings).toEqual({
+        '8080/tcp': [{ HostIp: '127.0.0.1', HostPort: '9000' }],
+      });
     });
 
     it('never carries aoox.database / aoox.application and never the DB password in labels', async () => {

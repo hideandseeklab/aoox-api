@@ -2,6 +2,11 @@ import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import {
+  hostPortBinding,
+  LOOPBACK_IP,
+  normalizeBind,
+} from '../docker/host-port-bind';
 import { resourceLimits } from '../docker/resource-limits';
 import { Mount } from '../application/mount.entity';
 import { bindsFor, prepareMounts } from '../application/mounts';
@@ -35,6 +40,8 @@ export interface DatabaseConnection {
   externalHost: string | null;
   externalPort: number | null;
   externalUrl: string | null;
+  /** The published port listens on 127.0.0.1: only this server (or an SSH tunnel) can reach it. */
+  externalLoopbackOnly: boolean;
 }
 
 @Injectable()
@@ -83,8 +90,12 @@ export class ManagedDatabaseService {
     const spec = ENGINES[db.engine];
     const password = await this.password(db);
     const internalHost = containerNameForDb(db);
+    const loopbackOnly =
+      !!db.hostPort && normalizeBind(db.hostPortBind) === 'loopback';
     const externalHost = db.hostPort
-      ? (this.config.get<string>('REGISTRY_PUBLIC_HOST') ?? 'localhost')
+      ? loopbackOnly
+        ? LOOPBACK_IP
+        : (this.config.get<string>('REGISTRY_PUBLIC_HOST') ?? 'localhost')
       : null;
     const base = { username: db.username, password, database: db.databaseName };
     return {
@@ -94,6 +105,7 @@ export class ManagedDatabaseService {
       internalUrl: spec.url({ ...base, host: internalHost, port: spec.port }),
       externalHost,
       externalPort: db.hostPort,
+      externalLoopbackOnly: loopbackOnly,
       externalUrl:
         externalHost && db.hostPort
           ? spec.url({ ...base, host: externalHost, port: db.hostPort })
@@ -148,7 +160,7 @@ export class ManagedDatabaseService {
             ...bindsFor(db, mounts, filesMountpoint),
           ],
           PortBindings: db.hostPort
-            ? { [port]: [{ HostPort: String(db.hostPort) }] }
+            ? { [port]: [hostPortBinding(db.hostPort, db.hostPortBind)] }
             : {},
           ...resourceLimits(db.cpuMillicores, db.memoryMb),
         },

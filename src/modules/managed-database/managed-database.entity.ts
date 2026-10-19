@@ -1,3 +1,4 @@
+import { type HostPortBind } from '../docker/host-port-bind';
 import {
   Column,
   CreateDateColumn,
@@ -63,6 +64,15 @@ export class ManagedDatabase {
   /** Host port to publish; null = reachable only from the aoox network. */
   @Column({ name: 'host_port', type: 'int', nullable: true })
   hostPort: number | null;
+
+  /** Interface the host port listens on: public (all) or loopback (this server only). */
+  @Column({
+    name: 'host_port_bind',
+    type: 'varchar',
+    length: 16,
+    default: 'public',
+  })
+  hostPortBind: HostPortBind;
 
   /** CPU limit in millicores (1000 = one core); null = unlimited. */
   @Column({ name: 'cpu_millicores', type: 'int', nullable: true })

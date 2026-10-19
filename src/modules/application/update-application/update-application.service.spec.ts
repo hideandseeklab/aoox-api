@@ -104,6 +104,65 @@ function harness(
 const update = (h: ReturnType<typeof harness>, hostPort: number | null) =>
   h.svc.execute('owner', 'app-1', { hostPort }, 'me@x.y');
 
+describe('UpdateApplicationService host port bind address', () => {
+  it('recreates the running container when only the bind address changes', async () => {
+    const h = harness({ hostPort: 5434, hostPortBind: 'public' });
+    await h.svc.execute(
+      'owner',
+      'app-1',
+      { hostPortBind: 'loopback' },
+      'me@x.y',
+    );
+    expect(h.runner.applyRuntimeConfig).toHaveBeenCalledWith(
+      expect.objectContaining({ hostPort: 5434, hostPortBind: 'loopback' }),
+    );
+    // same port: no new conflict check
+    expect(h.hostPorts.assertFree).not.toHaveBeenCalled();
+  });
+
+  it('ignores a bind change while no port is published', async () => {
+    const h = harness({ hostPort: null, hostPortBind: 'public' });
+    await h.svc.execute(
+      'owner',
+      'app-1',
+      { hostPortBind: 'loopback' },
+      'me@x.y',
+    );
+    expect(h.runner.applyRuntimeConfig).not.toHaveBeenCalled();
+  });
+
+  it('an unchanged bind address recreates nothing', async () => {
+    const h = harness({ hostPort: 5434, hostPortBind: 'loopback' });
+    await h.svc.execute(
+      'owner',
+      'app-1',
+      { hostPortBind: 'loopback' },
+      'me@x.y',
+    );
+    expect(h.runner.applyRuntimeConfig).not.toHaveBeenCalled();
+  });
+
+  it('restores the previous bind address when applying fails', async () => {
+    const h = harness({ hostPort: 5434, hostPortBind: 'public' });
+    h.runner.applyRuntimeConfig.mockRejectedValueOnce(new Error('bind failed'));
+    await expect(
+      h.svc.execute('owner', 'app-1', { hostPortBind: 'loopback' }, 'me@x.y'),
+    ).rejects.toBeInstanceOf(ConflictException);
+    expect(h.app.hostPortBind).toBe('public');
+  });
+
+  it('refuses loopback for a Swarm service (swarm ports cannot carry a HostIp)', async () => {
+    const h = harness({
+      hostPort: 5434,
+      hostPortBind: 'public',
+      deployMode: 'service',
+    });
+    await expect(
+      h.svc.execute('owner', 'app-1', { hostPortBind: 'loopback' }, 'me@x.y'),
+    ).rejects.toThrow('127.0.0.1');
+  });
+});
+
 describe('UpdateApplicationService host port', () => {
   it.each([
     ['null to number', null, 5434],

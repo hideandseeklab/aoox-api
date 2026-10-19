@@ -1,4 +1,9 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  bindOfBinding,
+  normalizeBind,
+  type HostPortBind,
+} from '../../docker/host-port-bind';
 import { HostPortService } from '../../host-port/host-port.service';
 import { ContainerInspect } from '../../docker/docker-engine.client';
 import { RemoteDockerService } from '../../server/remote-docker.service';
@@ -43,6 +48,8 @@ export class StartApplicationService {
       app.currentImage &&
       inspected &&
       (publishedPort(app, inspected) !== (app.hostPort ?? null) ||
+        (app.hostPort != null &&
+          publishedBind(app, inspected) !== normalizeBind(app.hostPortBind)) ||
         (routed !== null && routed !== app.containerPort))
     ) {
       if (app.hostPort != null) {
@@ -76,6 +83,16 @@ export function routedPort(inspected: ContainerInspect): number | null {
     }
   }
   return null;
+}
+
+/** Bind address a (possibly stopped) container was created with for the app's container port. */
+export function publishedBind(
+  app: Pick<Application, 'containerPort'>,
+  inspected: ContainerInspect,
+): HostPortBind {
+  return bindOfBinding(
+    inspected.HostConfig?.PortBindings?.[`${app.containerPort}/tcp`]?.[0],
+  );
 }
 
 /** Host port a (possibly stopped) container was created to publish for the app's container port. */

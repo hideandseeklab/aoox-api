@@ -50,6 +50,8 @@ export interface ExportedApplication {
   staticSpa: boolean;
   containerPort: number;
   hostPort: number | null;
+  /** Optional in files written before the option existed (absent = public). */
+  hostPortBind?: 'public' | 'loopback';
   env: string;
   /** Linked variable set environments by name, in merge order. */
   variableSets?: ExportedLink[];
@@ -119,6 +121,7 @@ export interface ExportedDatabase {
   /** Only with `includeSecrets`; otherwise null and a new password is generated on import. */
   password: string | null;
   hostPort: number | null;
+  hostPortBind?: 'public' | 'loopback';
   cpuMillicores: number | null;
   memoryMb: number | null;
   backupCron: string | null;
@@ -152,7 +155,12 @@ export interface ExportedComposeApp {
     https: boolean;
   }>;
   /** Optional: files from before this field existed have none. */
-  servicePorts?: Array<{ service: string; port: number; hostPort: number }>;
+  servicePorts?: Array<{
+    service: string;
+    port: number;
+    hostPort: number;
+    bind?: 'public' | 'loopback';
+  }>;
   references: { gitCredential: string | null };
   jobs: ExportedJob[];
 }

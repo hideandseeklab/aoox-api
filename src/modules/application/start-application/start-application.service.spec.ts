@@ -4,7 +4,8 @@ import {
   StartApplicationService,
 } from './start-application.service';
 
-type Bindings = Record<string, { HostPort: string }[] | null> | undefined;
+type Bindings =
+  Record<string, { HostIp?: string; HostPort: string }[] | null> | undefined;
 
 function harness(
   app: Record<string, unknown>,
@@ -79,6 +80,26 @@ describe('StartApplicationService', () => {
     const h = harness(
       { hostPort: 5434 },
       { '3000/tcp': [{ HostPort: '5434' }] },
+    );
+    await h.svc.execute('o', 'a1');
+    expect(h.engine.startContainer).toHaveBeenCalledWith('c1');
+    expect(h.runner.applyRuntimeConfig).not.toHaveBeenCalled();
+  });
+
+  it('recreates instead of starting when only the bind address changed while stopped', async () => {
+    const h = harness(
+      { hostPort: 5434, hostPortBind: 'loopback' },
+      { '3000/tcp': [{ HostPort: '5434' }] },
+    );
+    await h.svc.execute('o', 'a1');
+    expect(h.runner.applyRuntimeConfig).toHaveBeenCalledTimes(1);
+    expect(h.engine.startContainer).not.toHaveBeenCalled();
+  });
+
+  it('just starts when the loopback binding already matches', async () => {
+    const h = harness(
+      { hostPort: 5434, hostPortBind: 'loopback' },
+      { '3000/tcp': [{ HostIp: '127.0.0.1', HostPort: '5434' }] },
     );
     await h.svc.execute('o', 'a1');
     expect(h.engine.startContainer).toHaveBeenCalledWith('c1');

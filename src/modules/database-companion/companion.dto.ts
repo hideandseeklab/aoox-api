@@ -1,3 +1,4 @@
+import { HOST_PORT_BINDS, type HostPortBind } from '../docker/host-port-bind';
 import { Transform } from 'class-transformer';
 import {
   IsBoolean,
@@ -10,6 +11,7 @@ import {
   Max,
   MaxLength,
   Min,
+  ValidateIf,
 } from 'class-validator';
 import { COMPANION_TOOLS, type CompanionToolId } from './companion-tools';
 import { CompanionStatus } from './database-companion.entity';
@@ -46,6 +48,12 @@ export class CreateCompanionDto {
   @Min(1)
   @Max(65535)
   hostPort?: number;
+
+  /** Interface the host port listens on. Omitted = unchanged (update) / public (create). */
+  @ValidateIf((_, v) => v !== '')
+  @IsOptional()
+  @IsIn(HOST_PORT_BINDS)
+  hostPortBind?: HostPortBind;
 }
 
 export class CompanionToolOptionDto {
@@ -68,6 +76,10 @@ export class CompanionDto {
   host: string | null;
   https: boolean;
   hostPort: number | null;
+  /** Interface the host port listens on (new admin apps default to loopback). */
+  hostPortBind: HostPortBind;
+  /** true when the only way in is the host port bound to 127.0.0.1: reachable from this server (SSH tunnel) only. */
+  loopbackOnly: boolean;
   /**
    * Browsable URL. Domain: `http(s)://<host>`; host port: `http://<PUBLIC_IP |
    * REGISTRY_PUBLIC_HOST>:<port>`, or `null` when the server address is not

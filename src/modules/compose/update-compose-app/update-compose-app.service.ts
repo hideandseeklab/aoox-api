@@ -1,3 +1,4 @@
+import { normalizeBind } from '../../docker/host-port-bind';
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { OwnerVariableSetsService } from '../../application/variable-set-links/variable-set-links.service';
 import { GitCredentialService } from '../../git-credential/git-credential.service';
@@ -64,6 +65,7 @@ export class UpdateComposeAppService {
         service: p.service,
         port: p.port,
         hostPort: p.hostPort,
+        ...(p.bind ? { bind: normalizeBind(p.bind) } : {}),
       }));
       await this.compose.assertHostPortsFree(app);
     }

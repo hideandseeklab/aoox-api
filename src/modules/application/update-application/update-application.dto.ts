@@ -1,4 +1,8 @@
 import {
+  HOST_PORT_BINDS,
+  type HostPortBind,
+} from '../../docker/host-port-bind';
+import {
   IsBoolean,
   IsIn,
   IsInt,
@@ -85,6 +89,12 @@ export class UpdateApplicationDto {
   @Min(1)
   @Max(65535)
   hostPort?: number | null;
+
+  /** Interface the host port listens on. Omitted = unchanged (update) / public (create). */
+  @ValidateIf((_, v) => v !== '')
+  @IsOptional()
+  @IsIn(HOST_PORT_BINDS)
+  hostPortBind?: HostPortBind;
 
   /** CPU limit in millicores (500 = half a core); null = unlimited. */
   @ValidateIf((_, v) => v !== null)
