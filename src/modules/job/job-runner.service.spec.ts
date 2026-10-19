@@ -69,15 +69,14 @@ describe('JobRunnerService', () => {
       .mockResolvedValue({ Id: 'app', State: 'running' }),
     ensureImage: jest.fn(),
   };
+  const envResolve = jest.fn().mockResolvedValue({ env: ['A=1'], secrets: [] });
   const broadcast = jest.fn().mockResolvedValue(undefined);
   const svc = new JobRunnerService(
     { runs, repo } as unknown as JobService,
     applications as unknown as ApplicationService,
     {} as unknown as ManagedDatabaseService,
     {} as unknown as ComposeService,
-    {
-      resolve: jest.fn().mockResolvedValue({ env: ['A=1'], secrets: [] }),
-    } as unknown as EnvResolverService,
+    { resolve: envResolve } as unknown as EnvResolverService,
     {
       forServer: jest.fn().mockResolvedValue(docker),
     } as unknown as RemoteDockerService,
@@ -167,5 +166,49 @@ describe('JobRunnerService', () => {
         output: 'Container is not running',
       }),
     );
+  });
+
+  it('masks resolved env values in the stored output of an exec job', async () => {
+    envResolve.mockResolvedValueOnce({
+      env: [],
+      secrets: ['marker-value-123'],
+    });
+    engine.execWithCode.mockResolvedValue({
+      output: 'MY_SECRET=marker-value-123 and marker-value-123\n',
+      code: 0,
+    });
+    await svc.start(job({}), 'manual');
+    await flush();
+    const [, patch] = runs.update.mock.calls[0] as [string, { output: string }];
+    expect(patch.output).toBe('MY_SECRET=*** and ***\n');
+  });
+
+  it('falls back to the running container env when the env cannot be resolved', async () => {
+    envResolve.mockRejectedValueOnce(new Error('source down'));
+    (
+      docker as unknown as { engine: Record<string, unknown> }
+    ).engine.inspectContainer = jest.fn().mockResolvedValue({
+      Config: { Env: ['PATH=/usr/bin:/bin', 'MY_SECRET=marker-value-123'] },
+    });
+    engine.execWithCode.mockResolvedValue({
+      output: 'marker-value-123 /usr/bin:/bin\n',
+      code: 0,
+    });
+    await svc.start(job({}), 'manual');
+    await flush();
+    const [, patch] = runs.update.mock.calls[0] as [string, { output: string }];
+    expect(patch.output).toBe('*** /usr/bin:/bin\n');
+  });
+
+  it('masks values in the output of a run job', async () => {
+    envResolve.mockResolvedValueOnce({
+      env: ['MY_SECRET=marker-value-123'],
+      secrets: ['marker-value-123'],
+    });
+    engine.containerLogs.mockResolvedValueOnce('echo marker-value-123\n');
+    await svc.start(job({ target: 'run' }), 'manual');
+    await flush();
+    const [, patch] = runs.update.mock.calls[0] as [string, { output: string }];
+    expect(patch.output).toBe('echo ***\n');
   });
 });

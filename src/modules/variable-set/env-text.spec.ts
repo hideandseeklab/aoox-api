@@ -77,9 +77,21 @@ describe('env text helpers', () => {
       '5432',
       'abc',
       '12345678901',
+      'abcde',
     ]) {
       expect(shouldRedactValue(v)).toBe(false);
     }
+    expect(shouldRedactValue('abc123')).toBe(true); // 6 characters
+  });
+
+  it('isSecretValue: flag wins, then secret-looking names, then the heuristic', () => {
+    expect(isSecretValue('A', 'x', { A: true })).toBe(true);
+    expect(isSecretValue('A', 'my-secret-phrase', { A: false })).toBe(false);
+    // Plain word, but a secret-looking name: masked from 6 characters.
+    expect(isSecretValue('DB_PASSWORD', 'hunter', {})).toBe(true);
+    expect(isSecretValue('DB_PASSWORD', 'abc', {})).toBe(false);
+    expect(isSecretValue('NODE_ENV', 'production', {})).toBe(false);
+    expect(isSecretValue('URL', 'https://example.com', {})).toBe(true);
   });
 
   it('normalizeEnvText keeps valid names only, last definition wins', () => {

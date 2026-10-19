@@ -103,12 +103,13 @@ export function validateEnvironmentText(text: string): string | null {
 }
 
 /** Values shorter than this are never registered for log redaction. */
-export const MIN_REDACT_LENGTH = 8;
+export const MIN_REDACT_LENGTH = 6;
 
 /**
- * Whether a value from an environment should be masked in logs. Short values
- * and plain words (`production`, `true`, `debug`) are skipped: masking them
- * would mangle ordinary log text such as `npm install --production`.
+ * Whether an unmarked value from an environment should be masked in logs.
+ * Short values, numbers and plain words (`production`, `true`, `debug`) are
+ * skipped: masking them would mangle ordinary log text such as
+ * `npm install --production` or a port number.
  */
 export function shouldRedactValue(value: string): boolean {
   if (value.length < MIN_REDACT_LENGTH) return false;
@@ -225,6 +226,9 @@ export function isSecretValue(
   const flag = flags[key];
   if (flag === true) return value.length > 0;
   if (flag === false) return false;
+  // An unmarked key whose name looks secret (PASSWORD, API_KEY, ...) is masked
+  // even when the value is a plain word, as long as it is long enough.
+  if (looksSecretName(key) && value.length >= MIN_REDACT_LENGTH) return true;
   return shouldRedactValue(value);
 }
 

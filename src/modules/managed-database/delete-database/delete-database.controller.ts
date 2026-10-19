@@ -12,6 +12,7 @@ import { CurrentUser } from '../../auth/current-user.decorator';
 import { JwtAuthGuard } from '../../auth/jwt-auth.guard';
 import type { JwtPayload } from '../../auth/jwt.strategy';
 import { DatabaseParamsDto } from '../get-database/get-database.dto';
+import { assertNotStarting } from '../database-starting';
 import { ManagedDatabaseService } from '../managed-database.service';
 import { DeleteDatabaseQueryDto } from './delete-database.dto';
 
@@ -31,6 +32,7 @@ export class DeleteDatabaseController {
     @Query() query: DeleteDatabaseQueryDto,
   ): Promise<void> {
     const db = await this.databases.findOwnedOrFail(params.id, user.sub);
+    assertNotStarting(db);
     const purge = query.purge === 'true';
     await this.databases.remove(db, purge);
     // Backup files and their S3 copies are only reachable through the rows,

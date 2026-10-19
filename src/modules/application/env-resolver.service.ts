@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import {
   DATABASE_FIELDS,
   isSecretValue,
+  MIN_REDACT_LENGTH,
   parseEnvLines,
   REFERENCE,
 } from '../variable-set/env-text';
@@ -24,7 +25,7 @@ type DatabaseField = (typeof DATABASE_FIELDS)[number];
 export interface ResolvedEnv {
   /** `KEY=VALUE` entries for the container. */
   env: string[];
-  /** Values that must never appear in logs (database passwords, secret-source values). */
+  /** Values that must never appear in logs: every resolved value that passes the redaction rule (see `isSecretValue`), database passwords and secret-source values. */
   secrets: string[];
 }
 
@@ -53,9 +54,6 @@ export interface ResolveOptions {
    */
   environmentIds?: string[];
 }
-
-/** Secret values shorter than this are not registered for redaction (they would mangle ordinary log text). */
-const MIN_REDACT_LENGTH = 6;
 
 export class EnvReferenceError extends Error {}
 
@@ -107,6 +105,7 @@ export class EnvResolverService {
       }
     }
     const appEnv = parseEnvLines(app.env);
+    const own = new Set(appEnv.map(([k]) => k));
     const dbCache = new Map<string, Record<DatabaseField, string>>();
 
     // ---- external secret source ----
@@ -213,14 +212,13 @@ export class EnvResolverService {
       }
       resolved += value.slice(last);
       env.push(`${key}=${resolved}`);
-      // A flagged variable can hold references (a database password, a source
-      // secret): the expanded value is what reaches the container and the logs.
-      if (
-        flags[key] === true &&
-        vars.has(key) &&
-        !appEnv.some(([k]) => k === key) &&
-        resolved.length > 0
-      ) {
+      // Every resolved value is a redaction candidate, not only the set
+      // layers' raw text: expanded references (a database password inside a
+      // URL), the application's own env and build output all end up in logs.
+      // A flag of the set layer applies only while the value still comes from
+      // that layer; the application's own env and source secrets are unmarked.
+      const fromSet = vars.has(key) && !own.has(key) && !literal.has(key);
+      if (isSecretValue(key, resolved, fromSet ? flags : {})) {
         secrets.add(resolved);
       }
     }

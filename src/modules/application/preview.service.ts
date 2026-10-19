@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { Redactor } from './log-redaction';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
@@ -204,7 +205,7 @@ export class PreviewService {
 class PreviewLog implements BuildLog {
   private text = '';
   private lastFlush = 0;
-  private secrets: string[] = [];
+  private readonly redactor = new Redactor();
 
   constructor(
     private readonly preview: PreviewDeployment,
@@ -212,13 +213,11 @@ class PreviewLog implements BuildLog {
   ) {}
 
   redact(secret: string): void {
-    if (secret) this.secrets.push(secret, encodeURIComponent(secret));
+    this.redactor.add(secret);
   }
 
   private append(raw: string): void {
-    let chunk = raw;
-    for (const s of this.secrets) chunk = chunk.split(s).join('***');
-    this.text += chunk;
+    this.text += this.redactor.apply(raw);
   }
 
   async step(_status: DeploymentStatus, line: string): Promise<void> {
@@ -246,14 +245,11 @@ class PreviewLog implements BuildLog {
     errorMessage: string | null = null,
   ): Promise<void> {
     this.append(`\n${line}\n`);
-    let redactedError = errorMessage;
-    for (const s of this.secrets) {
-      redactedError = redactedError?.split(s).join('***') ?? null;
-    }
     await this.repo.update(this.preview.id, {
       logs: this.text,
       status,
-      errorMessage: redactedError,
+      errorMessage:
+        errorMessage === null ? null : this.redactor.apply(errorMessage),
       imageRef: this.preview.imageRef,
     });
   }

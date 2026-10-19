@@ -74,6 +74,12 @@ export class DeleteProjectService {
     }
     const apps = await this.appRepo.find({ where: { projectId: id } });
     const dbs = await this.dbRepo.find({ where: { projectId: id } });
+    const starting = dbs.find((d) => d.status === 'creating');
+    if (starting) {
+      throw new ConflictException(
+        `The database "${starting.name}" is still starting. Try again in a moment.`,
+      );
+    }
 
     try {
       for (const stack of stacks) {

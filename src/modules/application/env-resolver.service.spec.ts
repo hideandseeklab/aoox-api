@@ -101,7 +101,14 @@ describe('EnvResolverService', () => {
       'DATABASE_URL=postgresql://app:s3cret@aoox-db-pg:5432/app',
       'DB_HOST=aoox-db-pg:5432',
     ]);
-    expect(r.secrets).toEqual(['s3cret']);
+    // The password and every expanded value that embeds it or looks like one.
+    expect(r.secrets.sort()).toEqual(
+      [
+        's3cret',
+        'postgresql://app:s3cret@aoox-db-pg:5432/app',
+        'aoox-db-pg:5432',
+      ].sort(),
+    );
     expect(findOne).toHaveBeenCalledTimes(1);
     expect(findOne).toHaveBeenCalledWith({
       where: { projectId: 'p1', slug: 'pg' },
@@ -249,5 +256,22 @@ describe('EnvResolverService with variable set links', () => {
     // f2 wins and has no flag, so its expanded value is not force-masked.
     expect(r.env).toContain('TOKEN=b-2');
     expect(r.secrets).not.toContain('b-2');
+  });
+
+  it("registers the application's own env values, ignoring a set flag of a shadowed key", async () => {
+    layer('o1', 'REGION=eu-west-long-region-name', { REGION: false });
+    layer('o2', 'API_TOKEN=set-token-value', { API_TOKEN: true });
+    const r = await svc.resolve(
+      owner(
+        'MY_SECRET=marker-value-123\nPORT=8080\nMODE=production\nREGION=own-region-value\nAPI_TOKEN=own-token-val',
+        ['o1', 'o2'],
+      ),
+    );
+    expect(r.secrets).toContain('marker-value-123');
+    // Own env always wins and carries no flag: the set's `false` no longer applies.
+    expect(r.secrets).toContain('own-region-value');
+    expect(r.secrets).toContain('own-token-val');
+    expect(r.secrets).not.toContain('8080');
+    expect(r.secrets).not.toContain('production');
   });
 });

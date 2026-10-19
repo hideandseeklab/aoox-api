@@ -203,7 +203,7 @@ export class DatabaseCompanionService {
     const c = await this.docker.findContainerByName(
       companionContainerName(db.slug),
     );
-    if (c) await this.docker.engine.removeContainer(c.Id, true);
+    if (c) await this.docker.engine.removeContainer(c.Id, true, true);
     await this.repo.delete(row.id);
   }
 
@@ -222,7 +222,9 @@ export class DatabaseCompanionService {
     await this.docker.ensureImage(image);
     await this.docker.ensureNetwork(APP_NETWORK);
     const existing = await this.docker.findContainerByName(name);
-    if (existing) await this.docker.engine.removeContainer(existing.Id, true);
+    if (existing) {
+      await this.docker.engine.removeContainer(existing.Id, true, true);
+    }
 
     const domains = row.host ? [{ host: row.host, https: row.https }] : [];
     const id = await this.docker.engine.createContainer(

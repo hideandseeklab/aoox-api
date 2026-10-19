@@ -1,4 +1,5 @@
 import { ConflictException, Injectable, Logger } from '@nestjs/common';
+import { envTextValuesToRedact, Redactor } from './log-redaction';
 import { In } from 'typeorm';
 import { hostPortBinding } from '../docker/host-port-bind';
 import { startWithPortRetry } from '../docker/start-with-port-retry';
@@ -209,6 +210,9 @@ export class DeploymentRunnerService {
     const imageRef = `${imageName}:${opts.tag}`;
 
     if (!app.gitUrl) throw new Error('Application has no git repository');
+    // Build args are literal and reach the build output (an `echo $ARG`, a
+    // failing script that prints its environment): mask them like env values.
+    for (const v of envTextValuesToRedact(app.buildArgs)) log.redact(v);
     // Credentials live only in this local; the daemon strips userinfo from
     // its own error messages, and the log redacts the token defensively.
     let remote: string = app.gitUrl;
@@ -834,7 +838,7 @@ export interface BuildLog {
 export class DeploymentLog implements BuildLog {
   private buffer = '';
   private lastFlush = 0;
-  private secrets: string[] = [];
+  private readonly redactor = new Redactor();
 
   constructor(
     private readonly deployment: Deployment,
@@ -844,13 +848,12 @@ export class DeploymentLog implements BuildLog {
 
   /** Registers a secret that must never appear in persisted or streamed logs. */
   redact(secret: string): void {
-    if (secret) this.secrets.push(secret, encodeURIComponent(secret));
+    this.redactor.add(secret);
   }
 
   /** Appends text: emitted live immediately, persisted in batches. */
   private append(raw: string): void {
-    let chunk = raw;
-    for (const s of this.secrets) chunk = chunk.split(s).join('***');
+    const chunk = this.redactor.apply(raw);
     this.buffer += chunk;
     this.events.emitLog({
       deploymentId: this.deployment.id,
@@ -908,11 +911,8 @@ export class DeploymentLog implements BuildLog {
     line: string,
     errorMessage: string | null = null,
   ): Promise<void> {
-    let redactedError = errorMessage;
-    for (const s of this.secrets) {
-      redactedError = redactedError?.split(s).join('***') ?? null;
-    }
-    this.deployment.errorMessage = redactedError;
+    this.deployment.errorMessage =
+      errorMessage === null ? null : this.redactor.apply(errorMessage);
     this.deployment.finishedAt = new Date();
     this.append(`\n${line}\n`);
     // Persist before announcing the terminal status so subscribers that

@@ -1,4 +1,5 @@
 import { composeHostPrefix } from '../docker/host-port-bind';
+import { Redactor } from '../application/log-redaction';
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -142,10 +143,12 @@ export class ComposeRunnerService {
     let log = '';
     let lastFlush = 0;
     let exitCode: number | null = null;
+    // `secrets` grows while the plan is built (env values, git token), so
+    // the redactor is re-synced on every use.
+    const redactor = new Redactor();
     const redact = (text: string) => {
-      let out = text;
-      for (const s of secrets) out = out.split(s).join('***');
-      return out;
+      redactor.addAll(secrets);
+      return redactor.apply(text);
     };
     // Live output goes to the run row only; `ComposeApp.logs` is written
     // once at the end, so a chatty build does not double the write rate

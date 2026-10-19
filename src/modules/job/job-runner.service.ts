@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { Redactor, envValuesToRedact } from '../application/log-redaction';
 import { ConfigService } from '@nestjs/config';
 import {
   ApplicationService,
@@ -35,6 +36,8 @@ interface JobContext {
   findContainer: () => Promise<{ Id: string; State: string } | null>;
   /** Secret values resolved for the one-off container; masked in the stored output. */
   redact?: string[];
+  /** Also mask the running container's own env in an exec (compose services: no resolver to ask). */
+  redactContainerEnv?: boolean;
   runSpec: () => Promise<
     Pick<ContainerCreateBody, 'Image' | 'Env'> & {
       HostConfig: NonNullable<ContainerCreateBody['HostConfig']>;
@@ -113,18 +116,20 @@ export class JobRunnerService {
     let status: JobRunStatus = 'failed';
     let exitCode: number | null = null;
     let output = '';
+    const redactor = new Redactor();
     try {
       const ctx = await this.resolve(job);
+      redactor.addAll(ctx.redact ?? []);
       const startedAt = Date.now();
       const result =
         job.target === 'container'
           ? await this.execInContainer(ctx, job)
           : await this.runOnce(ctx, job);
+      // `run` resolves its spec while it executes: pick up what it added.
+      redactor.addAll(ctx.redact ?? []);
       exitCode = result.code;
       output = result.output;
-      for (const secret of ctx.redact ?? []) {
-        if (secret) output = output.split(secret).join('***');
-      }
+      output = redactor.apply(output);
       status =
         result.timedOut ||
         isTimeoutExit(exitCode, Date.now() - startedAt, job.timeoutSeconds)
@@ -133,7 +138,7 @@ export class JobRunnerService {
             ? 'success'
             : 'failed';
     } catch (err) {
-      output = err instanceof Error ? err.message : String(err);
+      output = redactor.apply(err instanceof Error ? err.message : String(err));
     }
     if (output.length > OUTPUT_CAP) {
       output = `${output.slice(0, OUTPUT_CAP)}\n… (output truncated)`;
@@ -166,6 +171,21 @@ export class JobRunnerService {
       });
       const docker = await this.remote.forServer(app.serverId);
       const redact: string[] = [];
+      // The values the container was started with can be echoed by the
+      // command (exec) as well as by a one-off run: resolve them up front,
+      // falling back to the running container's own env when the sources
+      // cannot be resolved right now.
+      try {
+        redact.push(...(await this.envResolver.resolve(app)).secrets);
+      } catch {
+        try {
+          const c = await docker.findContainerByName(containerNameFor(app));
+          const info = c && (await docker.engine.inspectContainer(c.Id));
+          redact.push(...envValuesToRedact(info?.Config.Env ?? []));
+        } catch {
+          // nothing more to learn; the command output is stored as is
+        }
+      }
       return {
         docker,
         label: `job-${app.appName}`,
@@ -212,10 +232,14 @@ export class JobRunnerService {
       });
       const docker = await this.remote.forServer(null);
       const spec = ENGINES[db.engine];
+      // The database password reaches the command as $DB_PASSWORD (run) and
+      // as the image's own env (exec).
+      const redact = [await this.databases.password(db)];
       return {
         docker,
         label: `job-db-${db.slug}`,
         ownerLabels: { 'aoox.database': db.id },
+        redact,
         findContainer: () => docker.findContainerByName(containerNameForDb(db)),
         runSpec: async () => ({
           Image: `${spec.image}:${db.imageTag}`,
@@ -236,6 +260,7 @@ export class JobRunnerService {
       });
       const docker = await this.remote.forServer(null);
       if (!job.service) throw new Error('Compose job needs a service');
+      const redact: string[] = [];
       const findContainer = async () => {
         const list = await docker.engine.listContainers({
           label: [
@@ -249,6 +274,8 @@ export class JobRunnerService {
         docker,
         label: `job-${stack.slug}`,
         ownerLabels: { 'aoox.compose': stack.id },
+        redact,
+        redactContainerEnv: true,
         findContainer,
         runSpec: async () => {
           const c = await findContainer();
@@ -258,6 +285,7 @@ export class JobRunnerService {
               `Service ${job.service} has no container (deploy the stack first)`,
             );
           }
+          redact.push(...envValuesToRedact(info.Config.Env ?? []));
           return {
             Image: info.Config.Image,
             Env: info.Config.Env ?? [],
@@ -276,6 +304,10 @@ export class JobRunnerService {
     const c = await ctx.findContainer();
     if (!c || c.State !== 'running') {
       throw new Error('Container is not running');
+    }
+    if (ctx.redactContainerEnv) {
+      const info = await ctx.docker.engine.inspectContainer(c.Id);
+      ctx.redact?.push(...envValuesToRedact(info?.Config.Env ?? []));
     }
     const exec = ctx.docker.engine.execWithCode(c.Id, {
       Cmd: shellCommand(job.command, job.timeoutSeconds),

@@ -599,6 +599,24 @@ describe('DeploymentRunnerService', () => {
     expect(d.logs).toContain('(authenticated)');
   });
 
+  it('masks build arg values in the build output and error', async () => {
+    engine.buildFromGit.mockRejectedValueOnce(
+      new Error(
+        'RUN echo $API_URL failed: https://api.internal/x?k=bld-arg-value',
+      ),
+    );
+    const a = {
+      ...app(),
+      buildArgs: 'API_URL=https://api.internal\nTOKEN_X=bld-arg-value\nN=42',
+    };
+    const d = await runAndWait(deployment(), a);
+    expect(d.status).toBe('failed');
+    expect(d.logs).not.toContain('bld-arg-value');
+    expect(d.logs).not.toContain('https://api.internal');
+    expect(d.errorMessage).not.toContain('bld-arg-value');
+    expect(d.errorMessage).toContain('RUN echo $API_URL failed');
+  });
+
   it('deploys to a remote server on its own daemon, without a registry push, routed by the server proxy', async () => {
     registries.findSelfHosted.mockResolvedValueOnce(null); // no registry needed remotely
     const d = await runAndWait(deployment(), {

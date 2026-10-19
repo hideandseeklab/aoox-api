@@ -15,6 +15,7 @@ describe('DeleteProjectService', () => {
       failStack?: string;
       busyStack?: boolean;
       notAdmin?: boolean;
+      startingDb?: boolean;
     } = {},
   ) => {
     calls.length = 0;
@@ -24,7 +25,15 @@ describe('DeleteProjectService', () => {
       { id: 'a1', name: 'one' },
       { id: 'a2', name: 'two' },
     ];
-    const dbs = [{ id: 'd1', name: 'db', slug: 'db-1', engine: 'postgres' }];
+    const dbs = [
+      {
+        id: 'd1',
+        name: 'db',
+        slug: 'db-1',
+        engine: 'postgres',
+        status: opts.startingDb ? 'creating' : 'running',
+      },
+    ];
     const projectRepo = {
       remove: jest.fn(() => {
         calls.push('project.remove');
@@ -111,6 +120,17 @@ describe('DeleteProjectService', () => {
     );
     return { svc, projectRepo, removeVolume };
   };
+
+  it('answers 409 naming a database that is still starting, touching nothing', async () => {
+    const t = build({ startingDb: true });
+    await expect(t.svc.execute('u', 'p1')).rejects.toThrow(
+      /database "db" is still starting/,
+    );
+    await expect(t.svc.execute('u', 'p1')).rejects.toBeInstanceOf(
+      ConflictException,
+    );
+    expect(calls).toEqual([]);
+  });
 
   it('tears down stacks, apps, databases and then the project row, keeping volumes', async () => {
     const t = build();

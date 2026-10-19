@@ -1,4 +1,9 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  NotFoundException,
+  OnApplicationBootstrap,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -35,6 +40,16 @@ export function volumeNameForDb(db: ManagedDatabase): string {
   return `aoox_db_${db.slug.replace(/-/g, '_')}`;
 }
 
+const INTERRUPTED_MESSAGE =
+  'Provisioning was interrupted by an API restart. Delete this database and create it again.';
+
+/** The row disappeared while the detached provision was still running. */
+export class DatabaseDeletedError extends Error {
+  constructor(slug: string) {
+    super(`Database ${slug} was deleted while it was starting`);
+  }
+}
+
 export interface DatabaseConnection {
   username: string;
   password: string;
@@ -52,7 +67,7 @@ export interface DatabaseConnection {
 }
 
 @Injectable()
-export class ManagedDatabaseService {
+export class ManagedDatabaseService implements OnApplicationBootstrap {
   private readonly logger = new Logger(ManagedDatabaseService.name);
   private readonly key: string;
 
@@ -67,6 +82,31 @@ export class ManagedDatabaseService {
     private readonly access: ProjectAccessService,
   ) {
     this.key = config.getOrThrow<string>('ENCRYPTION_KEY');
+  }
+
+  /**
+   * Provisioning runs detached inside this process, so a row still
+   * `creating` at boot was interrupted by a restart: nothing will ever move
+   * it on. It is not resumed (a half-initialised data directory is never
+   * repaired); it goes to `error` with a message, which can be deleted
+   * (deleting is refused while `creating`).
+   */
+  async onApplicationBootstrap(): Promise<void> {
+    try {
+      const res = await this.repo.update(
+        { status: 'creating' },
+        { status: 'error', errorMessage: INTERRUPTED_MESSAGE },
+      );
+      if (res.affected) {
+        this.logger.warn(
+          `${res.affected} database(s) were still starting when the API stopped; marked as error`,
+        );
+      }
+    } catch (err) {
+      this.logger.warn(
+        `Could not check databases left in "creating": ${String(err)}`,
+      );
+    }
   }
 
   encrypt(plain: string): string {
@@ -144,11 +184,17 @@ export class ManagedDatabaseService {
     const port = `${spec.port}/tcp`;
 
     await this.docker.ensureImage(image);
+    // The image pull can take minutes: the row may have been deleted since.
+    await this.assertRowExists(db);
     await this.docker.ensureNetwork(APP_NETWORK);
     await this.docker.engine.createVolume(volume);
 
+    // `v`: also drops the anonymous volumes the image declares and the recipe
+    // does not mount by name (named data and mount volumes are never touched).
     const existing = await this.docker.findContainerByName(name);
-    if (existing) await this.docker.engine.removeContainer(existing.Id, true);
+    if (existing) {
+      await this.docker.engine.removeContainer(existing.Id, true, true);
+    }
 
     const opts = {
       username: db.username,
@@ -195,11 +241,26 @@ export class ManagedDatabaseService {
     this.logger.log(`Database ${name} (${image}) started`);
     // `running` must mean the engine answers, not just that the container exists.
     await this.waitUntilReady(db, password);
+    try {
+      await this.assertRowExists(db);
+    } catch (err) {
+      // Deleted while starting: remove what this run created.
+      await this.docker.engine
+        .removeContainer(id, true, true)
+        .catch(() => undefined);
+      throw err;
+    }
     if (db.engine === 'postgres' && db.variant) {
       await this.activateVariantExtension(db, password);
     }
     if (db.engine === 'mongodb') {
       await this.initMongoDatabase(db, password);
+    }
+  }
+
+  private async assertRowExists(db: ManagedDatabase): Promise<void> {
+    if (!(await this.repo.exists({ where: { id: db.id } }))) {
+      throw new DatabaseDeletedError(db.slug);
     }
   }
 
@@ -357,6 +418,14 @@ export class ManagedDatabaseService {
         this.repo.update(db.id, { status: 'running', errorMessage: null }),
       )
       .catch(async (err: unknown) => {
+        if (err instanceof DatabaseDeletedError) {
+          // The first provision created the volume: nobody owns it now.
+          this.logger.warn(`${err.message}; cleaned up`);
+          await this.docker.engine
+            .removeVolume(volumeNameForDb(db))
+            .catch(() => undefined);
+          return;
+        }
         const message = err instanceof Error ? err.message : String(err);
         this.logger.error(`Provisioning ${db.slug} failed: ${message}`);
         await this.repo.update(db.id, {
@@ -372,14 +441,18 @@ export class ManagedDatabaseService {
       const admin = await this.docker.findContainerByName(
         companionContainerName(db.slug),
       );
-      if (admin) await this.docker.engine.removeContainer(admin.Id, true);
+      if (admin) {
+        await this.docker.engine.removeContainer(admin.Id, true, true);
+      }
     } catch (err) {
       this.logger.warn(
         `Could not remove the admin app of ${db.slug}: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
     const c = await this.docker.findContainerByName(containerNameForDb(db));
-    if (c) await this.docker.engine.removeContainer(c.Id, true);
+    // `v`: anonymous volumes of the image (e.g. MongoDB /data/configdb) go
+    // with the container; the named data volume only with `purge`.
+    if (c) await this.docker.engine.removeContainer(c.Id, true, true);
     if (purge) {
       await this.docker.engine
         .removeVolume(volumeNameForDb(db))

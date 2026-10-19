@@ -558,7 +558,7 @@ describe('DatabaseCompanionService', () => {
         containers: [{ Id: 'cont-1', State: 'running' }],
       });
       await service.remove(makeDb());
-      expect(engine.removeContainer).toHaveBeenCalledWith('cont-1', true);
+      expect(engine.removeContainer).toHaveBeenCalledWith('cont-1', true, true);
       expect(repo.delete).toHaveBeenCalledWith('c-1');
     });
 
