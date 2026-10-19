@@ -143,12 +143,7 @@ export class DeploymentRunnerService {
       // A failed build/push leaves the previous container untouched, so only
       // mark the app as errored when the container itself was replaced.
       if (deployment.status === 'starting') {
-        await this.persistOutcome(
-          app,
-          await this.statusAfterFailure(app),
-          undefined,
-          baseline,
-        ).catch(() => undefined);
+        await this.recordFailure(app, log, baseline);
       }
       await log.finish('failed', `ERROR: ${message}`, message);
     }
@@ -392,9 +387,7 @@ export class DeploymentRunnerService {
       );
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      await this.persistOutcome(app, await this.statusAfterFailure(app)).catch(
-        () => undefined,
-      );
+      await this.recordFailure(app, log);
       await log.finish('failed', `ERROR: ${message}`, message);
     }
   }
@@ -435,13 +428,57 @@ export class DeploymentRunnerService {
     }
   }
 
-  /** A failed swarm update rolls back and keeps serving: only `error` when nothing runs. */
+  /**
+   * Persists the application status after a deployment failed at the
+   * `starting` step and says in the deployment log what that means for the
+   * running version. Never throws.
+   */
+  private async recordFailure(
+    app: Application,
+    log: DeploymentLog,
+    baseline?: DigestBaseline,
+  ): Promise<void> {
+    const status = await this.statusAfterFailure(app);
+    await this.persistOutcome(app, status, undefined, baseline).catch(
+      () => undefined,
+    );
+    await log
+      .note(
+        status === 'running'
+          ? 'The previous version is still serving; the application stays running.'
+          : 'No container is serving: the previous container was already replaced and the new one failed. The application is marked as errored; fix the problem and deploy again.',
+      )
+      .catch(() => undefined);
+  }
+
+  /**
+   * Status after a failed start, decided from what the daemon reports:
+   * `running` only when something healthy still answers under the
+   * application's name (blue/green keeps the old container; a failed swarm
+   * update rolls back), otherwise `error`. A container that is not running,
+   * or whose health check is failing or unfinished, is the new one that did
+   * not come up (a plain replace removed the old one before creating it).
+   */
   private async statusAfterFailure(
     app: Application,
   ): Promise<ApplicationStatus> {
-    if (app.deployMode !== 'service') return 'error';
-    const svc = await this.swarmDeploy.status(app).catch(() => null);
-    return svc && svc.running > 0 ? 'running' : 'error';
+    if (app.deployMode === 'service') {
+      const svc = await this.swarmDeploy.status(app).catch(() => null);
+      return svc && svc.running > 0 ? 'running' : 'error';
+    }
+    try {
+      const docker = await this.remote.forServer(app.serverId);
+      const found = await docker.findContainerByName(containerNameFor(app));
+      if (!found) return 'error';
+      const info = await docker.engine.inspectContainer(found.Id);
+      if (!info?.State.Running) return 'error';
+      const health = info.State.Health?.Status;
+      return health === 'unhealthy' || health === 'starting'
+        ? 'error'
+        : 'running';
+    } catch {
+      return 'error';
+    }
   }
 
   /**

@@ -212,6 +212,35 @@ describe('ImageUpdateWatcherService version tags', () => {
     expect(queue).not.toHaveBeenCalled();
   });
 
+  it('after a followed tag failed to start (app stays running) it is not retried, and the next good tag is followed', async () => {
+    // State left by the failed follow: imageRef = broken tag, the runner stored
+    // the broken image's digest as baseline, autoUpdateLastTag = broken tag.
+    const failed = semverApp({
+      imageRef: 'localhost:5077/demo:0.1.1',
+      imageDigest: 'sha256:broken',
+      autoUpdateFollowTags: true,
+      autoUpdateLastTag: '0.1.1',
+      status: 'running',
+    });
+    const same = build(
+      () => Promise.resolve('sha256:broken'),
+      () => Promise.resolve(['0.1.0', '0.1.1']),
+    );
+    for (let i = 0; i < 3; i++) {
+      const r = await same.service.check(failed, true, { follow: true });
+      expect(r).toMatchObject({ switchedTo: null, deploymentId: null });
+    }
+    expect(same.queue).not.toHaveBeenCalled();
+
+    const later = build(
+      () => Promise.resolve('sha256:broken'),
+      () => Promise.resolve(['0.1.0', '0.1.1', '0.1.2']),
+    );
+    const r = await later.service.check(failed, true, { follow: true });
+    expect(r.switchedTo).toBe('0.1.2');
+    expect(later.queue).toHaveBeenCalledTimes(1);
+  });
+
   it('skips while a deployment is active and leaves imageRef alone', async () => {
     const { service, update, queue } = build(
       () => Promise.resolve('sha256:old'),

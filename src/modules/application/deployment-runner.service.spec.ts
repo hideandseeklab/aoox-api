@@ -430,8 +430,13 @@ describe('DeploymentRunnerService', () => {
       docker.findContainerByName.mockImplementation((n: string) =>
         Promise.resolve(n === 'aoox-app-web-abc123' ? { Id: 'old' } : null),
       );
-      engine.inspectContainer.mockResolvedValue(
-        healthy('unhealthy', 'connection refused'),
+      // The new container ('cid') fails; the old one keeps answering.
+      engine.inspectContainer.mockImplementation((id: string) =>
+        Promise.resolve(
+          id === 'old'
+            ? healthy('healthy')
+            : healthy('unhealthy', 'connection refused'),
+        ),
       );
       const a = {
         ...app(),
@@ -441,9 +446,47 @@ describe('DeploymentRunnerService', () => {
       const d = await runAndWait(deployment(), a);
       expect(d.status).toBe('failed');
       expect(d.errorMessage).toContain('connection refused');
+      // The old version still serves: the app stays running (so the watchers
+      // keep scanning it) and the log says so.
+      expect(a.status).toBe('running');
+      expect(dbRow.status).toBe('running');
+      expect(d.logs).toContain('previous version is still serving');
       expect(engine.removeContainer).toHaveBeenCalledWith('cid', true);
       expect(engine.removeContainer).not.toHaveBeenCalledWith('old', true);
       expect(engine.renameContainer).not.toHaveBeenCalled();
+      docker.findContainerByName.mockResolvedValue(null);
+      engine.inspectContainer.mockReset();
+    });
+
+    it('marks the app errored when a plain replace leaves an unhealthy new container', async () => {
+      // Host port: no blue/green, the old container was removed first and the
+      // new one (same name) is up but failing its probe.
+      docker.findContainerByName.mockResolvedValue({ Id: 'cid' });
+      engine.inspectContainer.mockResolvedValue(
+        healthy('unhealthy', 'connection refused'),
+      );
+      const a = { ...app(), healthcheckPath: '/health' } as Application;
+      const d = await runAndWait(deployment(), a);
+      expect(d.status).toBe('failed');
+      expect(a.status).toBe('error');
+      expect(dbRow.status).toBe('error');
+      expect(d.logs).toContain('No container is serving');
+      docker.findContainerByName.mockResolvedValue(null);
+      engine.inspectContainer.mockReset();
+    });
+
+    it('keeps the app running when the failure happens before the old container is touched', async () => {
+      // e.g. an env reference that no longer resolves: the old one still runs.
+      docker.findContainerByName.mockResolvedValue({ Id: 'old' });
+      engine.inspectContainer.mockResolvedValue({
+        State: { Running: true, ExitCode: 0 },
+      });
+      envResolve.mockRejectedValueOnce(new Error('unknown reference'));
+      const a = { ...app(), hostPort: null } as Application;
+      const d = await runAndWait(deployment(), a);
+      expect(d.status).toBe('failed');
+      expect(a.status).toBe('running');
+      expect(engine.removeContainer).not.toHaveBeenCalled();
       docker.findContainerByName.mockResolvedValue(null);
       engine.inspectContainer.mockReset();
     });
