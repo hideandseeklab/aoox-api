@@ -1,8 +1,8 @@
-import { ConflictException } from '@nestjs/common';
+import { BadRequestException, ConflictException } from '@nestjs/common';
 import { DatabaseMountController } from './database-mount.controller';
 
 function build(status: string) {
-  const db = { id: 'db1', status, project: {} };
+  const db = { id: 'db1', status, engine: 'redis', project: {} };
   const mounts = {
     find: jest.fn().mockResolvedValue([]),
     findOne: jest.fn().mockResolvedValue({ id: 'm1', type: 'volume' }),
@@ -14,7 +14,7 @@ function build(status: string) {
     findOwnedOrFail: jest.fn().mockResolvedValue(db),
     mounts,
     password: jest.fn().mockResolvedValue('pw'),
-    provision: jest.fn(),
+    reprovision: jest.fn(),
   };
   const ctrl = new DatabaseMountController(
     databases as never,
@@ -45,7 +45,7 @@ describe('DatabaseMountController while the database is starting', () => {
     );
     expect(mounts.save).not.toHaveBeenCalled();
     expect(mounts.remove).not.toHaveBeenCalled();
-    expect(databases.provision).not.toHaveBeenCalled();
+    expect(databases.reprovision).not.toHaveBeenCalled();
   });
 
   it('re-provisions once the database is running', async () => {
@@ -56,10 +56,36 @@ describe('DatabaseMountController while the database is starting', () => {
       name: 'x',
       containerPath: '/x',
     } as never);
-    expect(databases.provision).toHaveBeenCalledTimes(1);
+    expect(databases.reprovision).toHaveBeenCalledTimes(1);
   });
 });
 
 function mockAdd(databases: { mounts: { findOne: jest.Mock } }) {
   databases.mounts.findOne.mockResolvedValue(null);
 }
+
+describe('DatabaseMountController data path guard', () => {
+  it('answers 400 for a mount on the data path on add and update, saving nothing', async () => {
+    const { ctrl, databases, mounts } = build('running');
+    mockAdd(databases);
+    await expect(
+      ctrl.add(user, { id: 'db1' }, {
+        type: 'volume',
+        name: 'x',
+        containerPath: '/data/',
+      } as never),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    mounts.findOne.mockResolvedValue({ id: 'm1', type: 'volume' });
+    await expect(
+      ctrl.update(
+        user,
+        { id: 'db1', mountId: 'm1' },
+        {
+          containerPath: '/data/sub',
+        },
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(mounts.save).not.toHaveBeenCalled();
+    expect(databases.reprovision).not.toHaveBeenCalled();
+  });
+});

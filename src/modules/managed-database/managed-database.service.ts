@@ -1,5 +1,7 @@
 import {
+  BadGatewayException,
   ConflictException,
+  HttpException,
   Injectable,
   Logger,
   NotFoundException,
@@ -182,8 +184,49 @@ export class ManagedDatabaseService implements OnApplicationBootstrap {
     };
   }
 
+  /**
+   * Synchronous re-provision for the mount and limit routes. Runs `provision`
+   * and, for a `stopped` database, stops the container again. Failures become
+   * readable HTTP errors (502 with the real message); an existing HttpException
+   * (the PostgreSQL layout 409) passes unchanged. Once the old container was
+   * touched, the row goes to `error` with the message, as the background path
+   * does; a refusal before that point leaves the row alone.
+   */
+  async reprovision(db: ManagedDatabase, password: string): Promise<void> {
+    const state = { touched: false };
+    try {
+      await this.provisionWith(db, password, state);
+      if (db.status === 'stopped') {
+        const c = await this.docker.findContainerByName(containerNameForDb(db));
+        if (c) await this.docker.engine.stopContainer(c.Id);
+      }
+    } catch (err) {
+      if (err instanceof DatabaseDeletedError) {
+        throw new NotFoundException('Database not found');
+      }
+      const message = err instanceof Error ? err.message : String(err);
+      if (state.touched) {
+        this.logger.error(`Re-provisioning ${db.slug} failed: ${message}`);
+        await this.repo
+          .update(db.id, { status: 'error', errorMessage: message })
+          .catch(() => undefined);
+      }
+      if (err instanceof HttpException) throw err;
+      throw new BadGatewayException(message);
+    }
+  }
+
   /** Pulls the image, creates the volume and starts the container. Async caller. */
-  async provision(db: ManagedDatabase, password: string): Promise<void> {
+  provision(db: ManagedDatabase, password: string): Promise<void> {
+    return this.provisionWith(db, password, { touched: false });
+  }
+
+  /** `state.touched` flips once the old container is about to be removed. */
+  private async provisionWith(
+    db: ManagedDatabase,
+    password: string,
+    state: { touched: boolean },
+  ): Promise<void> {
     const spec = ENGINES[db.engine];
     const image = `${imageNameFor(db.engine, db.variant)}:${db.imageTag}`;
     const name = containerNameForDb(db);
@@ -200,6 +243,7 @@ export class ManagedDatabaseService implements OnApplicationBootstrap {
     // `v`: also drops the anonymous volumes the image declares and the recipe
     // does not mount by name (named data and mount volumes are never touched).
     const existing = await this.docker.findContainerByName(name);
+    state.touched = true;
     if (existing) {
       await this.docker.engine.removeContainer(existing.Id, true, true);
     }

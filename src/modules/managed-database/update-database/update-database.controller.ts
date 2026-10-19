@@ -45,7 +45,7 @@ export class UpdateDatabaseController {
     const c = await this.docker.findContainerByName(containerNameForDb(db));
     if (c && changed) {
       if (limitsRemoved(before, saved)) {
-        await this.databases.provision(
+        await this.databases.reprovision(
           saved,
           await this.databases.password(saved),
         );

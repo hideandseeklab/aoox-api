@@ -32,10 +32,8 @@ import { ProjectAccessService } from '../project/project-access.service';
 import { DatabaseParamsDto } from '../managed-database/get-database/get-database.dto';
 import { assertNotStarting } from '../managed-database/database-starting';
 import { ManagedDatabase } from '../managed-database/managed-database.entity';
-import {
-  containerNameForDb,
-  ManagedDatabaseService,
-} from '../managed-database/managed-database.service';
+import { ManagedDatabaseService } from '../managed-database/managed-database.service';
+import { assertMountPathAllowed } from '../managed-database/mount-path';
 
 class DatabaseMountParamsDto {
   @IsUUID()
@@ -88,6 +86,7 @@ export class DatabaseMountController {
     const db = await this.databases.findOwnedOrFail(params.id, user.sub);
     assertNotStarting(db);
     const fields = mountFields(dto, user.role);
+    assertMountPathAllowed(db.engine, fields.containerPath);
     if (
       await this.databases.mounts.findOne({
         where: { databaseId: db.id, containerPath: fields.containerPath },
@@ -113,6 +112,7 @@ export class DatabaseMountController {
     const mount = await this.find(db, params.mountId);
     if (dto.containerPath !== undefined) {
       const containerPath = normalizePath(dto.containerPath);
+      assertMountPathAllowed(db.engine, containerPath);
       const clash = await this.databases.mounts.findOne({
         where: { databaseId: db.id, containerPath },
       });
@@ -169,10 +169,6 @@ export class DatabaseMountController {
   private async apply(db: ManagedDatabase): Promise<void> {
     if (db.status !== 'running' && db.status !== 'stopped') return;
     const password = await this.databases.password(db);
-    await this.databases.provision(db, password);
-    if (db.status === 'stopped') {
-      const c = await this.docker.findContainerByName(containerNameForDb(db));
-      if (c) await this.docker.engine.stopContainer(c.Id);
-    }
+    await this.databases.reprovision(db, password);
   }
 }

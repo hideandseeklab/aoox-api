@@ -1,3 +1,4 @@
+import { BadGatewayException, ConflictException } from '@nestjs/common';
 import { ManagedDatabaseService } from './managed-database.service';
 import { DockerEngineError } from '../docker/docker-engine.client';
 import type { ManagedDatabase } from './managed-database.entity';
@@ -244,5 +245,66 @@ describe('ManagedDatabaseService lifecycle', () => {
         ) as string,
       }),
     );
+  });
+});
+
+describe('ManagedDatabaseService.reprovision', () => {
+  const pg18 = {
+    Config: {
+      Volumes: { '/var/lib/postgresql': {} },
+      Env: ['PGDATA=/var/lib/postgresql/18/docker'],
+    },
+  };
+
+  it('maps a readiness failure to 502 with the message and sets the row to error', async () => {
+    const { svc, update } = build({ readyCode: 1 });
+    const err = await svc.reprovision(db, 'pw').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(BadGatewayException);
+    expect((err as Error).message).toMatch(/did not become ready/);
+    expect(update).toHaveBeenCalledWith('db1', {
+      status: 'error',
+      errorMessage: expect.stringMatching(/did not become ready/) as string,
+    });
+  });
+
+  it('keeps the 409 layout guard unchanged and leaves the row alone', async () => {
+    const { svc, update } = build({ image: pg18, legacyData: true });
+    await expect(svc.reprovision(db, 'pw')).rejects.toBeInstanceOf(
+      ConflictException,
+    );
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('maps a Docker failure before anything was touched to 502 without writing error', async () => {
+    const { svc, update, docker } = build();
+    docker.ensureImage.mockRejectedValueOnce(new Error('pull failed'));
+    await expect(svc.reprovision(db, 'pw')).rejects.toBeInstanceOf(
+      BadGatewayException,
+    );
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('writes error when create fails after the old container was removed', async () => {
+    const { svc, update, docker, engine } = build();
+    docker.findContainerByName.mockResolvedValue({ Id: 'old' } as never);
+    engine.createContainer.mockRejectedValueOnce(new Error('no space'));
+    await expect(svc.reprovision(db, 'pw')).rejects.toBeInstanceOf(
+      BadGatewayException,
+    );
+    expect(update).toHaveBeenCalledWith('db1', {
+      status: 'error',
+      errorMessage: 'no space',
+    });
+  });
+
+  it('stops a stopped database again on success and does not touch the row', async () => {
+    const { svc, update, docker, engine } = build();
+    const stopContainer = jest.fn(() => Promise.resolve());
+    (engine as unknown as Record<string, unknown>).stopContainer =
+      stopContainer;
+    docker.findContainerByName.mockResolvedValue({ Id: 'c' } as never);
+    await svc.reprovision({ ...db, status: 'stopped' } as never, 'pw');
+    expect(stopContainer).toHaveBeenCalledWith('c');
+    expect(update).not.toHaveBeenCalled();
   });
 });
