@@ -6,6 +6,7 @@ import { DockerService } from '../../docker/docker.service';
 import { limitsRemoved, resourceLimits } from '../../docker/resource-limits';
 import { DatabaseParamsDto } from '../get-database/get-database.dto';
 import { UpdateDatabaseDto } from './update-database.dto';
+import { assertNotStarting } from '../database-starting';
 import { ManagedDatabase } from '../managed-database.entity';
 import {
   containerNameForDb,
@@ -33,6 +34,7 @@ export class UpdateDatabaseController {
     @Body() dto: UpdateDatabaseDto,
   ): Promise<ManagedDatabase> {
     const db = await this.databases.findOwnedOrFail(params.id, user.sub);
+    assertNotStarting(db);
     const before = { cpuMillicores: db.cpuMillicores, memoryMb: db.memoryMb };
     if (dto.cpuMillicores !== undefined) db.cpuMillicores = dto.cpuMillicores;
     if (dto.memoryMb !== undefined) db.memoryMb = dto.memoryMb;

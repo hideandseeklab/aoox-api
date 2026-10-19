@@ -1,4 +1,5 @@
 import { IsUUID } from 'class-validator';
+import { type WithEnvHidden } from '../../project/env-visibility';
 import { Application } from '../application.entity';
 
 export class ListApplicationsQueryDto {
@@ -13,6 +14,6 @@ export class ApplicationListDomainDto {
 }
 
 /** An application plus its domains (for the "where do I open it" link). */
-export type ApplicationListItemDto = Application & {
+export type ApplicationListItemDto = WithEnvHidden<Application> & {
   domains: ApplicationListDomainDto[];
 };

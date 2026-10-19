@@ -12,9 +12,12 @@ import {
   secretSourceView,
 } from '../secret-source/secret-source-view';
 import type { LinkView } from '../../variable-set/variable-set-link.service';
+import { hideEnv, type WithEnvHidden } from '../../project/env-visibility';
 import { OwnerVariableSetsService } from '../variable-set-links/variable-set-links.service';
 
-export interface ApplicationDetail extends Application {
+export type ApplicationDetail = WithEnvHidden<Application> & ApplicationExtras;
+
+interface ApplicationExtras {
   /** Live container state from Docker, or null when no container exists. */
   container: { id: string; state: string; status: string } | null;
   /** Swarm service (deployMode 'service'), or null. */
@@ -47,6 +50,8 @@ export class GetApplicationService {
   async execute(ownerId: string, id: string): Promise<ApplicationDetail> {
     const app = await this.applications.findOwnedOrFail(id, ownerId);
     const projectRole = (await this.access.roleFor(ownerId, app.project))!;
+    // Viewers get no env or build args (see env-visibility.ts).
+    const shown = hideEnv(app, projectRole !== 'viewer');
     const secretSource = secretSourceView(
       app,
       app.secretConnectionId
@@ -80,7 +85,7 @@ export class GetApplicationService {
         : null;
       const exposedPorts = await this.exposedPortsOf(app);
       return {
-        ...app,
+        ...shown,
         container,
         service,
         projectRole,
@@ -97,7 +102,7 @@ export class GetApplicationService {
         : Promise.resolve(null),
     ]);
     return {
-      ...app,
+      ...shown,
       container: c ? { id: c.Id, state: c.State, status: c.Status } : null,
       service: null,
       projectRole,

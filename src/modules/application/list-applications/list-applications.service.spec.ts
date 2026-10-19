@@ -5,13 +5,20 @@ import type { ApplicationService } from '../application.service';
 import type { Domain } from '../domain.entity';
 import { ListApplicationsService } from './list-applications.service';
 
-function setup(apps: Partial<Application>[], domains: Partial<Domain>[]) {
+function setup(
+  apps: Partial<Application>[],
+  domains: Partial<Domain>[],
+  canRead = true,
+) {
   const appFind = jest.fn().mockResolvedValue(apps);
   const domainFind = jest.fn().mockResolvedValue(domains);
   const findOwnedOrFail = jest.fn().mockResolvedValue({});
   const service = new ListApplicationsService(
     { repo: { find: appFind } } as unknown as ApplicationService,
-    { findOwnedOrFail } as unknown as ProjectService,
+    {
+      findOwnedOrFail,
+      access: { canReadSecrets: jest.fn().mockResolvedValue(canRead) },
+    } as unknown as ProjectService,
     { find: domainFind } as unknown as Repository<Domain>,
   );
   return { service, appFind, domainFind, findOwnedOrFail };
@@ -44,5 +51,21 @@ describe('ListApplicationsService', () => {
     const { service, domainFind } = setup([], []);
     expect(await service.execute('user', 'project')).toEqual([]);
     expect(domainFind).not.toHaveBeenCalled();
+  });
+
+  it('hides env and build args from viewers, keeps them for developers', async () => {
+    const apps = [{ id: 'a1', env: 'TOKEN=x', buildArgs: 'B=1' }];
+    const viewer = await setup(apps, [], false).service.execute('u', 'p');
+    expect(viewer[0]).toMatchObject({
+      env: null,
+      buildArgs: null,
+      envHidden: true,
+    });
+    const dev = await setup(apps, [], true).service.execute('u', 'p');
+    expect(dev[0]).toMatchObject({
+      env: 'TOKEN=x',
+      buildArgs: 'B=1',
+      envHidden: false,
+    });
   });
 });

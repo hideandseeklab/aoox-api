@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
+import { hideEnv } from '../../project/env-visibility';
 import { ProjectService } from '../../project/project.service';
 import { ApplicationService } from '../application.service';
 import { Domain } from '../domain.entity';
@@ -18,7 +19,8 @@ export class ListApplicationsService {
     ownerId: string,
     projectId: string,
   ): Promise<ApplicationListItemDto[]> {
-    await this.projects.findOwnedOrFail(projectId, ownerId);
+    const project = await this.projects.findOwnedOrFail(projectId, ownerId);
+    const canRead = await this.projects.access.canReadSecrets(ownerId, project);
     const apps = await this.applications.repo.find({
       where: { projectId },
       order: { createdAt: 'DESC' },
@@ -36,6 +38,9 @@ export class ListApplicationsService {
       list.push({ host: d.host, https: d.https });
       byApp.set(d.applicationId, list);
     }
-    return apps.map((app) => ({ ...app, domains: byApp.get(app.id) ?? [] }));
+    return apps.map((app) => ({
+      ...hideEnv(app, canRead),
+      domains: byApp.get(app.id) ?? [],
+    }));
   }
 }

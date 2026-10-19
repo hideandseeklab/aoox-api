@@ -6,12 +6,15 @@ import { ProjectAccessService } from '../../project/project-access.service';
 import type { ProjectRole } from '../../project/project-member.entity';
 import { ComposeAppParamsDto } from '../compose-app.dto';
 import { ComposeApp } from '../compose-app.entity';
+import { hideEnv, type WithEnvHidden } from '../../project/env-visibility';
 import { ComposeRunnerService } from '../compose-runner.service';
 import { ComposeContainer, ComposeService } from '../compose.service';
 import { OwnerVariableSetsService } from '../../application/variable-set-links/variable-set-links.service';
 import type { LinkView } from '../../variable-set/variable-set-link.service';
 
-export interface ComposeAppDetail extends ComposeApp {
+export type ComposeAppDetail = WithEnvHidden<ComposeApp> & ComposeAppExtras;
+
+interface ComposeAppExtras {
   /** Live containers of the stack (empty when never deployed / torn down). */
   containers: ComposeContainer[];
   /** Id of the run whose output `logs` carries, for the history view. */
@@ -54,7 +57,7 @@ export class GetComposeAppController {
       ),
     ]);
     return {
-      ...app,
+      ...hideEnv(app, projectRole !== null && projectRole !== 'viewer'),
       logs: latest?.status === 'running' ? latest.logs : app.logs,
       containers,
       deploymentId: latest?.id ?? null,

@@ -10,6 +10,7 @@ import { CurrentUser } from '../../auth/current-user.decorator';
 import { JwtAuthGuard } from '../../auth/jwt-auth.guard';
 import type { JwtPayload } from '../../auth/jwt.strategy';
 import { DatabaseParamsDto } from '../../managed-database/get-database/get-database.dto';
+import { assertNotStarting } from '../../managed-database/database-starting';
 import { ManagedDatabaseService } from '../../managed-database/managed-database.service';
 import { DatabaseBackup } from '../database-backup.entity';
 import { DatabaseBackupService } from '../database-backup.service';
@@ -30,6 +31,7 @@ export class CreateBackupController {
     @Param() params: DatabaseParamsDto,
   ): Promise<DatabaseBackup> {
     const db = await this.databases.findOwnedOrFail(params.id, user.sub);
+    assertNotStarting(db);
     return this.backups.backup(db, 'manual');
   }
 }

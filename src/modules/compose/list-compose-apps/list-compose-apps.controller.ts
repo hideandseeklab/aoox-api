@@ -4,6 +4,7 @@ import { CurrentUser } from '../../auth/current-user.decorator';
 import { JwtAuthGuard } from '../../auth/jwt-auth.guard';
 import type { JwtPayload } from '../../auth/jwt.strategy';
 import { ProjectService } from '../../project/project.service';
+import { hideEnv, type WithEnvHidden } from '../../project/env-visibility';
 import { ComposeApp } from '../compose-app.entity';
 import { ComposeService } from '../compose.service';
 
@@ -25,14 +26,21 @@ export class ListComposeAppsController {
   async list(
     @CurrentUser() user: JwtPayload,
     @Query() query: ListComposeAppsQueryDto,
-  ): Promise<Omit<ComposeApp, 'logs'>[]> {
-    await this.projects.findOwnedOrFail(query.projectId, user.sub);
+  ): Promise<Omit<WithEnvHidden<ComposeApp>, 'logs'>[]> {
+    const project = await this.projects.findOwnedOrFail(
+      query.projectId,
+      user.sub,
+    );
+    const canRead = await this.projects.access.canReadSecrets(
+      user.sub,
+      project,
+    );
     const rows = await this.compose.repo.find({
       where: { projectId: query.projectId },
       order: { createdAt: 'DESC' },
     });
     return rows.map((row) => {
-      const { logs, ...rest } = row;
+      const { logs, ...rest } = hideEnv(row, canRead);
       void logs;
       return rest;
     });

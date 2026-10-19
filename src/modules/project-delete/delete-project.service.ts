@@ -91,7 +91,6 @@ export class DeleteProjectService {
         await this.step(`database "${db.name}"`, async () => {
           await this.databases.remove(db, purge);
           if (purge) await this.backupPurge.purgeDatabase(db.id);
-          if (purge) await this.purgeMountVolumes(db);
           await this.dbRepo.remove(db);
         });
       }
@@ -121,20 +120,16 @@ export class DeleteProjectService {
   }
 
   /**
-   * Named volumes of `volume` mounts and the shared files volume. They are
+   * Named volumes of a stack's `volume` mounts and the shared files volume (a
+   * database's are removed by `ManagedDatabaseService.remove`). They are
    * created by aoox and mounted into containers (for stacks as `external`),
    * so neither a container removal nor `compose down --volumes` drops them.
    */
-  private async purgeMountVolumes(
-    owner: ComposeApp | ManagedDatabase,
-  ): Promise<void> {
-    const isDb = 'engine' in owner;
+  private async purgeMountVolumes(owner: ComposeApp): Promise<void> {
     const mounts = await this.applications.mounts.find({
-      where: isDb ? { databaseId: owner.id } : { composeAppId: owner.id },
+      where: { composeAppId: owner.id },
     });
-    const mountOwner = isDb
-      ? { slug: owner.slug, engine: owner.engine }
-      : { slug: owner.slug };
+    const mountOwner = { slug: owner.slug };
     const names = [
       ...mounts
         .filter((m) => m.type === 'volume')

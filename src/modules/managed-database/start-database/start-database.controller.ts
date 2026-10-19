@@ -12,6 +12,7 @@ import { JwtAuthGuard } from '../../auth/jwt-auth.guard';
 import type { JwtPayload } from '../../auth/jwt.strategy';
 import { DockerService } from '../../docker/docker.service';
 import { DatabaseParamsDto } from '../get-database/get-database.dto';
+import { assertNotStarting } from '../database-starting';
 import { ManagedDatabase } from '../managed-database.entity';
 import {
   containerNameForDb,
@@ -33,6 +34,7 @@ export class StartDatabaseController {
     @Param() params: DatabaseParamsDto,
   ): Promise<ManagedDatabase> {
     const db = await this.databases.findOwnedOrFail(params.id, user.sub);
+    assertNotStarting(db);
     const c = await this.docker.findContainerByName(containerNameForDb(db));
     if (!c) throw new NotFoundException('Database has no container');
     await this.docker.engine.startContainer(c.Id);

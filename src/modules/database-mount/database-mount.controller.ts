@@ -30,6 +30,7 @@ import type { JwtPayload } from '../auth/jwt.strategy';
 import { DockerService } from '../docker/docker.service';
 import { ProjectAccessService } from '../project/project-access.service';
 import { DatabaseParamsDto } from '../managed-database/get-database/get-database.dto';
+import { assertNotStarting } from '../managed-database/database-starting';
 import { ManagedDatabase } from '../managed-database/managed-database.entity';
 import {
   containerNameForDb,
@@ -85,6 +86,7 @@ export class DatabaseMountController {
     @Body() dto: AddMountDto,
   ): Promise<Mount> {
     const db = await this.databases.findOwnedOrFail(params.id, user.sub);
+    assertNotStarting(db);
     const fields = mountFields(dto, user.role);
     if (
       await this.databases.mounts.findOne({
@@ -107,6 +109,7 @@ export class DatabaseMountController {
     @Body() dto: UpdateMountDto,
   ): Promise<Mount> {
     const db = await this.databases.findOwnedOrFail(params.id, user.sub);
+    assertNotStarting(db);
     const mount = await this.find(db, params.mountId);
     if (dto.containerPath !== undefined) {
       const containerPath = normalizePath(dto.containerPath);
@@ -143,6 +146,7 @@ export class DatabaseMountController {
     @Query() query: DeleteMountQueryDto,
   ): Promise<void> {
     const db = await this.databases.findOwnedOrFail(params.id, user.sub);
+    assertNotStarting(db);
     const mount = await this.find(db, params.mountId);
     await this.databases.mounts.remove(mount);
     await this.apply(db);

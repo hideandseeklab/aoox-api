@@ -9,15 +9,22 @@ import {
 } from '../docker/host-port-bind';
 import { resourceLimits } from '../docker/resource-limits';
 import { Mount } from '../application/mount.entity';
-import { bindsFor, prepareMounts } from '../application/mounts';
+import {
+  bindsFor,
+  filesVolumeFor,
+  prepareMounts,
+  volumeNameFor,
+} from '../application/mounts';
 import { shellQuote } from '../application/nixpacks-builder.service';
 import { composeLabels, DockerService } from '../docker/docker.service';
+import { DockerEngineError } from '../docker/docker-engine.client';
 import { SwarmService } from '../swarm/swarm.service';
 import { ProjectAccessService } from '../project/project-access.service';
 import { decryptSecret, encryptSecret } from '../docker/secret.util';
 import { APP_NETWORK } from '../proxy/proxy.service';
 import { companionContainerName } from '../database-companion/companion-names';
 import { ENGINES, imageNameFor, POSTGRES_VARIANTS } from './engines';
+import { readinessScript, READY_TIMEOUT_SECONDS } from './readiness';
 import { ManagedDatabase } from './managed-database.entity';
 
 export function containerNameForDb(db: ManagedDatabase): string {
@@ -186,11 +193,53 @@ export class ManagedDatabaseService {
     await this.swarm.connectIfActive(id);
     await this.docker.engine.startContainer(id);
     this.logger.log(`Database ${name} (${image}) started`);
+    // `running` must mean the engine answers, not just that the container exists.
+    await this.waitUntilReady(db, password);
     if (db.engine === 'postgres' && db.variant) {
       await this.activateVariantExtension(db, password);
     }
     if (db.engine === 'mongodb') {
       await this.initMongoDatabase(db, password);
+    }
+  }
+
+  /**
+   * Blocks until the engine accepts an authenticated TCP connection (one-shot
+   * probe container from the same image, on the aoox network). Throws with a
+   * readable message on timeout so the row ends in `error`.
+   */
+  private async waitUntilReady(
+    db: ManagedDatabase,
+    password: string,
+  ): Promise<void> {
+    const image = `${imageNameFor(db.engine, db.variant)}:${db.imageTag}`;
+    const { code, output } = await this.docker.runOnceWithOutput({
+      Image: image,
+      Entrypoint: ['sh', '-c', readinessScript(db.engine)],
+      Env: [
+        `DB_HOST=${containerNameForDb(db)}`,
+        `DB_PORT=${ENGINES[db.engine].port}`,
+        `DB_USER=${db.username}`,
+        `DB_PASSWORD=${password}`,
+        `DB_NAME=${db.databaseName}`,
+      ],
+      Labels: {
+        'aoox.component': 'query',
+        ...composeLabels('db-ready-check'),
+      },
+      HostConfig: { NetworkMode: APP_NETWORK },
+    });
+    if (code !== 0) {
+      // Engine log lines carry a leading timestamp; keep only the message.
+      const detail = output
+        .trim()
+        .split(/\r?\n/)
+        .pop()
+        ?.replace(/^\S+Z\s+/, '')
+        .slice(-200);
+      throw new Error(
+        `The database did not become ready within ${READY_TIMEOUT_SECONDS} seconds${detail ? ` (${detail})` : ''}`,
+      );
     }
   }
 
@@ -335,6 +384,30 @@ export class ManagedDatabaseService {
       await this.docker.engine
         .removeVolume(volumeNameForDb(db))
         .catch(() => undefined);
+      await this.purgeMountVolumes(db);
+    }
+  }
+
+  /**
+   * Purge also drops what the database's mounts created: the named volumes of
+   * `volume` mounts and the shared files volume holding `file` mounts
+   * (neither goes away with the container). Already-missing volumes are fine;
+   * any other failure stops the delete so a retry can finish it.
+   */
+  private async purgeMountVolumes(db: ManagedDatabase): Promise<void> {
+    const mounts = await this.mounts.find({ where: { databaseId: db.id } });
+    const owner = { slug: db.slug, engine: db.engine };
+    const names = [
+      ...mounts
+        .filter((m) => m.type === 'volume')
+        .map((m) => volumeNameFor(owner, m)),
+      filesVolumeFor(owner),
+    ];
+    for (const name of names) {
+      await this.docker.engine.removeVolume(name).catch((err: unknown) => {
+        if (err instanceof DockerEngineError && err.status === 404) return;
+        throw err;
+      });
     }
   }
 

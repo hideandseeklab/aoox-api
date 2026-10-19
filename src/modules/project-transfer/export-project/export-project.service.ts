@@ -17,6 +17,8 @@ export class ExportProjectService {
     includeSecrets: boolean,
   ): Promise<ProjectExport> {
     const project = await this.projects.findOwnedOrFail(projectId, user.sub);
+    // The export carries every env and build arg: developers and up only.
+    await this.projects.access.assertCanExport(user.sub, project);
     // Database passwords otherwise need the owner-only credentials endpoint too.
     if (includeSecrets && user.role !== 'owner') {
       throw new ForbiddenException('Only owners can export secrets');

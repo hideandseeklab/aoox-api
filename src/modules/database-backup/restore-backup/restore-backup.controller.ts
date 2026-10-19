@@ -10,6 +10,7 @@ import {
 import { CurrentUser } from '../../auth/current-user.decorator';
 import { JwtAuthGuard } from '../../auth/jwt-auth.guard';
 import type { JwtPayload } from '../../auth/jwt.strategy';
+import { assertNotStarting } from '../../managed-database/database-starting';
 import { BackupFilesService } from '../backup-files.service';
 import { DatabaseBackupService } from '../database-backup.service';
 import { BackupParamsDto } from './restore-backup.dto';
@@ -30,6 +31,7 @@ export class RestoreBackupController {
     @Param() params: BackupParamsDto,
   ): Promise<{ restored: true }> {
     const backup = await this.backups.findOwnedOrFail(params.id, user.sub);
+    assertNotStarting(backup.database);
     try {
       // Pulled back from S3 first when the local copy was pruned.
       await this.files.ensureLocal(backup);

@@ -127,7 +127,7 @@ describe('DeleteProjectService', () => {
     expect(t.removeVolume).not.toHaveBeenCalled();
   });
 
-  it('purge forwards the flag and drops mount volumes of stacks and databases', async () => {
+  it('purge forwards the flag and drops mount volumes of stacks (databases do it in remove)', async () => {
     const t = build();
     await t.svc.execute('u', 'p1', true);
     expect(calls).toContain('stack:s1:keep=false');
@@ -135,8 +135,6 @@ describe('DeleteProjectService', () => {
     expect(calls).toContain('db:d1:purge=true');
     expect(t.removeVolume).toHaveBeenCalledWith('aoox_compose_stack_1_data');
     expect(t.removeVolume).toHaveBeenCalledWith('aoox_compose_stack_1_files');
-    expect(t.removeVolume).toHaveBeenCalledWith('aoox_db_db_1_data');
-    expect(t.removeVolume).toHaveBeenCalledWith('aoox_db_db_1_files');
     expect(calls.at(-1)).toBe('project.remove');
   });
 
