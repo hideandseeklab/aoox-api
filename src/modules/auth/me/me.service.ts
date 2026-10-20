@@ -36,6 +36,8 @@ export class MeService {
   > {
     try {
       const info = await this.versions.info();
+      // Opportunistic, never awaited: this request answers from the old cache.
+      void this.versions.refreshIfStale().catch(() => undefined);
       return info.updateAvailable && info.latestVersion
         ? { version: info.latestVersion, applying: info.applying }
         : undefined;

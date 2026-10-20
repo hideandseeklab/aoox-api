@@ -16,17 +16,22 @@ const user = (role: string) => ({
 function build(
   role: string | null,
   info: Record<string, unknown> | Error = { updateAvailable: false },
+  refresh: () => Promise<void> = () => Promise.resolve(),
 ) {
   const infoFn = jest.fn(() =>
     info instanceof Error ? Promise.reject(info) : Promise.resolve(info),
   );
+  const refreshFn = jest.fn(refresh);
   const svc = new MeService(
     {
       findById: jest.fn().mockResolvedValue(role ? user(role) : null),
     } as unknown as UserService,
-    { info: infoFn } as unknown as InstanceVersionService,
+    {
+      info: infoFn,
+      refreshIfStale: refreshFn,
+    } as unknown as InstanceVersionService,
   );
-  return { svc, infoFn };
+  return { svc, infoFn, refreshFn };
 }
 
 describe('MeService', () => {
@@ -101,6 +106,30 @@ describe('MeService', () => {
         latestVersion: '0.0.1-test',
       });
       expect(await svc.execute('u1')).not.toHaveProperty('updateAvailable');
+    });
+
+    it('triggers the opportunistic refresh for the owner only', async () => {
+      const owner = build('owner', available);
+      await owner.svc.execute('u1');
+      expect(owner.refreshFn).toHaveBeenCalledTimes(1);
+      for (const role of ['admin', 'member', 'viewer']) {
+        const other = build(role, available);
+        await other.svc.execute('u1');
+        expect(other.refreshFn).not.toHaveBeenCalled();
+      }
+    });
+
+    it('still answers when the refresh rejects or hangs', async () => {
+      const rejecting = build('owner', available, () =>
+        Promise.reject(new Error('boom')),
+      );
+      await expect(rejecting.svc.execute('u1')).resolves.toMatchObject({
+        updateAvailable: { version: LATEST },
+      });
+      const hanging = build('owner', available, () => new Promise(() => {}));
+      await expect(hanging.svc.execute('u1')).resolves.toMatchObject({
+        updateAvailable: { version: LATEST },
+      });
     });
 
     it('never breaks /auth/me when the lookup fails', async () => {

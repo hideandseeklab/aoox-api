@@ -248,3 +248,70 @@ describe('InstanceVersionService scheduling', () => {
     expect(tagsMock).toHaveBeenCalledTimes(2);
   });
 });
+
+describe('InstanceVersionService.refreshIfStale', () => {
+  const NOW = new Date('2026-10-20T12:00:00Z');
+  const minutesAgo = (m: number) => new Date(NOW.getTime() - m * 60_000);
+  beforeEach(() => {
+    jest.useFakeTimers().setSystemTime(NOW);
+    tagsMock.mockReset();
+    versionMock.mockReturnValue('0.1.0-alpha.4');
+  });
+  afterEach(() => jest.useRealTimers());
+
+  it('refreshes when never checked', async () => {
+    tagsMock.mockResolvedValue(['0.1.0-alpha.5']);
+    const { svc, repo } = build({ ownImage: LATEST });
+    await svc.refreshIfStale();
+    expect(tagsMock).toHaveBeenCalledTimes(1);
+    expect(repo.upsert).toHaveBeenCalledTimes(1);
+  });
+
+  it('refreshes when the last check is older than 30 minutes', async () => {
+    tagsMock.mockResolvedValue(['0.1.0-alpha.5']);
+    const { svc } = build({
+      ownImage: LATEST,
+      row: { latestVersion: '0.1.0-alpha.4', latestCheckedAt: minutesAgo(31) },
+    });
+    await svc.refreshIfStale();
+    expect(tagsMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('does nothing when the check is fresh', async () => {
+    const { svc } = build({
+      ownImage: LATEST,
+      row: { latestVersion: '0.1.0-alpha.4', latestCheckedAt: minutesAgo(10) },
+    });
+    await svc.refreshIfStale();
+    expect(tagsMock).not.toHaveBeenCalled();
+  });
+
+  it('shares one registry call between concurrent callers', async () => {
+    tagsMock.mockResolvedValue(['0.1.0-alpha.5']);
+    const { svc } = build({ ownImage: LATEST });
+    await Promise.all([
+      svc.refreshIfStale(),
+      svc.refreshIfStale(),
+      svc.refresh(),
+    ]);
+    expect(tagsMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not retry within 30 minutes of a failed attempt, then retries', async () => {
+    tagsMock.mockRejectedValue(new Error('offline'));
+    const { svc } = build({ ownImage: LATEST });
+    await svc.refreshIfStale();
+    await svc.refreshIfStale();
+    expect(tagsMock).toHaveBeenCalledTimes(1);
+    jest.setSystemTime(new Date(NOW.getTime() + 31 * 60_000));
+    await svc.refreshIfStale();
+    expect(tagsMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('never throws, even when the state read fails', async () => {
+    const { svc, repo } = build({ ownImage: LATEST });
+    repo.findOne.mockRejectedValue(new Error('db down'));
+    await expect(svc.refreshIfStale()).resolves.toBeUndefined();
+    expect(tagsMock).not.toHaveBeenCalled();
+  });
+});

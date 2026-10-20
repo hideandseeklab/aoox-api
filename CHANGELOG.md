@@ -8,6 +8,10 @@ Versions below 1.0.0 may include breaking changes in a minor release.
 
 ## [Unreleased]
 
+### Changed
+
+- **The "update available" badge shows up sooner.** The published-version check now runs hourly instead of every 6 hours, and an owner loading the dashboard triggers a background check when the last one is older than 30 minutes (at most one attempt per 30 minutes, even when the registry is unreachable). The badge therefore appears within about an hour, or on the owner's next page load once the last check is older than 30 minutes; the current request still answers from the cache.
+
 ## [0.1.0-alpha.13] - 2026-10-20
 
 ### Added

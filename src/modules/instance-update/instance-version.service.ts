@@ -17,6 +17,10 @@ import { isNewer, newestVersion, parseSemver } from '../registry/semver';
 const DEFAULT_API_IMAGE = 'hideandseeklab/aoox-api:latest';
 /** Longest a started update still counts as "in progress" for the badge. */
 const APPLYING_WINDOW_MS = 10 * 60_000;
+/** A cached check older than this is stale for the opportunistic refresh. */
+export const STALE_AFTER_MS = 30 * 60_000;
+/** Minimum gap between two attempts (success or failure) of the opportunistic refresh. */
+export const ATTEMPT_THROTTLE_MS = 30 * 60_000;
 
 /**
  * `latest` = the install follows the moving `:latest` tag, so "a newer
@@ -49,6 +53,8 @@ export interface InstanceVersionInfo {
 @Injectable()
 export class InstanceVersionService implements OnApplicationBootstrap {
   private readonly logger = new Logger(InstanceVersionService.name);
+  private inFlight: Promise<boolean> | null = null;
+  private lastAttemptAt = 0;
   private tagPromise: Promise<{
     tracking: TagTracking;
     tag: string | null;
@@ -79,7 +85,7 @@ export class InstanceVersionService implements OnApplicationBootstrap {
     this.later(20_000 + Math.random() * 40_000);
   }
 
-  @Cron('17 */6 * * *')
+  @Cron('17 * * * *')
   scheduled(): void {
     this.later(Math.random() * 5 * 60_000);
   }
@@ -126,7 +132,41 @@ export class InstanceVersionService implements OnApplicationBootstrap {
    * One registry lookup; stores the newest published version. Returns
    * whether it succeeded. Never throws.
    */
-  async refresh(): Promise<boolean> {
+  refresh(): Promise<boolean> {
+    // One registry lookup at a time per process; callers share its result.
+    this.inFlight ??= this.doRefresh().finally(() => {
+      this.inFlight = null;
+    });
+    return this.inFlight;
+  }
+
+  /**
+   * Fire-and-forget refresh for the owner's dashboard load: only when the
+   * cached check is stale (null or older than 30 minutes) and no attempt
+   * (success or failure) started in the last 30 minutes, since
+   * `latest_checked_at` is only written on success. Never throws, and callers
+   * must not await it.
+   */
+  async refreshIfStale(): Promise<void> {
+    try {
+      if (this.inFlight) return;
+      if (Date.now() - this.lastAttemptAt < ATTEMPT_THROTTLE_MS) return;
+      const row = await this.repo.findOne({
+        where: { id: INSTANCE_UPDATE_STATE_ID },
+      });
+      const checked = row?.latestCheckedAt ?? null;
+      if (checked && Date.now() - checked.getTime() < STALE_AFTER_MS) return;
+      // Re-check after the await: another caller may have started meanwhile.
+      if (this.inFlight) return;
+      if (Date.now() - this.lastAttemptAt < ATTEMPT_THROTTLE_MS) return;
+      await this.refresh();
+    } catch (err) {
+      this.logger.debug(`Version refresh skipped: ${String(err)}`);
+    }
+  }
+
+  private async doRefresh(): Promise<boolean> {
+    this.lastAttemptAt = Date.now();
     try {
       const ref = parseImageRef(
         this.config.get<string>('API_IMAGE')?.trim() || DEFAULT_API_IMAGE,
