@@ -9,6 +9,7 @@ import { EnvResolverService } from '../application/env-resolver.service';
 import { Mount } from '../application/mount.entity';
 import { filePath, prepareMounts, volumeNameFor } from '../application/mounts';
 import { shellQuote, tarFiles } from '../application/nixpacks-builder.service';
+import { DockerEngineError } from '../docker/docker-engine.client';
 import { DockerService } from '../docker/docker.service';
 import { GitCredentialService } from '../git-credential/git-credential.service';
 import { NotificationService } from '../notification/notification.service';
@@ -442,26 +443,71 @@ export class ComposeRunnerService {
   /**
    * Removes the stack's containers and the checkout volume (used by delete).
    * `keepVolumes` leaves the volumes the stack declares itself in place.
-   * `run()` never throws for a failed helper, so the outcome is checked here:
-   * a stack that could not be taken down must not lose its row (its
-   * containers would keep serving). Exit code 3 means there was no checkout,
-   * i.e. nothing was ever deployed, which is fine.
+   *
+   * What to do is decided from facts the daemon reports, not from error text:
+   * - containers labelled `com.docker.compose.project=aoox-<slug>` exist: the
+   *   stack must come down, and a failure throws (`run()` never throws for a
+   *   failed helper), because a stack that could not be taken down must not
+   *   lose its row (its containers would keep serving). Exit code 3 (no
+   *   checkout left to run compose from) falls back to removing those
+   *   containers directly.
+   * - no containers: nothing is serving. A stack that never deployed has no
+   *   helper to run at all (creating the helper needs the checkout volume,
+   *   which such a stack never had). A stack that did deploy and lost its
+   *   containers by hand still gets one best-effort `down` while its
+   *   checkout exists, to clear the network and declared volumes it left;
+   *   a failure there is only logged.
+   * Either way the checkout volume is removed last when it exists.
    */
   async destroy(
     app: ComposeApp,
     options: { keepVolumes?: boolean } = {},
   ): Promise<void> {
-    const outcome = await this.run(app, 'down', {
-      keepVolumes: options.keepVolumes,
+    const engine = this.docker.engine;
+    const containers = await engine.listContainers({
+      label: [`com.docker.compose.project=${composeProjectFor(app)}`],
     });
-    if (!outcome.ok && outcome.code !== 3) {
-      throw new Error(
-        `compose down failed for "${app.name}": ${outcome.message ?? 'unknown error'}`,
-      );
+    const checkout = await this.checkoutExists(app);
+
+    if (containers.length > 0) {
+      const outcome = await this.run(app, 'down', {
+        keepVolumes: options.keepVolumes,
+      });
+      if (!outcome.ok) {
+        if (outcome.code !== 3) {
+          throw new Error(
+            `compose down failed for "${app.name}": ${outcome.message ?? 'unknown error'}`,
+          );
+        }
+        // The checkout is gone but the containers are not: take them down
+        // directly so the row is not removed over running containers.
+        for (const c of containers) {
+          await engine.removeContainer(c.Id, true, !options.keepVolumes);
+        }
+      }
+    } else if (checkout && app.deployedAt) {
+      const outcome = await this.run(app, 'down', {
+        keepVolumes: options.keepVolumes,
+      });
+      if (!outcome.ok) {
+        this.logger.warn(
+          `compose down for "${app.name}" (no containers left) failed: ${outcome.message ?? 'unknown error'}`,
+        );
+      }
     }
-    await this.docker.engine
-      .removeVolume(composeVolumeFor(app))
-      .catch(() => undefined);
+    if (checkout || containers.length > 0) {
+      await engine.removeVolume(composeVolumeFor(app)).catch(() => undefined);
+    }
+  }
+
+  private async checkoutExists(app: ComposeApp): Promise<boolean> {
+    try {
+      await this.docker.engine.inspectVolume(composeVolumeFor(app));
+      return true;
+    } catch (err) {
+      if (err instanceof DockerEngineError && err.status === 404) return false;
+      throw err;
+    }
   }
 
   private notifyFailure(app: ComposeApp, error: string): void {

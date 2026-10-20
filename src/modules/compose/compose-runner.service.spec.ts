@@ -1,6 +1,7 @@
 import { ConfigService } from '@nestjs/config';
 import { EnvResolverService } from '../application/env-resolver.service';
 import { Mount } from '../application/mount.entity';
+import { DockerEngineError } from '../docker/docker-engine.client';
 import { DockerService } from '../docker/docker.service';
 import { GitCredentialService } from '../git-credential/git-credential.service';
 import { NotificationService } from '../notification/notification.service';
@@ -61,6 +62,7 @@ describe('ComposeRunnerService', () => {
     ),
     removeContainer: jest.fn().mockResolvedValue(undefined),
     removeVolume: jest.fn().mockResolvedValue(undefined),
+    listContainers: jest.fn().mockResolvedValue([]),
   };
   const docker = {
     engine,
@@ -249,32 +251,94 @@ describe('ComposeRunnerService', () => {
     expect(script).not.toContain('--force-recreate');
   });
 
-  it('destroy runs down and removes the checkout volume', async () => {
-    await svc.destroy(app());
-    expect(engine.removeVolume).toHaveBeenCalledWith(
-      'aoox_compose_stack_abc123',
-    );
-  });
+  describe('destroy', () => {
+    const deployed = () => app({ deployedAt: new Date() });
+    const running = () =>
+      engine.listContainers.mockResolvedValueOnce([{ Id: 'c-1' }]);
+    const noVolume = () =>
+      engine.inspectVolume.mockRejectedValueOnce(
+        new DockerEngineError(404, 'no such volume'),
+      );
 
-  it('destroy runs down --volumes by default', async () => {
-    await svc.destroy(app());
-    expect(helperBody().Entrypoint[2]).toContain(
-      'down --volumes --remove-orphans',
-    );
-  });
+    it('deployed and running: runs down --volumes, then removes the checkout volume', async () => {
+      running();
+      await svc.destroy(deployed());
+      expect(engine.listContainers).toHaveBeenCalledWith({
+        label: ['com.docker.compose.project=aoox-stack-abc123'],
+      });
+      expect(helperBody().Entrypoint[2]).toContain(
+        'down --volumes --remove-orphans',
+      );
+      expect(engine.removeVolume).toHaveBeenCalledWith(
+        'aoox_compose_stack_abc123',
+      );
+    });
 
-  it('destroy with keepVolumes runs down without --volumes', async () => {
-    await svc.destroy(app(), { keepVolumes: true });
-    const script = helperBody().Entrypoint[2];
-    expect(script).toContain('down --remove-orphans');
-    expect(script).not.toContain('--volumes');
-  });
+    it('keepVolumes runs down without --volumes', async () => {
+      running();
+      await svc.destroy(deployed(), { keepVolumes: true });
+      const script = helperBody().Entrypoint[2];
+      expect(script).toContain('down --remove-orphans');
+      expect(script).not.toContain('--volumes');
+    });
 
-  it('destroy throws when down fails, but accepts exit 3 (never deployed)', async () => {
-    engine.waitContainer.mockResolvedValueOnce(1);
-    await expect(svc.destroy(app())).rejects.toThrow(/compose down failed/);
-    engine.waitContainer.mockResolvedValueOnce(3);
-    await expect(svc.destroy(app())).resolves.toBeUndefined();
+    it('a real down failure on a stack with containers throws and removes nothing', async () => {
+      running();
+      engine.waitContainer.mockResolvedValueOnce(1);
+      await expect(svc.destroy(deployed())).rejects.toThrow(
+        /compose down failed/,
+      );
+      expect(engine.removeVolume).not.toHaveBeenCalled();
+      expect(engine.removeContainer).not.toHaveBeenCalledWith(
+        'c-1',
+        true,
+        true,
+      );
+    });
+
+    it('containers but no checkout left (exit 3): removes the containers directly', async () => {
+      running();
+      engine.waitContainer.mockResolvedValueOnce(3);
+      await expect(svc.destroy(deployed())).resolves.toBeUndefined();
+      expect(engine.removeContainer).toHaveBeenCalledWith('c-1', true, true);
+      expect(engine.removeVolume).toHaveBeenCalled();
+    });
+
+    it('never deployed (no volume, no containers): no helper, nothing to remove', async () => {
+      noVolume();
+      await expect(svc.destroy(app())).resolves.toBeUndefined();
+      expect(engine.createVolume).not.toHaveBeenCalled();
+      expect(engine.createContainer).not.toHaveBeenCalled();
+      expect(engine.removeVolume).not.toHaveBeenCalled();
+    });
+
+    it('never deployed but a checkout volume exists: no helper, volume removed', async () => {
+      await svc.destroy(app());
+      expect(engine.createContainer).not.toHaveBeenCalled();
+      expect(engine.removeVolume).toHaveBeenCalledWith(
+        'aoox_compose_stack_abc123',
+      );
+    });
+
+    it('deployed, containers removed by hand, volume left: best-effort down, volume removed', async () => {
+      await svc.destroy(deployed());
+      expect(helperBody().Entrypoint[2]).toContain('down --volumes');
+      expect(engine.removeVolume).toHaveBeenCalledWith(
+        'aoox_compose_stack_abc123',
+      );
+    });
+
+    it('deployed, containers removed by hand, and down fails: still removed', async () => {
+      engine.waitContainer.mockResolvedValueOnce(1);
+      await expect(svc.destroy(deployed())).resolves.toBeUndefined();
+      expect(engine.removeVolume).toHaveBeenCalled();
+    });
+
+    it('an unreachable daemon is a failure, not "nothing to remove"', async () => {
+      engine.listContainers.mockRejectedValueOnce(new Error('ECONNREFUSED'));
+      await expect(svc.destroy(deployed())).rejects.toThrow('ECONNREFUSED');
+      expect(engine.removeVolume).not.toHaveBeenCalled();
+    });
   });
 
   it('template stacks upload the compose file instead of cloning', async () => {
