@@ -54,6 +54,14 @@ export class LogsGateway
   private readonly logger = new Logger(LogsGateway.name);
   /** Cleanup for whatever the socket is currently subscribed to. */
   private readonly subscriptions = new Map<string, () => void>();
+  /**
+   * Per-socket generation, bumped by every `unsubscribe` (which every subscribe
+   * and the disconnect also run). A subscribe captures it before its awaits and
+   * gives up after each one when it moved: a newer subscribe, an `unsubscribe`
+   * or a disconnect happened meanwhile, so this one must not start a stream
+   * nobody will clean up (two quick `subscribe:container` used to leak one).
+   */
+  private readonly generations = new Map<string, number>();
 
   constructor(
     private readonly jwtService: JwtService,
@@ -103,6 +111,16 @@ export class LogsGateway
 
   handleDisconnect(client: LogsSocket) {
     this.unsubscribe(client);
+    // After the bump: an in-flight subscribe sees the entry gone and stops.
+    this.generations.delete(client.id);
+  }
+
+  private generation(client: LogsSocket): number {
+    return this.generations.get(client.id) ?? 0;
+  }
+
+  private isStale(client: LogsSocket, generation: number): boolean {
+    return this.generations.get(client.id) !== generation;
   }
 
   @SubscribeMessage('subscribe:deployment')
@@ -113,10 +131,12 @@ export class LogsGateway
     const applicationId = client.data.applicationId;
     if (!applicationId || typeof deploymentId !== 'string') return;
     this.unsubscribe(client);
+    const generation = this.generation(client);
 
     const deployment = await this.applications.deployments.findOne({
       where: { id: deploymentId, applicationId },
     });
+    if (this.isStale(client, generation)) return;
     if (!deployment) return client.emit('error', 'deployment not found');
 
     // Register listeners, then take the snapshot synchronously (no await in
@@ -149,6 +169,8 @@ export class LogsGateway
       const fresh = await this.applications.deployments.findOne({
         where: { id: deploymentId },
       });
+      // Superseded while waiting: the newer call already removed our listeners.
+      if (this.isStale(client, generation)) return;
       if (fresh) {
         text = fresh.logs;
         status = fresh.status;
@@ -172,23 +194,32 @@ export class LogsGateway
     const applicationId = client.data.applicationId;
     if (!applicationId) return;
     this.unsubscribe(client);
+    const generation = this.generation(client);
 
     const app = await this.applications.repo.findOne({
       where: { id: applicationId },
     });
+    if (this.isStale(client, generation)) return;
     if (!app) return client.emit('error', 'application not found');
     const docker = await this.remote.forServer(app.serverId);
+    if (this.isStale(client, generation)) return;
     const lines = Math.min(Math.max(Number(tail) || 200, 1), 5000);
     // Service mode: one stream for all tasks, straight from the daemon.
     const svc =
       app.deployMode === 'service' ? await this.swarmDeploy.inspect(app) : null;
+    if (this.isStale(client, generation)) return;
     const c = svc
       ? null
       : await docker.findContainerByName(containerNameFor(app));
+    // Last await: nothing runs between this check and the stream below, so a
+    // superseded call never opens a daemon stream at all.
+    if (this.isStale(client, generation)) return;
     if (!svc && !c) return client.emit('error', 'no container');
 
     const onData = (text: string) => client.emit('container:log', text);
     const onEnd = (err?: Error) => {
+      // An aborted stream may report its end after a newer subscription took over.
+      if (this.isStale(client, generation)) return;
       if (err) client.emit('error', err.message);
       client.emit('container:end');
       this.subscriptions.delete(client.id);
@@ -201,6 +232,7 @@ export class LogsGateway
 
   @SubscribeMessage('unsubscribe')
   unsubscribe(@ConnectedSocket() client: LogsSocket) {
+    this.generations.set(client.id, this.generation(client) + 1);
     const cleanup = this.subscriptions.get(client.id);
     if (cleanup) {
       this.subscriptions.delete(client.id);
