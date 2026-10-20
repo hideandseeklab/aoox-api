@@ -87,6 +87,10 @@ import { TestRegistryService } from './test-registry/test-registry.service';
     GetRegistryCredentialsService,
     SetRegistryDomainService,
   ],
-  exports: [RegistryService, SelfHostedRegistryService],
+  exports: [
+    RegistryService,
+    SelfHostedRegistryService,
+    DeleteRepositoryService,
+  ],
 })
 export class RegistryModule {}

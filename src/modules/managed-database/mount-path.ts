@@ -24,11 +24,17 @@ function isInside(path: string, root: string): boolean {
 export function mountPathConflict(
   engine: DatabaseEngine,
   containerPath: string,
+  /** Where the data volume really is mounted, when known. */
+  dataPath: string | null = null,
 ): string | null {
   const path = containerPath.replace(/\/+$/, '') || '/';
-  for (const root of dataRootsFor(engine)) {
+  const roots = dataRootsFor(engine);
+  for (const root of roots) {
     if (isInside(path, root) || isInside(root, path) || path === '/') {
-      return `${containerPath} overlaps the data directory of this database (${root}). Mount configuration files elsewhere.`;
+      // Name the directory the database really uses; when that is unknown,
+      // list every root that is refused (PostgreSQL has two layouts).
+      const named = dataPath ?? roots.join(' or ');
+      return `${containerPath} overlaps the data directory of this database (${named}). Mount configuration files elsewhere.`;
     }
   }
   return null;
@@ -37,7 +43,8 @@ export function mountPathConflict(
 export function assertMountPathAllowed(
   engine: DatabaseEngine,
   containerPath: string,
+  dataPath: string | null = null,
 ): void {
-  const reason = mountPathConflict(engine, containerPath);
+  const reason = mountPathConflict(engine, containerPath, dataPath);
   if (reason) throw new BadRequestException(reason);
 }

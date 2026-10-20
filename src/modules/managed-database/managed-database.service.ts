@@ -38,6 +38,7 @@ import {
   POSTGRES_VARIANTS,
   postgresDataPath,
 } from './engines';
+import { INTERRUPTED_MESSAGE, retryModeFor } from './retry-plan';
 import { readinessScript, READY_TIMEOUT_SECONDS } from './readiness';
 import { ManagedDatabase } from './managed-database.entity';
 
@@ -49,8 +50,7 @@ export function volumeNameForDb(db: ManagedDatabase): string {
   return `aoox_db_${db.slug.replace(/-/g, '_')}`;
 }
 
-export const INTERRUPTED_MESSAGE =
-  'Provisioning was interrupted by an API restart. Delete this database and create it again.';
+export { INTERRUPTED_MESSAGE };
 
 /** Errors thrown by `reprovision` after the old container had been touched. */
 const failedAfterTouch = new WeakSet<object>();
@@ -233,9 +233,11 @@ export class ManagedDatabaseService implements OnApplicationBootstrap {
   /**
    * Retry for a database in `error`: detached like create (readiness can take
    * 120 s). Refuses anything else, and the rows the boot recovery marked
-   * (their message is `INTERRUPTED_MESSAGE`: a half-initialised data
-   * directory is never repaired). Reuses the data volume, current mounts and
-   * limits.
+   * (their message is `INTERRUPTED_MESSAGE`). Reuses current mounts and limits.
+   * The data volume is kept, except for a database that never became ready
+   * and whose history is tracked (see `retryModeFor`): there it is recreated
+   * together with its mount volumes, because a half-initialised data directory
+   * cannot be repaired and no user data can exist yet.
    */
   async retryProvisioning(db: ManagedDatabase): Promise<ManagedDatabase> {
     if (db.status !== 'error') {
@@ -246,12 +248,75 @@ export class ManagedDatabaseService implements OnApplicationBootstrap {
     if (db.errorMessage === INTERRUPTED_MESSAGE) {
       throw new ConflictException(INTERRUPTED_MESSAGE);
     }
+    const mode = retryModeFor(db);
     const password = await this.password(db);
     await this.repo.update(db.id, { status: 'creating', errorMessage: null });
     db.status = 'creating';
     db.errorMessage = null;
-    this.provisionInBackground(db, password);
+    this.provisionInBackground(db, password, {
+      freshVolumes: mode === 'fresh-volume',
+    });
     return db;
+  }
+
+  /**
+   * Removes the container and every volume of a database that never became
+   * ready, so the next provision initialises from scratch. Re-reads the row
+   * and refuses (throws) unless it is still tracked and never ready: a
+   * database that was ever ready is never wiped, whatever the caller thinks.
+   */
+  private async wipeNeverReady(db: ManagedDatabase): Promise<void> {
+    const row = await this.repo.findOne({ where: { id: db.id } });
+    if (!row) throw new DatabaseDeletedError(db.slug);
+    if (row.readyAt || !row.historyTracked) {
+      throw new Error(
+        'Refusing to recreate the data volume: this database may hold data',
+      );
+    }
+    const c = await this.docker.findContainerByName(containerNameForDb(db));
+    if (c) await this.docker.engine.removeContainer(c.Id, true, true);
+    await this.docker.engine
+      .removeVolume(volumeNameForDb(db))
+      .catch((err: unknown) => {
+        if (err instanceof DockerEngineError && err.status === 404) return;
+        throw err;
+      });
+    await this.purgeMountVolumes(db);
+    this.logger.warn(
+      `Recreating the data volume of ${db.slug}: it never became ready`,
+    );
+  }
+
+  /**
+   * Where the data volume is mounted in the database container: read from the
+   * container when it exists, else (PostgreSQL) from the image layout, else the
+   * engine recipe. Null when it cannot be told (the caller then names all
+   * possible roots).
+   */
+  async dataMountPath(db: ManagedDatabase): Promise<string | null> {
+    try {
+      const c = await this.docker.findContainerByName(containerNameForDb(db));
+      if (c) {
+        const info = await this.docker.engine.inspectContainer(c.Id);
+        const volume = volumeNameForDb(db);
+        const m = info?.Mounts?.find((x) => x.Name === volume);
+        if (m?.Destination) return m.Destination;
+      }
+      if (db.engine !== 'postgres') return ENGINES[db.engine].dataPath;
+      const image = `${imageNameFor(db.engine, db.variant)}:${db.imageTag}`;
+      const info = await this.docker.engine.inspectImage(image);
+      if (!info) return null;
+      const config = (info.Config ?? {}) as {
+        Volumes?: Record<string, unknown> | null;
+        Env?: string[] | null;
+      };
+      return postgresDataPath(
+        Object.keys(config.Volumes ?? {}),
+        config.Env ?? undefined,
+      );
+    } catch {
+      return null;
+    }
   }
 
   /** Pulls the image, creates the volume and starts the container. Async caller. */
@@ -331,6 +396,12 @@ export class ManagedDatabaseService implements OnApplicationBootstrap {
     this.logger.log(`Database ${name} (${image}) started`);
     // `running` must mean the engine answers, not just that the container exists.
     await this.waitUntilReady(db, password);
+    if (!db.readyAt) {
+      // First time the engine answered: from now on a retry never wipes the volume.
+      const readyAt = new Date();
+      await this.repo.update(db.id, { readyAt });
+      db.readyAt = readyAt;
+    }
     try {
       await this.assertRowExists(db);
     } catch (err) {
@@ -544,8 +615,16 @@ export class ManagedDatabaseService implements OnApplicationBootstrap {
   }
 
   /** Detached provisioning; always leaves the row in `running` or `error`. */
-  provisionInBackground(db: ManagedDatabase, password: string): void {
-    void this.provision(db, password)
+  provisionInBackground(
+    db: ManagedDatabase,
+    password: string,
+    opts: { freshVolumes?: boolean } = {},
+  ): void {
+    const run = async () => {
+      if (opts.freshVolumes) await this.wipeNeverReady(db);
+      await this.provision(db, password);
+    };
+    void run()
       .then(() =>
         this.repo.update(db.id, { status: 'running', errorMessage: null }),
       )

@@ -16,15 +16,23 @@ describe('DeleteProjectService', () => {
       busyStack?: boolean;
       notAdmin?: boolean;
       startingDb?: boolean;
+      registryFails?: boolean;
     } = {},
   ) => {
     calls.length = 0;
-    const project = { id: 'p1' };
+    const project = { id: 'p1', name: 'My Project' };
     const stacks = [{ id: 's1', name: 'stack', slug: 'stack-1' }];
     const apps = [
-      { id: 'a1', name: 'one' },
-      { id: 'a2', name: 'two' },
+      { id: 'a1', name: 'one', appName: 'web-1', sourceType: 'git' },
+      { id: 'a2', name: 'two', appName: 'api-2', sourceType: 'git' },
+      { id: 'a3', name: 'pulled', appName: 'demo', sourceType: 'image' },
     ];
+    const purgeRepositories = jest.fn((repos: string[]) => {
+      calls.push(`registry:${repos.join(',')}`);
+      return opts.registryFails
+        ? Promise.reject(new Error('registry down'))
+        : Promise.resolve({ deleted: repos, skipped: [], failed: [] });
+    });
     const dbs = [
       {
         id: 'd1',
@@ -102,6 +110,7 @@ describe('DeleteProjectService', () => {
           });
         }),
       } as never,
+      { purgeRepositories } as never,
       { find: jest.fn().mockResolvedValue(apps) } as never,
       {
         find: jest.fn().mockResolvedValue(dbs),
@@ -118,7 +127,7 @@ describe('DeleteProjectService', () => {
         }),
       } as never,
     );
-    return { svc, projectRepo, removeVolume };
+    return { svc, projectRepo, removeVolume, purgeRepositories };
   };
 
   it('answers 409 naming a database that is still starting, touching nothing', async () => {
@@ -140,6 +149,7 @@ describe('DeleteProjectService', () => {
       'stack.row:s1',
       'app:a1:purge=false',
       'app:a2:purge=false',
+      'app:a3:purge=false',
       'db:d1:purge=false',
       'db.row:d1',
       'project.remove',
@@ -169,6 +179,36 @@ describe('DeleteProjectService', () => {
     expect(calls.indexOf('backups:d1')).toBeLessThan(
       calls.indexOf('db.row:d1'),
     );
+  });
+
+  it('purge removes the repositories aoox built for git apps, never the image app one', async () => {
+    const t = build();
+    await t.svc.execute('u', 'p1', true);
+    expect(t.purgeRepositories).toHaveBeenCalledTimes(1);
+    expect(t.purgeRepositories).toHaveBeenCalledWith([
+      'my-project/web-1',
+      'my-project/web-1-preview',
+      'my-project/api-2',
+      'my-project/api-2-preview',
+    ]);
+    // After every application is destroyed, before the project row goes.
+    expect(
+      calls.indexOf(
+        'registry:my-project/web-1,my-project/web-1-preview,my-project/api-2,my-project/api-2-preview',
+      ),
+    ).toBeGreaterThan(calls.indexOf('app:a3:purge=true'));
+  });
+
+  it('without purge the registry is not touched', async () => {
+    const t = build();
+    await t.svc.execute('u', 'p1');
+    expect(t.purgeRepositories).not.toHaveBeenCalled();
+  });
+
+  it('a registry failure never blocks the delete', async () => {
+    const t = build({ registryFails: true });
+    await expect(t.svc.execute('u', 'p1', true)).resolves.toBeUndefined();
+    expect(calls.at(-1)).toBe('project.remove');
   });
 
   it('stops at the failing application and keeps the project', async () => {

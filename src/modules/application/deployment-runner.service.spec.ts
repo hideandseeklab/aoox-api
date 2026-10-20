@@ -43,6 +43,8 @@ const envResolve = jest
     }),
   );
 
+import type { FollowRevert } from './follow-revert';
+
 describe('DeploymentRunnerService', () => {
   const engine = {
     inspectImage: jest.fn().mockResolvedValue({}),
@@ -140,8 +142,12 @@ describe('DeploymentRunnerService', () => {
     ({ id: 'deadbeefcafe-0000', status: 'queued', logs: '' }) as Deployment;
 
   /** start() is fire-and-forget; wait until the row reaches a terminal state. */
-  const runAndWait = async (d: Deployment, a: Application) => {
-    runner.start(d, a);
+  const runAndWait = async (
+    d: Deployment,
+    a: Application,
+    followRevert?: FollowRevert,
+  ) => {
+    runner.start(d, a, followRevert);
     for (let i = 0; i < 500 && !['success', 'failed'].includes(d.status); i++) {
       await new Promise((r) => setImmediate(r));
     }
@@ -351,6 +357,63 @@ describe('DeploymentRunnerService', () => {
       expect(d.status).toBe('success');
       expect(dbRow.imageDigest).toBeNull();
       expect(dbRow.imageRef).toBe('nginx:1.27');
+    });
+  });
+
+  describe('auto-follow revert', () => {
+    const revert: FollowRevert = {
+      followedRef: 'nginx:1.1.1',
+      previousRef: 'nginx:1.1.0',
+      previousDigest: 'sha256:old',
+    };
+    const followedApp = () =>
+      ({
+        ...app(),
+        sourceType: 'image',
+        imageRef: 'nginx:1.1.1',
+      }) as unknown as Application;
+
+    it('puts the previous imageRef back when the pull fails', async () => {
+      dbRow.imageRef = 'nginx:1.1.1';
+      dbRow.autoUpdateLastTag = '1.1.1';
+      engine.pullImage.mockRejectedValueOnce(new Error('manifest unknown'));
+      const d = await runAndWait(deployment(), followedApp(), revert);
+      expect(d.status).toBe('failed');
+      expect(dbRow).toMatchObject({
+        imageRef: 'nginx:1.1.0',
+        imageDigest: 'sha256:old',
+        // the no-retry guard stays
+        autoUpdateLastTag: '1.1.1',
+      });
+    });
+
+    it('puts it back when the container fails to start', async () => {
+      dbRow.imageRef = 'nginx:1.1.1';
+      engine.startContainer.mockRejectedValueOnce(new Error('boom'));
+      const d = await runAndWait(deployment(), followedApp(), revert);
+      expect(d.status).toBe('failed');
+      expect(dbRow.imageRef).toBe('nginx:1.1.0');
+    });
+
+    it('a user change of imageRef in the meantime wins', async () => {
+      dbRow.imageRef = 'nginx:1.5.0';
+      engine.pullImage.mockRejectedValueOnce(new Error('manifest unknown'));
+      await runAndWait(deployment(), followedApp(), revert);
+      expect(dbRow.imageRef).toBe('nginx:1.5.0');
+    });
+
+    it('leaves imageRef on the new tag when the deployment succeeds', async () => {
+      dbRow.imageRef = 'nginx:1.1.1';
+      const d = await runAndWait(deployment(), followedApp(), revert);
+      expect(d.status).toBe('success');
+      expect(dbRow.imageRef).toBe('nginx:1.1.1');
+    });
+
+    it('a failed manual or other deployment (no revert info) changes nothing', async () => {
+      dbRow.imageRef = 'nginx:1.1.1';
+      engine.pullImage.mockRejectedValueOnce(new Error('manifest unknown'));
+      await runAndWait(deployment(), followedApp());
+      expect(dbRow.imageRef).toBe('nginx:1.1.1');
     });
   });
 

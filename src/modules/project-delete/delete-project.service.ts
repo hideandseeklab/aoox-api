@@ -10,6 +10,7 @@ import { Repository } from 'typeorm';
 import { Application } from '../application/application.entity';
 import { ApplicationService } from '../application/application.service';
 import { DeleteApplicationService } from '../application/delete-application/delete-application.service';
+import { builtRepositoriesFor } from '../application/built-repositories';
 import { filesVolumeFor, volumeNameFor } from '../application/mounts';
 import { ComposeApp } from '../compose/compose-app.entity';
 import { ComposeRunnerService } from '../compose/compose-runner.service';
@@ -20,6 +21,7 @@ import { DockerService } from '../docker/docker.service';
 import { JobSchedulerService } from '../job/job-scheduler.service';
 import { ManagedDatabase } from '../managed-database/managed-database.entity';
 import { ManagedDatabaseService } from '../managed-database/managed-database.service';
+import { DeleteRepositoryService } from '../registry/delete-repository/delete-repository.service';
 import { ProjectService } from '../project/project.service';
 import { VolumeBackupSchedulerService } from '../volume-backup/volume-backup-scheduler.service';
 
@@ -35,7 +37,7 @@ import { VolumeBackupSchedulerService } from '../volume-backup/volume-backup-sch
  * (typically the Docker daemon or a remote server is unreachable) the delete
  * stops with a 502 naming it, and the project plus whatever was not reached
  * stay, so retrying resumes where it stopped. `purge` also deletes the data
- * volumes, the backup files and their S3 copies; without it they stay and show up as orphan volumes in the Disk card.
+ * volumes, the backup files and their S3 copies, and the repositories aoox built for the applications in the self-hosted registry; without it they stay and show up as orphan volumes in the Disk card.
  */
 @Injectable()
 export class DeleteProjectService {
@@ -52,6 +54,7 @@ export class DeleteProjectService {
     private readonly backupScheduler: BackupSchedulerService,
     private readonly volumeScheduler: VolumeBackupSchedulerService,
     private readonly backupPurge: BackupPurgeService,
+    private readonly registryPurge: DeleteRepositoryService,
     @InjectRepository(Application)
     private readonly appRepo: Repository<Application>,
     @InjectRepository(ManagedDatabase)
@@ -81,6 +84,7 @@ export class DeleteProjectService {
       );
     }
 
+    const destroyed: Application[] = [];
     try {
       for (const stack of stacks) {
         await this.step(`stack "${stack.name}"`, async () => {
@@ -92,6 +96,7 @@ export class DeleteProjectService {
       for (const app of apps) {
         // Throws its own 502 naming the application.
         await this.deleteApplication.destroy(app, { purge });
+        destroyed.push(app);
       }
       for (const db of dbs) {
         await this.step(`database "${db.name}"`, async () => {
@@ -101,6 +106,17 @@ export class DeleteProjectService {
         });
       }
     } finally {
+      // Images aoox built for the applications that are gone (best effort).
+      if (purge) {
+        const repositories = destroyed.flatMap((a) =>
+          builtRepositoriesFor(project.name, a),
+        );
+        await this.registryPurge
+          .purgeRepositories(repositories)
+          .catch((err: unknown) =>
+            this.logger.warn(`Registry purge failed: ${String(err)}`),
+          );
+      }
       // Cron entries of what is gone (jobs, backups) must not outlive it.
       await Promise.all([
         this.jobScheduler.reloadAll(),

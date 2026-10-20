@@ -6,8 +6,8 @@ import {
 import * as managed from '../managed-database/managed-database.service';
 import { DatabaseMountController } from './database-mount.controller';
 
-function build(status: string) {
-  const db = { id: 'db1', status, engine: 'redis', project: {} };
+function build(status: string, engine = 'redis') {
+  const db = { id: 'db1', status, engine, project: {} };
   const mounts = {
     find: jest.fn().mockResolvedValue([]),
     findOne: jest.fn().mockResolvedValue({ id: 'm1', type: 'volume' }),
@@ -20,6 +20,7 @@ function build(status: string) {
     mounts,
     password: jest.fn().mockResolvedValue('pw'),
     reprovision: jest.fn(),
+    dataMountPath: jest.fn().mockResolvedValue(null),
   };
   const ctrl = new DatabaseMountController(
     databases as never,
@@ -92,6 +93,56 @@ describe('DatabaseMountController data path guard', () => {
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(mounts.save).not.toHaveBeenCalled();
     expect(databases.reprovision).not.toHaveBeenCalled();
+  });
+});
+
+describe('DatabaseMountController data path message', () => {
+  it('names the real data mount of a PostgreSQL 18 database, still refusing both roots', async () => {
+    const { ctrl, databases } = build('running', 'postgres');
+    mockAdd(databases);
+    databases.dataMountPath.mockResolvedValue('/var/lib/postgresql');
+    const body = { type: 'volume', name: 'x' } as never;
+    for (const containerPath of [
+      '/var/lib/postgresql/data',
+      '/var/lib/postgresql',
+    ]) {
+      const err = await ctrl
+        .add(user, { id: 'db1' }, {
+          ...(body as object),
+          containerPath,
+        } as never)
+        .catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(BadRequestException);
+      expect((err as Error).message).toContain(
+        'data directory of this database (/var/lib/postgresql).',
+      );
+    }
+  });
+
+  it('lists the possible roots when the real path is unknown', async () => {
+    const { ctrl, databases } = build('running', 'postgres');
+    mockAdd(databases);
+    const err = await ctrl
+      .add(user, { id: 'db1' }, {
+        type: 'volume',
+        name: 'x',
+        containerPath: '/var/lib/postgresql/data',
+      } as never)
+      .catch((e: unknown) => e);
+    expect((err as Error).message).toContain(
+      '/var/lib/postgresql/data or /var/lib/postgresql',
+    );
+  });
+
+  it('does not look the path up for an allowed mount', async () => {
+    const { ctrl, databases } = build('running', 'postgres');
+    mockAdd(databases);
+    await ctrl.add(user, { id: 'db1' }, {
+      type: 'volume',
+      name: 'x',
+      containerPath: '/etc/x',
+    } as never);
+    expect(databases.dataMountPath).not.toHaveBeenCalled();
   });
 });
 

@@ -1,4 +1,4 @@
-import { BadGatewayException } from '@nestjs/common';
+import { BadGatewayException, ConflictException } from '@nestjs/common';
 import * as managed from '../managed-database.service';
 import { UpdateDatabaseController } from './update-database.controller';
 
@@ -132,5 +132,56 @@ describe('UpdateDatabaseController', () => {
     const b = build();
     await b.ctrl.update(user, params, { memoryMb: 256 });
     expect(b.docker.engine.updateContainer).not.toHaveBeenCalled();
+  });
+
+  describe('transient runtime errors while the container restarts', () => {
+    const runcError = new Error(
+      'OCI runtime exec failed: openat2 /sys/fs/cgroup/x/cgroup.controllers: no such file or directory',
+    );
+
+    afterEach(() => jest.useRealTimers());
+
+    it('retries once and succeeds when the container settled', async () => {
+      jest.useFakeTimers();
+      const { ctrl, databases, docker } = build();
+      docker.engine.updateContainer
+        .mockRejectedValueOnce(runcError)
+        .mockResolvedValue(undefined);
+      const pending = ctrl.update(user, params, { memoryMb: 128 });
+      await jest.advanceTimersByTimeAsync(3000);
+      await pending;
+      expect(docker.engine.updateContainer).toHaveBeenCalledTimes(2);
+      expect(databases.repo.update).not.toHaveBeenCalled();
+    });
+
+    it('answers a readable 409 after the retry fails and restores the previous limits', async () => {
+      jest.useFakeTimers();
+      const { ctrl, databases, docker } = build();
+      docker.engine.updateContainer.mockRejectedValue(runcError);
+      const pending = ctrl
+        .update(user, params, { memoryMb: 128 })
+        .catch((e: unknown) => e);
+      await jest.advanceTimersByTimeAsync(3000);
+      const err = await pending;
+      expect(err).toBeInstanceOf(ConflictException);
+      expect((err as Error).message).toBe(
+        'The database container is restarting; try again in a few seconds.',
+      );
+      expect((err as Error).message).not.toMatch(/runc|cgroup/);
+      expect(databases.repo.update).toHaveBeenCalledWith('db1', previous);
+    });
+
+    it('also covers "container is restarting"', async () => {
+      jest.useFakeTimers();
+      const { ctrl, docker } = build();
+      docker.engine.updateContainer.mockRejectedValue(
+        new Error('Container abc is restarting, wait until running'),
+      );
+      const pending = ctrl
+        .update(user, params, { memoryMb: 128 })
+        .catch((e: unknown) => e);
+      await jest.advanceTimersByTimeAsync(3000);
+      expect(await pending).toBeInstanceOf(ConflictException);
+    });
   });
 });

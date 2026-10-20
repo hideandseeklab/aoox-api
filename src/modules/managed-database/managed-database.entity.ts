@@ -105,6 +105,21 @@ export class ManagedDatabase {
   @JoinColumn({ name: 'backup_destination_id' })
   backupDestination: BackupDestination | null;
 
+  /**
+   * When the engine first answered an authenticated connection. Null = never
+   * (or unknown, see `historyTracked`). Once set it is never cleared, and a
+   * database with a value is never wiped by a retry.
+   */
+  @Column({ name: 'ready_at', type: 'timestamptz', nullable: true })
+  readyAt: Date | null;
+
+  /**
+   * True for rows created since `ready_at` exists: a null `readyAt` then really
+   * means "never ready". False for older rows, whose history is unknown.
+   */
+  @Column({ name: 'history_tracked', default: true })
+  historyTracked: boolean;
+
   @Column({ name: 'error_message', type: 'text', nullable: true })
   errorMessage: string | null;
 

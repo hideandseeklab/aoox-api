@@ -11,6 +11,7 @@ import { JobModule } from '../job/job.module';
 import { ManagedDatabase } from '../managed-database/managed-database.entity';
 import { ManagedDatabaseModule } from '../managed-database/managed-database.module';
 import { ProjectModule } from '../project/project.module';
+import { RegistryModule } from '../registry/registry.module';
 import { VolumeBackupModule } from '../volume-backup/volume-backup.module';
 import { DeleteProjectController } from './delete-project.controller';
 import { DeleteProjectService } from './delete-project.service';
@@ -33,6 +34,7 @@ import { DeleteProjectService } from './delete-project.service';
     VolumeBackupModule,
     DatabaseBackupModule,
     BackupPurgeModule,
+    RegistryModule,
   ],
   controllers: [DeleteProjectController],
   providers: [DeleteProjectService],

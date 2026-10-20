@@ -211,7 +211,8 @@ export class ImageUpdateWatcherService {
    * own columns (`repo.update`, never `save`: a PATCH may run meanwhile) and
    * only when `imageRef` is still what was read, so a concurrent settings
    * change wins. `autoUpdateLastTag` remembers the attempt so a failed or
-   * reverted tag is never retried. Returns the deployment id, or null when a
+   * reverted tag is never retried; when the deployment fails the runner puts
+   * `imageRef` back (`revertFollowedTag`). Returns the deployment id, or null when a
    * deployment is active or the settings changed meanwhile (nothing changed).
    */
   private async followTag(
@@ -228,6 +229,7 @@ export class ImageUpdateWatcherService {
     const oldRef = app.imageRef as string;
     const oldTag = parseImageRef(oldRef).tag;
     const newRef = withTag(oldRef, newTag);
+    const oldDigest = app.imageDigest;
     const res = await this.applications.repo.update(
       { id: app.id, imageRef: oldRef },
       {
@@ -246,6 +248,12 @@ export class ImageUpdateWatcherService {
       const d = await this.deploy.queue(app, 'auto-update', {
         trigger: 'auto-update',
         commitMessage: `to ${newTag} (was ${oldTag})`,
+        // A failed deployment puts the previous reference back (see revertFollowedTag).
+        followRevert: {
+          followedRef: newRef,
+          previousRef: oldRef,
+          previousDigest: oldDigest,
+        },
       });
       return d.id;
     } catch (err) {

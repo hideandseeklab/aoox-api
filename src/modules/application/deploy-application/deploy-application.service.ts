@@ -8,12 +8,15 @@ import {
   DeploymentTrigger,
 } from '../deployment.entity';
 import { DeploymentRunnerService } from '../deployment-runner.service';
+import type { FollowRevert } from '../follow-revert';
 
 export interface DeploymentTriggerInfo {
   trigger: DeploymentTrigger;
   commitSha?: string | null;
   commitMessage?: string | null;
   triggeredBy?: string | null;
+  /** Auto-follow only: undo the tag switch if this deployment fails. */
+  followRevert?: FollowRevert;
 }
 
 /** Queues a deployment and returns immediately; the runner does the work. */
@@ -66,7 +69,7 @@ export class DeployApplicationService {
         triggeredBy: info.triggeredBy ?? null,
       }),
     );
-    this.runner.start(deployment, app);
+    this.runner.start(deployment, app, info.followRevert);
     return deployment;
   }
 }

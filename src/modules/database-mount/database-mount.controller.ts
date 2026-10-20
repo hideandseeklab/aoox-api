@@ -37,7 +37,10 @@ import {
   ManagedDatabaseService,
   reprovisionTouchedContainer,
 } from '../managed-database/managed-database.service';
-import { assertMountPathAllowed } from '../managed-database/mount-path';
+import {
+  assertMountPathAllowed,
+  mountPathConflict,
+} from '../managed-database/mount-path';
 
 class DatabaseMountParamsDto {
   @IsUUID()
@@ -100,7 +103,11 @@ export class DatabaseMountController {
     const db = await this.databases.findOwnedOrFail(params.id, user.sub);
     assertNotStarting(db);
     const fields = mountFields(dto, user.role);
-    assertMountPathAllowed(db.engine, fields.containerPath);
+    assertMountPathAllowed(
+      db.engine,
+      fields.containerPath,
+      await this.dataPathIfConflict(db, fields.containerPath),
+    );
     if (
       await this.databases.mounts.findOne({
         where: { databaseId: db.id, containerPath: fields.containerPath },
@@ -127,7 +134,11 @@ export class DatabaseMountController {
     const previous = { ...mount };
     if (dto.containerPath !== undefined) {
       const containerPath = normalizePath(dto.containerPath);
-      assertMountPathAllowed(db.engine, containerPath);
+      assertMountPathAllowed(
+        db.engine,
+        containerPath,
+        await this.dataPathIfConflict(db, containerPath),
+      );
       const clash = await this.databases.mounts.findOne({
         where: { databaseId: db.id, containerPath },
       });
@@ -174,6 +185,15 @@ export class DatabaseMountController {
         .removeVolume(volumeNameFor(db, mount))
         .catch(() => undefined);
     }
+  }
+
+  /** The real data mount path, looked up only when the path is going to be refused. */
+  private async dataPathIfConflict(
+    db: ManagedDatabase,
+    containerPath: string,
+  ): Promise<string | null> {
+    if (!mountPathConflict(db.engine, containerPath)) return null;
+    return this.databases.dataMountPath(db);
   }
 
   private async find(db: ManagedDatabase, mountId: string): Promise<Mount> {

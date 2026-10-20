@@ -194,6 +194,32 @@ describe('ImageUpdateWatcherService version tags', () => {
       'auto-update',
       expect.objectContaining({
         commitMessage: 'to 0.1.1 (was 0.1.0-alpha.2)',
+        followRevert: {
+          followedRef: 'localhost:5077/demo:0.1.1',
+          previousRef: 'localhost:5077/demo:0.1.0-alpha.2',
+          previousDigest: 'sha256:old',
+        },
+      }),
+    );
+  });
+
+  it('hands the digest baseline of the old tag to the revert info', async () => {
+    const { service, queue } = build(
+      () => Promise.resolve('sha256:old'),
+      () => Promise.resolve(TAGS),
+    );
+    const a = semverApp({
+      autoUpdateFollowTags: true,
+      imageDigest: 'sha256:old',
+    });
+    await service.check(a, true, { follow: true });
+    expect(queue).toHaveBeenCalledWith(
+      a,
+      'auto-update',
+      expect.objectContaining({
+        followRevert: expect.objectContaining({
+          previousDigest: 'sha256:old',
+        }) as unknown,
       }),
     );
   });

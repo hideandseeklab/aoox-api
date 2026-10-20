@@ -1,6 +1,7 @@
 import {
   BadGatewayException,
   Body,
+  ConflictException,
   Controller,
   HttpException,
   Logger,
@@ -12,6 +13,10 @@ import { CurrentUser } from '../../auth/current-user.decorator';
 import { JwtAuthGuard } from '../../auth/jwt-auth.guard';
 import type { JwtPayload } from '../../auth/jwt.strategy';
 import { DockerService } from '../../docker/docker.service';
+import {
+  isTransientUpdateError,
+  withTransientRetry,
+} from '../../docker/transient-update-error';
 import { limitsRemoved, resourceLimits } from '../../docker/resource-limits';
 import { DatabaseParamsDto } from '../get-database/get-database.dto';
 import { UpdateDatabaseDto } from './update-database.dto';
@@ -71,9 +76,11 @@ export class UpdateDatabaseController {
             await this.databases.password(saved),
           );
         } else {
-          await this.docker.engine.updateContainer(
-            c.Id,
-            resourceLimits(saved.cpuMillicores, saved.memoryMb),
+          await withTransientRetry(() =>
+            this.docker.engine.updateContainer(
+              c.Id,
+              resourceLimits(saved.cpuMillicores, saved.memoryMb),
+            ),
           );
         }
       }
@@ -88,6 +95,11 @@ export class UpdateDatabaseController {
           );
       }
       if (err instanceof HttpException) throw err;
+      if (isTransientUpdateError(err)) {
+        throw new ConflictException(
+          'The database container is restarting; try again in a few seconds.',
+        );
+      }
       const message = err instanceof Error ? err.message : String(err);
       throw new BadGatewayException(
         `Could not apply the limits on the container: ${message}`,

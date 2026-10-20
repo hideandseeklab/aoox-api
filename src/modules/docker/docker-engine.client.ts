@@ -98,6 +98,8 @@ export interface ContainerInspect {
     Env?: string[];
     Cmd?: string[] | null;
   };
+  /** Mount points of the container (`Name` is set for named volumes). */
+  Mounts?: { Type?: string; Name?: string; Destination: string }[];
   /** Requested publishing — unlike `NetworkSettings.Ports`, still present while stopped. */
   HostConfig?: {
     PortBindings?: Record<

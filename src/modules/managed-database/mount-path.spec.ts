@@ -41,3 +41,51 @@ describe('mountPathConflict', () => {
     expect(() => assertMountPathAllowed('redis', '/etc/r.conf')).not.toThrow();
   });
 });
+
+describe('mountPathConflict message', () => {
+  it('names the data directory the database really uses (PostgreSQL 18)', () => {
+    const msg = mountPathConflict(
+      'postgres',
+      '/var/lib/postgresql/data',
+      '/var/lib/postgresql',
+    );
+    expect(msg).toContain('(/var/lib/postgresql)');
+    expect(msg).not.toContain('postgresql/data)');
+  });
+
+  it('names the legacy path for a database that uses it', () => {
+    expect(
+      mountPathConflict(
+        'postgres',
+        '/var/lib/postgresql',
+        '/var/lib/postgresql/data',
+      ),
+    ).toContain('(/var/lib/postgresql/data)');
+  });
+
+  it('lists every refused root when the real path is unknown', () => {
+    const msg = mountPathConflict('postgres', '/var/lib/postgresql/data');
+    expect(msg).toContain('/var/lib/postgresql/data or /var/lib/postgresql');
+  });
+
+  it('single-root engines are unchanged', () => {
+    expect(mountPathConflict('redis', '/data')).toContain('(/data)');
+  });
+
+  it('the rule itself still refuses both PostgreSQL roots', () => {
+    expect(
+      mountPathConflict(
+        'postgres',
+        '/var/lib/postgresql/data',
+        '/var/lib/postgresql',
+      ),
+    ).not.toBeNull();
+    expect(
+      mountPathConflict(
+        'postgres',
+        '/var/lib/postgresql',
+        '/var/lib/postgresql',
+      ),
+    ).not.toBeNull();
+  });
+});

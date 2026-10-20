@@ -5,9 +5,9 @@ import type { ProjectRole } from '../../project/project-member.entity';
 import { ManagedDatabase } from '../managed-database.entity';
 import {
   containerNameForDb,
-  INTERRUPTED_MESSAGE,
   ManagedDatabaseService,
 } from '../managed-database.service';
+import { retryModeFor, type RetryMode } from '../retry-plan';
 
 export interface ManagedDatabaseDetail extends ManagedDatabase {
   container: { id: string; state: string; status: string } | null;
@@ -18,6 +18,11 @@ export interface ManagedDatabaseDetail extends ManagedDatabase {
    * not the row an API restart interrupted (that one must be recreated).
    */
   retryable: boolean;
+  /**
+   * What a retry does to the data volume: `fresh-volume` (never ready, nothing
+   * to lose: the volume is recreated) or `reuse-volume` (kept). Null = not retryable.
+   */
+  retryMode: RetryMode | null;
 }
 
 @Injectable()
@@ -34,12 +39,13 @@ export class GetDatabaseService {
     const c = await this.docker
       .findContainerByName(containerNameForDb(db))
       .catch(() => null);
+    const retryMode = retryModeFor(db);
     return {
       ...db,
       container: c ? { id: c.Id, state: c.State, status: c.Status } : null,
       projectRole,
-      retryable:
-        db.status === 'error' && db.errorMessage !== INTERRUPTED_MESSAGE,
+      retryable: retryMode !== null,
+      retryMode,
     };
   }
 }

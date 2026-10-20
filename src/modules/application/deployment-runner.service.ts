@@ -45,7 +45,9 @@ import { Application, ApplicationStatus } from './application.entity';
 import { ApplicationService, containerNameFor } from './application.service';
 import { Deployment, DeploymentStatus } from './deployment.entity';
 import { DeploymentEventsService } from './deployment-events.service';
+import { slugPart } from './built-repositories';
 import { triggerSummary } from './trigger-summary';
+import { revertFollowedTag, type FollowRevert } from './follow-revert';
 import { EnvResolverService, parseEnvLines } from './env-resolver.service';
 import { recordStep } from './deployment-steps';
 import { gitContextRef, rootDirectoryError } from './root-directory';
@@ -91,7 +93,11 @@ export class DeploymentRunnerService {
    * config) already calls, so `deployment:created` fires exactly once
    * regardless of what queued it.
    */
-  start(deployment: Deployment, app: Application): void {
+  start(
+    deployment: Deployment,
+    app: Application,
+    followRevert?: FollowRevert,
+  ): void {
     this.events.emitCreated({
       deploymentId: deployment.id,
       applicationId: app.id,
@@ -100,12 +106,16 @@ export class DeploymentRunnerService {
       commitMessage: deployment.commitMessage,
       triggeredBy: deployment.triggeredBy,
     });
-    void this.run(deployment, app).catch((err) =>
+    void this.run(deployment, app, followRevert).catch((err) =>
       this.logger.error(`Deployment ${deployment.id} crashed: ${String(err)}`),
     );
   }
 
-  private async run(deployment: Deployment, app: Application): Promise<void> {
+  private async run(
+    deployment: Deployment,
+    app: Application,
+    followRevert?: FollowRevert,
+  ): Promise<void> {
     const log = new DeploymentLog(deployment, this.applications, this.events);
     await log.note(triggerSummary(deployment));
     let baseline: DigestBaseline | undefined;
@@ -150,6 +160,18 @@ export class DeploymentRunnerService {
       // mark the app as errored when the container itself was replaced.
       if (deployment.status === 'starting') {
         await this.recordFailure(app, log, baseline, err);
+      }
+      if (followRevert) {
+        // The followed tag did not deploy: do not leave the broken tag configured.
+        await revertFollowedTag(
+          this.applications.repo,
+          app.id,
+          followRevert,
+        ).catch((e: unknown) =>
+          this.logger.warn(
+            `Could not restore the image reference of ${app.name}: ${String(e)}`,
+          ),
+        );
       }
       await log.finish('failed', `ERROR: ${message}`, message);
     }
@@ -1003,16 +1025,6 @@ interface DigestBaseline {
   imageRef: string;
   imageDigest: string | null;
   imageCheckedAt: Date;
-}
-
-function slugPart(s: string): string {
-  return (
-    s
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-+|-+$/g, '')
-      .slice(0, 40) || 'project'
-  );
 }
 
 /** What the runner needs from a log sink (deployment row or preview row). */
