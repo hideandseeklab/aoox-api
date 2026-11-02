@@ -8,6 +8,10 @@ Versions below 1.0.0 may include breaking changes in a minor release.
 
 ## [Unreleased]
 
+### Security
+
+- **Registry passwords are no longer returned by provisioning or reset.** `POST /registries/self-hosted` (also with `replace`) now answers `{registry, username}` and `POST /registries/self-hosted/password` answers `{username}`; the generated password used to appear in those response bodies. Read it with the audited `POST /registries/:id/credentials/reveal` (owner/admin). The dashboard and `aoox registry password --reset` do this for you; other API clients that read `password` from these responses must call the reveal route.
+
 ### Changed
 
 - **The "update available" badge shows up sooner.** The published-version check now runs hourly instead of every 6 hours, and an owner loading the dashboard triggers a background check when the last one is older than 30 minutes (at most one attempt per 30 minutes, even when the registry is unreachable). The badge therefore appears within about an hour, or on the owner's next page load once the last check is older than 30 minutes; the current request still answers from the cache.

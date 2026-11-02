@@ -27,7 +27,12 @@ function setup(opts: { ping?: boolean; row?: boolean; container?: boolean }) {
       create: jest.fn((x: object) => x),
       save: jest.fn((x: object) => Promise.resolve({ id: 'new', ...x })),
     },
-    toDto: jest.fn((x: object) => x),
+    // Like RegistryService.toDto: never carries passwordEncrypted.
+    toDto: jest.fn((x: { id: string; name: string; url: string }) => ({
+      id: x.id,
+      name: x.name,
+      url: x.url,
+    })),
   };
   const destinations = {
     resolve: jest.fn().mockImplementation(() => {
@@ -45,6 +50,25 @@ function setup(opts: { ping?: boolean; row?: boolean; container?: boolean }) {
 }
 
 describe('ProvisionSelfHostedService', () => {
+  it('stores the encrypted password but never returns it', async () => {
+    const { service, registries } = setup({});
+    const out = await service.execute({});
+    expect(registries.encryptPassword).toHaveBeenCalledWith('pw');
+    expect(registries.repo.save).toHaveBeenCalledWith(
+      expect.objectContaining({ passwordEncrypted: 'enc' }),
+    );
+    expect(out).not.toHaveProperty('password');
+    expect(JSON.stringify(out)).not.toContain('pw"');
+    expect(JSON.stringify(out)).not.toContain('enc');
+    expect(out.username).toBe('aoox');
+  });
+
+  it('replace path returns no password either', async () => {
+    const { service } = setup({ container: true });
+    const out = await service.execute({ replace: true });
+    expect(out).not.toHaveProperty('password');
+  });
+
   it('provisions when nothing exists', async () => {
     const { service, selfHosted } = setup({});
     await service.execute({});

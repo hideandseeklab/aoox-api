@@ -1,5 +1,5 @@
 export class ResetRegistryPasswordResponseDto {
   username: string;
-  /** The new password. Also retrievable later through "Show password". */
-  password: string;
+  // No password here: read the new one through
+  // POST /registries/:id/credentials/reveal (owner/admin, audit-logged).
 }

@@ -66,7 +66,7 @@ export class ResetRegistryPasswordService {
     }
 
     this.logger.log('Self-hosted registry password was reset');
-    return { username: registry.username ?? 'aoox', password };
+    return { username: registry.username ?? 'aoox' };
   }
 
   /** Puts the previous htpasswd back and restarts so the registry uses it again. */

@@ -64,16 +64,29 @@ function setup(
 
 describe('ResetRegistryPasswordService', () => {
   it('rewrites htpasswd, restarts, then stores the new encrypted password', async () => {
-    const { service, calls, row, selfHosted } = setup();
+    const { service, calls, row, selfHosted, registries } = setup();
     const out = await service.execute();
+    const password = (
+      registries.encryptPassword.mock.calls as string[][]
+    )[0][0];
     expect(calls).toEqual(['write', 'restart', 'save']);
     expect(selfHosted.writeHtpasswd).toHaveBeenCalledWith(
-      expect.stringContaining(`hash-of-${out.password}`),
+      expect.stringContaining(`hash-of-${password}`),
       true,
     );
-    expect(row.passwordEncrypted).toBe(`enc(${out.password})`);
+    expect(row.passwordEncrypted).toBe(`enc(${password})`);
     expect(out.username).toBe('aoox');
-    expect(out.password.length).toBeGreaterThanOrEqual(24);
+    expect(password.length).toBeGreaterThanOrEqual(24);
+  });
+
+  it('never returns the password in the response', async () => {
+    const { service, registries } = setup();
+    const out = await service.execute();
+    const password = (
+      registries.encryptPassword.mock.calls as string[][]
+    )[0][0];
+    expect(out).toEqual({ username: 'aoox' });
+    expect(JSON.stringify(out)).not.toContain(password);
   });
 
   it('keeps the old password when writing htpasswd fails', async () => {

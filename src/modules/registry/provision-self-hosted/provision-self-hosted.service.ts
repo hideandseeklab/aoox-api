@@ -67,6 +67,6 @@ export class ProvisionSelfHostedService {
       storageDestinationId: dto.destinationId ?? null,
     });
     const saved = await this.registries.repo.save(entity);
-    return { registry: this.registries.toDto(saved), username, password };
+    return { registry: this.registries.toDto(saved), username };
   }
 }

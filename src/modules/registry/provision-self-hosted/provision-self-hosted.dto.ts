@@ -26,7 +26,7 @@ export class ProvisionSelfHostedDto {
 
 export class ProvisionSelfHostedResponseDto {
   registry: RegistryDto;
-  /** Shown once so the operator can `docker login`; stored encrypted afterwards. */
   username: string;
-  password: string;
+  // No password here: create responses never carry secrets. Read it through
+  // POST /registries/:id/credentials/reveal (owner/admin, audit-logged).
 }
