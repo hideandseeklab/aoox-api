@@ -8,6 +8,8 @@ Versions below 1.0.0 may include breaking changes in a minor release.
 
 ## [Unreleased]
 
+## [0.1.0-beta.0] - 2026-11-03
+
 ### Security
 
 - **Registry passwords are no longer returned by provisioning or reset.** `POST /registries/self-hosted` (also with `replace`) now answers `{registry, username}` and `POST /registries/self-hosted/password` answers `{username}`; the generated password used to appear in those response bodies. Read it with the audited `POST /registries/:id/credentials/reveal` (owner/admin). The dashboard and `aoox registry password --reset` do this for you; other API clients that read `password` from these responses must call the reveal route.
@@ -716,7 +718,8 @@ Read before upgrading; back up first (Settings → Infrastructure → Instance b
 - Monitoring with metrics history, disk cleanup tooling, and project/instance export-import for
   backup and migration between hosts.
 
-[Unreleased]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-alpha.13...HEAD
+[Unreleased]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-beta.0...HEAD
+[0.1.0-beta.0]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-alpha.13...v0.1.0-beta.0
 [0.1.0-alpha.13]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-alpha.12...v0.1.0-alpha.13
 [0.1.0-alpha.12]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-alpha.11...v0.1.0-alpha.12
 [0.1.0-alpha.11]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-alpha.10...v0.1.0-alpha.11
