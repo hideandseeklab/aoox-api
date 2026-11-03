@@ -284,7 +284,7 @@ describe('ProxyService custom certificate support', () => {
       expect.arrayContaining([
         '--providers.file.directory=/etc/traefik/dynamic',
         '--providers.file.watch=true',
-        '--serverstransport.forwardingtimeouts.dialtimeout=2s',
+        '--serverstransport.forwardingtimeouts.dialtimeout=1s',
       ]),
     );
     expect(body.HostConfig.Binds).toEqual(

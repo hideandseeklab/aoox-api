@@ -314,7 +314,7 @@ export class ProxyService {
       // Backends are containers on the local bridge/overlay: a dial that takes
       // longer than this is a dead server (default 30 s hangs the request
       // instead of letting the router retry middleware re-send it).
-      '--serverstransport.forwardingtimeouts.dialtimeout=2s',
+      '--serverstransport.forwardingtimeouts.dialtimeout=1s',
       '--log.level=INFO',
     ];
     const email = settings.acmeEmail;

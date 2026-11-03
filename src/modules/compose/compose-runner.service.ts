@@ -7,9 +7,19 @@ import { Not, Repository } from 'typeorm';
 import { Application } from '../application/application.entity';
 import { EnvResolverService } from '../application/env-resolver.service';
 import { Mount } from '../application/mount.entity';
-import { filePath, prepareMounts, volumeNameFor } from '../application/mounts';
+import {
+  filePath,
+  filesVolumeFor,
+  prepareMounts,
+  volumeNameFor,
+} from '../application/mounts';
 import { shellQuote, tarFiles } from '../application/nixpacks-builder.service';
 import { DockerEngineError } from '../docker/docker-engine.client';
+import {
+  STACK_HEALTH_POLL_MS,
+  STACK_HEALTH_WAIT_MS,
+  evaluateStackHealth,
+} from './compose-health';
 import { DockerService } from '../docker/docker.service';
 import { GitCredentialService } from '../git-credential/git-credential.service';
 import { NotificationService } from '../notification/notification.service';
@@ -82,6 +92,9 @@ export interface RunOptions {
 export class ComposeRunnerService {
   private readonly logger = new Logger(ComposeRunnerService.name);
   private readonly active = new Set<string>();
+  /** Health wait limits; instance fields so specs can shorten them. */
+  healthWaitMs = STACK_HEALTH_WAIT_MS;
+  healthPollMs = STACK_HEALTH_POLL_MS;
 
   constructor(
     private readonly compose: ComposeService,
@@ -189,6 +202,11 @@ export class ComposeRunnerService {
       exitCode = code;
       if (code !== 0)
         throw new Error(`docker compose exited with code ${code}`);
+      // `up -d` returns once containers are started, but Traefik ignores a
+      // container until its health check passes: stay `deploying` until then.
+      if (action === 'deploy' || action === 'start') {
+        await this.waitHealthy(app, append);
+      }
 
       const status: ComposeApp['status'] =
         action === 'stop' ? 'stopped' : action === 'down' ? 'idle' : 'running';
@@ -211,6 +229,60 @@ export class ComposeRunnerService {
       });
       if (action === 'deploy') this.notifyFailure(app, message);
       return { ok: false, code: exitCode, message };
+    }
+  }
+
+  /**
+   * Polls the stack's containers (label `com.docker.compose.project`) until
+   * every running one that has a health check is `healthy`. Polling from the
+   * API rather than `docker compose up --wait`: `--wait` also waits for every
+   * container to be running/healthy and, depending on the Compose version,
+   * treats a one-shot service that exits (migration job, `restart: "no"`) as
+   * a failure, and it hides which service failed behind one exit code; here
+   * exited containers are ignored and the message names the service and its
+   * last probe output. Throws on `unhealthy` or when the wait runs out.
+   */
+  private async waitHealthy(
+    app: ComposeApp,
+    append: (text: string) => void,
+  ): Promise<void> {
+    const engine = this.docker.engine;
+    const deadline = Date.now() + this.healthWaitMs;
+    let announced = '';
+    for (;;) {
+      const listed = await engine.listContainers({
+        label: [`com.docker.compose.project=${composeProjectFor(app)}`],
+      });
+      const inspected = (
+        await Promise.all(
+          listed
+            .filter((c) => c.State === 'running')
+            .map((c) => engine.inspectContainer(c.Id)),
+        )
+      ).filter((c): c is NonNullable<typeof c> => c !== null);
+      const health = evaluateStackHealth(inspected);
+      if (health.state === 'ready') {
+        if (announced) append('All services are healthy\n');
+        return;
+      }
+      if (health.state === 'failed') {
+        throw new Error(
+          `Service "${health.service}" is unhealthy: ${health.reason}`,
+        );
+      }
+      const names = health.pending.join(', ');
+      if (names !== announced) {
+        announced = names;
+        append(
+          `==> Waiting for ${health.pending.length} service(s) to become healthy: ${names}\n`,
+        );
+      }
+      if (Date.now() >= deadline) {
+        throw new Error(
+          `Timed out after ${Math.round(this.healthWaitMs / 1000)} s waiting for healthy services: ${names}`,
+        );
+      }
+      await new Promise((r) => setTimeout(r, this.healthPollMs));
     }
   }
 
@@ -497,6 +569,36 @@ export class ComposeRunnerService {
     }
     if (checkout || containers.length > 0) {
       await engine.removeVolume(composeVolumeFor(app)).catch(() => undefined);
+    }
+    // `down --volumes` never sees these: aoox creates them and compose only
+    // declares them `external`, and `file` mounts are bind-mounted from the
+    // files volume. They go with the stack unless the caller keeps volumes
+    // (project delete without purge); then they show up as orphans.
+    if (
+      !options.keepVolumes &&
+      (checkout || containers.length > 0 || app.deployedAt)
+    ) {
+      await this.removeMountVolumes(app);
+    }
+  }
+
+  /** `volume` mounts' volumes and the shared files volume; 404 = already gone, other failures throw. */
+  private async removeMountVolumes(app: ComposeApp): Promise<void> {
+    const mounts = await this.mountsRepo.find({
+      where: { composeAppId: app.id },
+    });
+    const owner = { slug: app.slug };
+    const names = [
+      ...mounts
+        .filter((m) => m.type === 'volume')
+        .map((m) => volumeNameFor(owner, m)),
+      filesVolumeFor(owner),
+    ];
+    for (const name of names) {
+      await this.docker.engine.removeVolume(name).catch((err: unknown) => {
+        if (err instanceof DockerEngineError && err.status === 404) return;
+        throw err;
+      });
     }
   }
 

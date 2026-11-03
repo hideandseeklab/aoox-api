@@ -15,6 +15,27 @@ import {
 } from './compose-runner.service';
 import { ComposeService } from './compose.service';
 
+const health = (
+  service: string,
+  status: 'starting' | 'healthy' | 'unhealthy' | undefined,
+  over: { running?: boolean; log?: string } = {},
+) => ({
+  Id: `id-${service}`,
+  Name: `/aoox-x-${service}-1`,
+  State: {
+    Running: over.running ?? true,
+    ...(status
+      ? {
+          Health: {
+            Status: status,
+            Log: over.log ? [{ ExitCode: 1, Output: over.log }] : [],
+          },
+        }
+      : {}),
+  },
+  Config: { Labels: { 'com.docker.compose.service': service } },
+});
+
 function app(over: Partial<ComposeApp> = {}): ComposeApp {
   return {
     id: 'c1',
@@ -63,6 +84,7 @@ describe('ComposeRunnerService', () => {
     removeContainer: jest.fn().mockResolvedValue(undefined),
     removeVolume: jest.fn().mockResolvedValue(undefined),
     listContainers: jest.fn().mockResolvedValue([]),
+    inspectContainer: jest.fn().mockResolvedValue(null),
   };
   const docker = {
     engine,
@@ -251,6 +273,113 @@ describe('ComposeRunnerService', () => {
     expect(script).not.toContain('--force-recreate');
   });
 
+  describe('health wait after up', () => {
+    const stack = (...names: string[]) =>
+      engine.listContainers.mockResolvedValue(
+        names.map((n) => ({ Id: `id-${n}`, State: 'running' })),
+      );
+    /** Each round is one poll; the last round repeats. */
+    const inspectSeq = (...rounds: unknown[][]) => {
+      engine.inspectContainer.mockReset();
+      let seen = 0;
+      const per = rounds[0].length;
+      engine.inspectContainer.mockImplementation(() => {
+        const round = Math.min(Math.floor(seen / per), rounds.length - 1);
+        return Promise.resolve(rounds[round][seen++ % per]);
+      });
+    };
+    beforeEach(() => {
+      svc.healthPollMs = 5;
+      svc.healthWaitMs = 80;
+      engine.listContainers.mockReset();
+      engine.listContainers.mockResolvedValue([]);
+    });
+    afterEach(() => {
+      svc.healthPollMs = 2000;
+      svc.healthWaitMs = 300_000;
+      engine.listContainers.mockReset();
+      engine.listContainers.mockResolvedValue([]);
+      engine.inspectContainer.mockReset();
+      engine.inspectContainer.mockResolvedValue(null);
+    });
+
+    it('stays deploying until the health-checked container is healthy, then running', async () => {
+      stack('web');
+      inspectSeq(
+        [health('web', 'starting')],
+        [health('web', 'starting')],
+        [health('web', 'healthy')],
+      );
+      const seen: unknown[] = [];
+      update.mockImplementation((_id, patch) => {
+        seen.push(patch.status);
+        return Promise.resolve();
+      });
+      const out = await svc.run(app(), 'deploy');
+      update.mockResolvedValue(undefined);
+      expect(out.ok).toBe(true);
+      expect(seen).toEqual(['deploying', 'running']);
+      expect(engine.inspectContainer.mock.calls.length).toBeGreaterThanOrEqual(
+        3,
+      );
+      expect(String(lastUpdate().logs)).toContain(
+        'Waiting for 1 service(s) to become healthy: web',
+      );
+      expect(String(lastUpdate().logs)).toContain('All services are healthy');
+    });
+
+    it('containers without a health check and exited one-shots do not block', async () => {
+      engine.listContainers.mockResolvedValue([
+        { Id: 'id-db', State: 'running' },
+        { Id: 'id-migrate', State: 'exited' },
+      ]);
+      engine.inspectContainer.mockImplementation((id: string) =>
+        Promise.resolve(
+          id === 'id-db'
+            ? health('db', undefined)
+            : health('migrate', 'starting', { running: false }),
+        ),
+      );
+      const out = await svc.run(app(), 'deploy');
+      expect(out.ok).toBe(true);
+      expect(lastUpdate().status).toBe('running');
+      expect(engine.inspectContainer).toHaveBeenCalledTimes(1);
+    });
+
+    it('an unhealthy container fails the run at once, naming the service and the probe output', async () => {
+      stack('web');
+      inspectSeq([health('web', 'unhealthy', { log: 'connection refused' })]);
+      const out = await svc.run(app(), 'deploy');
+      expect(out.ok).toBe(false);
+      expect(out.message).toMatch(/Service "web" is unhealthy/);
+      expect(out.message).toMatch(/exit 1: connection refused/);
+      expect(lastUpdate().status).toBe('error');
+      expect(lastRunUpdate()).toMatchObject({ status: 'failed' });
+      expect(broadcast).toHaveBeenCalled();
+    });
+
+    it('a timeout fails the run and names what was still pending', async () => {
+      stack('web', 'api');
+      inspectSeq([health('web', 'starting'), health('api', 'healthy')]);
+      const out = await svc.run(app(), 'deploy');
+      expect(out.ok).toBe(false);
+      expect(out.message).toMatch(
+        /Timed out after \d+ s waiting for healthy services: web$/,
+      );
+      expect(lastUpdate().status).toBe('error');
+    });
+
+    it('start waits too; stop and down do not look at health', async () => {
+      stack('web');
+      inspectSeq([health('web', 'unhealthy')]);
+      expect((await svc.run(app(), 'start')).ok).toBe(false);
+      engine.listContainers.mockClear();
+      expect((await svc.run(app(), 'stop')).ok).toBe(true);
+      expect((await svc.run(app(), 'down')).ok).toBe(true);
+      expect(engine.listContainers).not.toHaveBeenCalled();
+    });
+  });
+
   describe('destroy', () => {
     const deployed = () => app({ deployedAt: new Date() });
     const running = () =>
@@ -272,6 +401,47 @@ describe('ComposeRunnerService', () => {
       expect(engine.removeVolume).toHaveBeenCalledWith(
         'aoox_compose_stack_abc123',
       );
+    });
+
+    it('removes the files volume and volume-mount volumes with the stack, 404 tolerated', async () => {
+      running();
+      mountsRepo.find.mockResolvedValueOnce([
+        { type: 'volume', service: 'web', name: 'data' },
+        { type: 'file', service: 'web', name: 'index.html' },
+      ]);
+      engine.removeVolume.mockImplementation((n: string) =>
+        n === 'aoox_compose_stack_abc123_files'
+          ? Promise.reject(new DockerEngineError(404, 'gone'))
+          : Promise.resolve(),
+      );
+      await svc.destroy(deployed());
+      engine.removeVolume.mockResolvedValue(undefined);
+      const names = engine.removeVolume.mock.calls.map(
+        (c: unknown[]) => c[0] as string,
+      );
+      expect(names).toEqual([
+        'aoox_compose_stack_abc123',
+        'aoox_compose_stack_abc123_web_data',
+        'aoox_compose_stack_abc123_files',
+      ]);
+    });
+
+    it('a failing mount volume removal (not 404) is a failure', async () => {
+      running();
+      engine.removeVolume
+        .mockResolvedValueOnce(undefined)
+        .mockRejectedValueOnce(new DockerEngineError(500, 'busy'));
+      await expect(svc.destroy(deployed())).rejects.toThrow('busy');
+    });
+
+    it('keepVolumes (project delete without purge) leaves the files and mount volumes', async () => {
+      running();
+      await svc.destroy(deployed(), { keepVolumes: true });
+      const names = engine.removeVolume.mock.calls.map(
+        (c: unknown[]) => c[0] as string,
+      );
+      expect(names).toEqual(['aoox_compose_stack_abc123']);
+      expect(mountsRepo.find).not.toHaveBeenCalled();
     });
 
     it('keepVolumes runs down without --volumes', async () => {
