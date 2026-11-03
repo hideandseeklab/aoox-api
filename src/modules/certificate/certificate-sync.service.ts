@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Domain } from '../application/domain.entity';
+import { daemonKey } from '../application/previous-daemons';
 import { tarFiles } from '../application/nixpacks-builder.service';
 import { composeLabels, DockerHandle } from '../docker/docker.service';
 import { ProxyService, ProxySettings } from '../proxy/proxy.service';
@@ -92,8 +93,15 @@ export class CertificateSyncService {
       .innerJoin('d.application', 'a')
       .select('DISTINCT d.certificate_id', 'id')
       .where('d.certificate_id IS NOT NULL');
-    if (serverId) qb.andWhere('a.server_id = :serverId', { serverId });
-    else qb.andWhere('a.server_id IS NULL');
+    // Apps that were moved away from this daemon and still await their first
+    // deploy elsewhere keep serving from it (previous_daemons): their
+    // certificates must stay until the runner retires the daemon.
+    qb.andWhere(
+      serverId
+        ? '(a.server_id = :serverId OR a.previous_daemons @> CAST(:pending AS jsonb))'
+        : '(a.server_id IS NULL OR a.previous_daemons @> CAST(:pending AS jsonb))',
+      { serverId, pending: JSON.stringify([daemonKey(serverId)]) },
+    );
     return (await qb.getRawMany<{ id: string }>()).map((r) => r.id);
   }
 

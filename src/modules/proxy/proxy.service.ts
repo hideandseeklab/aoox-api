@@ -123,6 +123,10 @@ function byMiddlewares(
   return [...groups.values()];
 }
 
+/** Backend attempts per request (the dead server, then the live ones). */
+export const RETRY_ATTEMPTS = 3;
+export const RETRY_INITIAL_INTERVAL = '100ms';
+
 @Injectable()
 export class ProxyService {
   private readonly logger = new Logger(ProxyService.name);
@@ -307,6 +311,10 @@ export class ProxyService {
       '--providers.file.watch=true',
       `--entrypoints.web.address=:80`,
       `--entrypoints.websecure.address=:443`,
+      // Backends are containers on the local bridge/overlay: a dial that takes
+      // longer than this is a dead server (default 30 s hangs the request
+      // instead of letting the router retry middleware re-send it).
+      '--serverstransport.forwardingtimeouts.dialtimeout=2s',
       '--log.level=INFO',
     ];
     const email = settings.acmeEmail;
@@ -399,11 +407,13 @@ export class ProxyService {
     port: number,
     domains: RoutedDomain[],
     settings: ProxySettings = this.localSettings,
+    extra: { retry?: boolean } = {},
   ): Record<string, string> {
     return ProxyService.buildLabels(routerName, port, domains, {
       httpsPort: settings.httpsPort,
       acme: settings.acmeEmail !== null,
       dnsResolver: settings.dnsChallenge === true,
+      retry: extra.retry === true,
     });
   }
 
@@ -425,7 +435,13 @@ export class ProxyService {
     routerName: string,
     port: number,
     domains: RoutedDomain[],
-    opts: { httpsPort: number; acme: boolean; dnsResolver?: boolean },
+    opts: {
+      httpsPort: number;
+      acme: boolean;
+      dnsResolver?: boolean;
+      /** Put a `retry` middleware in front of every serving router (see RETRY_ATTEMPTS). */
+      retry?: boolean;
+    },
   ): Record<string, string> {
     if (domains.length === 0) return {};
     const rule = (hosts: string[]) =>
@@ -458,6 +474,18 @@ export class ProxyService {
       [`traefik.http.services.${routerName}.loadbalancer.server.port`]:
         String(port),
     };
+    // Retry first, so it also wraps the operator middlewares. It only re-sends
+    // a request when the backend produced no response (refused/reset), which is
+    // what a container that was just removed looks like to Traefik for a moment.
+    const retryName = `${routerName}-retry`;
+    if (opts.retry) {
+      labels[`traefik.http.middlewares.${retryName}.retry.attempts`] =
+        String(RETRY_ATTEMPTS);
+      labels[`traefik.http.middlewares.${retryName}.retry.initialinterval`] =
+        RETRY_INITIAL_INTERVAL;
+    }
+    const chainOf = (list: string[]): string[] =>
+      opts.retry ? [`${retryName}@docker`, ...list] : list;
     for (const g of byMiddlewares(
       domains.filter((d) => plain.includes(d.host)),
     )) {
@@ -465,9 +493,9 @@ export class ProxyService {
       labels[`traefik.http.routers.${name}.rule`] = rule(g.hosts);
       labels[`traefik.http.routers.${name}.entrypoints`] = 'web';
       labels[`traefik.http.routers.${name}.service`] = routerName;
-      if (g.middlewares.length > 0) {
-        labels[`traefik.http.routers.${name}.middlewares`] =
-          g.middlewares.join(',');
+      const chain = chainOf(g.middlewares);
+      if (chain.length > 0) {
+        labels[`traefik.http.routers.${name}.middlewares`] = chain.join(',');
       }
     }
     if (redirect) {
@@ -494,9 +522,9 @@ export class ProxyService {
       labels[`traefik.http.routers.${name}.service`] = routerName;
       labels[`traefik.http.routers.${name}.tls`] = 'true';
       labels[`traefik.http.routers.${name}.tls.certresolver`] = CERT_RESOLVER;
-      if (g.middlewares.length > 0) {
-        labels[`traefik.http.routers.${name}.middlewares`] =
-          g.middlewares.join(',');
+      const chain = chainOf(g.middlewares);
+      if (chain.length > 0) {
+        labels[`traefik.http.routers.${name}.middlewares`] = chain.join(',');
       }
     }
     // DNS-01 routers: one per distinct wildcard base (and middleware list).
@@ -523,9 +551,9 @@ export class ProxyService {
           labels[`traefik.http.routers.${name}.tls.domains[0].sans`] =
             `*.${main}`;
         }
-        if (g.middlewares.length > 0) {
-          labels[`traefik.http.routers.${name}.middlewares`] =
-            g.middlewares.join(',');
+        const chain = chainOf(g.middlewares);
+        if (chain.length > 0) {
+          labels[`traefik.http.routers.${name}.middlewares`] = chain.join(',');
         }
       }
     }
@@ -539,9 +567,9 @@ export class ProxyService {
       labels[`traefik.http.routers.${name}.entrypoints`] = 'websecure';
       labels[`traefik.http.routers.${name}.service`] = routerName;
       labels[`traefik.http.routers.${name}.tls`] = 'true';
-      if (g.middlewares.length > 0) {
-        labels[`traefik.http.routers.${name}.middlewares`] =
-          g.middlewares.join(',');
+      const chain = chainOf(g.middlewares);
+      if (chain.length > 0) {
+        labels[`traefik.http.routers.${name}.middlewares`] = chain.join(',');
       }
     }
     return labels;

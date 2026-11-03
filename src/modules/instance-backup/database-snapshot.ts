@@ -21,10 +21,38 @@ export interface Snapshot {
   tables: SnapshotTable[];
 }
 
+/** One foreign key of the live schema: `table` references `referenced`. */
+export interface ForeignKeyEdge {
+  table: string;
+  referenced: string;
+}
+
+/**
+ * Reads the foreign keys that really exist in the public schema. Several FKs
+ * only exist in hand-written migrations (no TypeORM relation), so entity
+ * metadata alone gives a wrong order.
+ */
+export const FOREIGN_KEYS_SQL = `
+  SELECT c.conrelid::regclass::text AS "table",
+         c.confrelid::regclass::text AS "referenced"
+  FROM pg_constraint c
+  JOIN pg_class t ON t.oid = c.conrelid
+  JOIN pg_namespace n ON n.oid = t.relnamespace
+  JOIN pg_class r ON r.oid = c.confrelid
+  JOIN pg_namespace rn ON rn.oid = r.relnamespace
+  WHERE c.contype = 'f' AND n.nspname = 'public' AND rn.nspname = 'public'`;
+
+/** `regclass::text` quotes names that need it; strip the quotes. */
+export function plainTableName(name: string): string {
+  return name.replace(/^public\./, '').replace(/^"(.*)"$/, '$1');
+}
+
 /**
  * Table names ordered so every table comes after the tables it references
  * (Kahn); throws on a cycle because such a schema could not be restored
- * with plain inserts. Pure, unit-tested.
+ * with plain inserts. Edges come from the live schema (`dbForeignKeys`) merged
+ * with the entity metadata relations; self references and references to tables
+ * outside the set are ignored. Pure, unit-tested.
  */
 export function tableOrder(
   metadatas: Array<
@@ -34,6 +62,7 @@ export function tableOrder(
       }>;
     }
   >,
+  dbForeignKeys: ForeignKeyEdge[] = [],
 ): string[] {
   const deps = new Map<string, Set<string>>();
   for (const m of metadatas) {
@@ -45,6 +74,12 @@ export function tableOrder(
           .filter((t) => t !== m.tableName),
       ),
     );
+  }
+  for (const fk of dbForeignKeys) {
+    const table = plainTableName(fk.table);
+    const referenced = plainTableName(fk.referenced);
+    if (table === referenced) continue;
+    deps.get(table)?.add(referenced);
   }
   const out: string[] = [];
   const done = new Set<string>();

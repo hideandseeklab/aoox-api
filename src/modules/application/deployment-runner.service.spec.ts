@@ -1,4 +1,6 @@
+import { NotFoundException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
+import { CertificateSyncService } from '../certificate/certificate-sync.service';
 import { DomainConflictService } from '../domain-conflict/domain-conflict.service';
 import { DockerService } from '../docker/docker.service';
 import { RegistryService } from '../registry/registry.service';
@@ -57,6 +59,8 @@ describe('DeploymentRunnerService', () => {
     renameContainer: jest.fn(),
     inspectContainer: jest.fn(),
     containerPathExists: jest.fn().mockResolvedValue(true),
+    stopContainer: jest.fn().mockResolvedValue(undefined),
+    listContainers: jest.fn().mockResolvedValue([]),
   };
   const docker = {
     engine,
@@ -82,6 +86,7 @@ describe('DeploymentRunnerService', () => {
   let dbRow: Record<string, unknown> = {};
   const applications = {
     repo: {
+      findOne: jest.fn(() => Promise.resolve({ ...dbRow })),
       save: jest.fn((a: Application) => Promise.resolve(a)),
       update: jest.fn(
         (
@@ -103,7 +108,10 @@ describe('DeploymentRunnerService', () => {
         return Promise.resolve(d);
       }),
     },
-    domains: { find: jest.fn().mockResolvedValue([]) },
+    domains: {
+      find: jest.fn().mockResolvedValue([]),
+      count: jest.fn().mockResolvedValue(0),
+    },
     mounts: { find: jest.fn().mockResolvedValue([]) },
   };
 
@@ -114,6 +122,7 @@ describe('DeploymentRunnerService', () => {
     createContainer: jest.fn().mockResolvedValue('rc1'),
     startContainer: jest.fn().mockResolvedValue(undefined),
     removeContainer: jest.fn().mockResolvedValue(undefined),
+    listContainers: jest.fn().mockResolvedValue([]),
     target: 'ssh://deploy@vps:22',
   };
   const remoteDocker = {
@@ -123,6 +132,7 @@ describe('DeploymentRunnerService', () => {
     ensureImage: jest.fn().mockResolvedValue(undefined),
   };
 
+  const certSync = { syncServer: jest.fn().mockResolvedValue({}) };
   let runner: DeploymentRunnerService;
   const app = () =>
     ({
@@ -167,6 +177,8 @@ describe('DeploymentRunnerService', () => {
       imageDigest: null,
       status: 'running',
       currentImage: null,
+      serverId: null,
+      previousDaemons: [],
     };
     registries.findSelfHosted.mockResolvedValue({
       id: 'r1',
@@ -223,6 +235,7 @@ describe('DeploymentRunnerService', () => {
               .mockResolvedValue({ username: 'u', token: 'SECRET-TOKEN' }),
           },
         },
+        { provide: CertificateSyncService, useValue: certSync },
         { provide: ProxyService, useValue: { labelsFor } },
         { provide: NixpacksBuilderService, useValue: { build: nixpacksBuild } },
         { provide: StaticSiteBuilderService, useValue: { build: jest.fn() } },
@@ -489,8 +502,50 @@ describe('DeploymentRunnerService', () => {
         'cid',
         'aoox-app-web-abc123',
       );
+      // The old container is stopped gracefully (in-flight requests finish)
+      // before it is removed, and the routers carry the retry middleware.
+      expect(engine.stopContainer).toHaveBeenCalledWith('old', 10);
+      // Sequence: -next created/started -> health -> stop old -> remove -> rename.
+      const order = (fn: jest.Mock) =>
+        fn.mock.invocationCallOrder.at(-1) as number;
+      expect(order(engine.startContainer)).toBeLessThan(
+        order(engine.inspectContainer),
+      );
+      expect(order(engine.inspectContainer)).toBeLessThan(
+        order(engine.stopContainer),
+      );
+      expect(order(engine.stopContainer)).toBeLessThan(
+        order(engine.removeContainer),
+      );
+      expect(order(engine.removeContainer)).toBeLessThan(
+        order(engine.renameContainer),
+      );
+      expect(labelsFor).toHaveBeenLastCalledWith(
+        expect.any(String),
+        expect.any(Number),
+        expect.any(Array),
+        undefined,
+        { retry: true },
+      );
       expect(d.logs).toContain('Health check passed');
       docker.findContainerByName.mockResolvedValue(null);
+    });
+
+    it('a failed graceful stop is only logged: the old container is still removed', async () => {
+      docker.findContainerByName.mockImplementation((n: string) =>
+        Promise.resolve(n === 'aoox-app-web-abc123' ? { Id: 'old' } : null),
+      );
+      engine.inspectContainer.mockResolvedValue(healthy('healthy'));
+      engine.stopContainer.mockRejectedValueOnce(new Error('boom'));
+      const d = await runAndWait(deployment(), {
+        ...app(),
+        hostPort: null,
+        healthcheckPath: '/health',
+      });
+      expect(d.status).toBe('success');
+      expect(engine.removeContainer).toHaveBeenCalledWith('old', true);
+      docker.findContainerByName.mockResolvedValue(null);
+      engine.inspectContainer.mockReset();
     });
 
     it('keeps the old container and fails the deployment when -next never gets healthy', async () => {
@@ -520,6 +575,7 @@ describe('DeploymentRunnerService', () => {
       expect(d.logs).toContain('previous version is still serving');
       expect(engine.removeContainer).toHaveBeenCalledWith('cid', true);
       expect(engine.removeContainer).not.toHaveBeenCalledWith('old', true);
+      expect(engine.stopContainer).not.toHaveBeenCalledWith('old', 10);
       expect(engine.renameContainer).not.toHaveBeenCalled();
       docker.findContainerByName.mockResolvedValue(null);
       engine.inspectContainer.mockReset();
@@ -846,7 +902,119 @@ describe('DeploymentRunnerService', () => {
         },
       ],
       undefined, // the proxy double has no settings; the real service passes them
+      { retry: true },
     );
+  });
+
+  describe('after a server move', () => {
+    const OLD = { Id: 'old-c', Labels: { 'aoox.application': 'app1' } };
+    const PREVIEW = { Id: 'old-pr', Labels: { 'aoox.application': 'app1' } };
+
+    it('host to remote: the host containers (app, -next, previews) go after the deploy succeeds', async () => {
+      dbRow.serverId = 'srv1';
+      dbRow.previousDaemons = ['host'];
+      engine.listContainers.mockResolvedValueOnce([OLD, PREVIEW]);
+      const d = await runAndWait(deployment(), { ...app(), serverId: 'srv1' });
+      expect(d.status).toBe('success');
+      expect(engine.listContainers).toHaveBeenCalledWith({
+        label: ['aoox.application=app1'],
+      });
+      expect(engine.removeContainer).toHaveBeenCalledWith('old-c', true);
+      expect(engine.removeContainer).toHaveBeenCalledWith('old-pr', true);
+      // the new daemon was never swept
+      expect(remoteEngine.listContainers).not.toHaveBeenCalled();
+      expect(dbRow.previousDaemons).toEqual([]);
+    });
+
+    it('remote to host: the server is swept', async () => {
+      dbRow.previousDaemons = ['srv1'];
+      remoteEngine.listContainers.mockResolvedValueOnce([OLD]);
+      const d = await runAndWait(deployment(), app());
+      expect(d.status).toBe('success');
+      expect(remoteEngine.removeContainer).toHaveBeenCalledWith('old-c', true);
+      expect(engine.listContainers).not.toHaveBeenCalled();
+      expect(dbRow.previousDaemons).toEqual([]);
+    });
+
+    it('a failed deploy keeps the old containers serving and the list as it was', async () => {
+      dbRow.serverId = 'srv1';
+      dbRow.previousDaemons = ['host'];
+      remoteEngine.createContainer.mockRejectedValueOnce(new Error('no space'));
+      const d = await runAndWait(deployment(), { ...app(), serverId: 'srv1' });
+      expect(d.status).toBe('failed');
+      expect(engine.listContainers).not.toHaveBeenCalled();
+      expect(engine.removeContainer).not.toHaveBeenCalled();
+      expect(dbRow.previousDaemons).toEqual(['host']);
+    });
+
+    it('a sweep failure is only logged: the deploy succeeds and the daemon stays recorded', async () => {
+      dbRow.serverId = 'srv1';
+      dbRow.previousDaemons = ['host'];
+      engine.listContainers.mockRejectedValueOnce(new Error('daemon down'));
+      const d = await runAndWait(deployment(), { ...app(), serverId: 'srv1' });
+      expect(d.status).toBe('success');
+      expect(dbRow.previousDaemons).toEqual(['host']);
+    });
+
+    it('a deleted server row (not found) is dropped from the list', async () => {
+      dbRow.previousDaemons = ['gone'];
+      const remote = runner['remote'] as { forServer: unknown };
+      const original = remote.forServer;
+      remote.forServer = (id: string | null) =>
+        id === 'gone'
+          ? Promise.reject(new NotFoundException('Server not found'))
+          : (original as (i: string | null) => Promise<unknown>)(id);
+      const d = await runAndWait(deployment(), app());
+      remote.forServer = original;
+      expect(d.status).toBe('success');
+      expect(dbRow.previousDaemons).toEqual([]);
+    });
+
+    it('moved again while the deploy ran: nothing is swept by the stale copy', async () => {
+      dbRow.serverId = 'srv2';
+      dbRow.previousDaemons = ['host'];
+      const d = await runAndWait(deployment(), { ...app(), serverId: 'srv1' });
+      expect(d.status).toBe('success');
+      expect(engine.listContainers).not.toHaveBeenCalled();
+      expect(dbRow.previousDaemons).toEqual(['host']);
+    });
+
+    it('retiring a daemon re-syncs its certificate files, only when a domain uses one', async () => {
+      dbRow.serverId = 'srv1';
+      dbRow.previousDaemons = ['host'];
+      let d = await runAndWait(deployment(), { ...app(), serverId: 'srv1' });
+      expect(d.status).toBe('success');
+      expect(certSync.syncServer).not.toHaveBeenCalled();
+
+      applications.domains.count.mockResolvedValueOnce(1);
+      dbRow.previousDaemons = ['host'];
+      d = await runAndWait(deployment(), { ...app(), serverId: 'srv1' });
+      expect(d.status).toBe('success');
+      expect(certSync.syncServer).toHaveBeenCalledTimes(1);
+      expect(certSync.syncServer).toHaveBeenCalledWith(null);
+    });
+
+    it('a failed certificate sync after retiring never fails the deploy', async () => {
+      applications.domains.count.mockResolvedValueOnce(1);
+      certSync.syncServer.mockRejectedValueOnce(new Error('proxy down'));
+      dbRow.previousDaemons = ['srv1'];
+      const d = await runAndWait(deployment(), app());
+      expect(d.status).toBe('success');
+      expect(certSync.syncServer).toHaveBeenCalledWith('srv1');
+      expect(dbRow.previousDaemons).toEqual([]);
+    });
+
+    it('config applies sweep too; no move means no daemon calls at all', async () => {
+      const plain = { ...app(), currentImage: 'img:1' } as Application;
+      await runner.applyRuntimeConfig(plain);
+      expect(engine.listContainers).not.toHaveBeenCalled();
+      expect(remoteEngine.listContainers).not.toHaveBeenCalled();
+
+      dbRow.previousDaemons = ['srv1'];
+      remoteEngine.listContainers.mockResolvedValueOnce([OLD]);
+      await runner.applyRuntimeConfig(plain);
+      expect(remoteEngine.removeContainer).toHaveBeenCalledWith('old-c', true);
+    });
   });
 
   it('rolls back by re-running an earlier image without building or pushing', async () => {

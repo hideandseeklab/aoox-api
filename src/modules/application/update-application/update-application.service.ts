@@ -20,6 +20,7 @@ import { SwarmService } from '../../swarm/swarm.service';
 import { ApplicationService, containerNameFor } from '../application.service';
 import { DeploymentRunnerService } from '../deployment-runner.service';
 import { EnvReferenceError, EnvResolverService } from '../env-resolver.service';
+import { recordMove } from '../previous-daemons';
 import { isOwnContainer } from '../own-container';
 import { normalizeRootDirectory } from '../root-directory';
 import { UpdateApplicationDto } from './update-application.dto';
@@ -257,6 +258,15 @@ export class UpdateApplicationService {
       });
     }
     await this.refreshRunnerColumns(app, digestReset);
+    // The old daemon keeps serving until the app runs on the new one; the runner
+    // sweeps it after the first successful deploy there (previous-daemons.ts).
+    if (app.serverId !== serverIdBefore) {
+      app.previousDaemons = recordMove(
+        app.previousDaemons,
+        serverIdBefore,
+        app.serverId,
+      );
+    }
     const saved = await this.applications.repo.save(app);
     // Moved to another proxy: middlewares of its domains that the new proxy does
     // not define would leave routers pointing at nothing. Cleaned before any
@@ -270,12 +280,9 @@ export class UpdateApplicationService {
       if (dropped.length > 0) {
         Object.assign(saved, { droppedMiddlewares: dropped });
       }
-      // Custom certificates follow the app: written on the new daemon, swept on the old.
-      const certError = await this.moveCertificates(
-        saved,
-        rows,
-        serverIdBefore,
-      );
+      // Custom certificates follow the app: written on the new daemon. The old daemon
+      // keeps its files (its container still serves) until the runner retires it.
+      const certError = await this.moveCertificates(saved, rows);
       if (certError) Object.assign(saved, { certificateSyncError: certError });
     }
     // Mode or replica changes are applied by re-deploying the current image
@@ -348,7 +355,7 @@ export class UpdateApplicationService {
       const gone = d.middlewares.filter((m) => !known.has(m));
       if (gone.length === 0) continue;
       d.middlewares = kept;
-      await this.applications.domains.save(d);
+      await this.applications.domains.update(d.id, { middlewares: kept });
       this.logger.warn(
         `Application ${app.appName} moved proxy: dropped middlewares ${gone.join(', ')} from ${d.host} (not defined on the new proxy)`,
       );
@@ -360,16 +367,17 @@ export class UpdateApplicationService {
   /**
    * After a server move, a domain that uses a custom certificate needs the
    * certificate files in the NEW daemon's proxy volume (otherwise Traefik
-   * serves its self-signed default there) and the old daemon should drop the
-   * ones nothing uses any more. Goes through `CertificateSyncService`, which
+   * serves its self-signed default there). The old daemon is NOT swept here: it
+   * keeps serving until the first successful deploy on the new one, and
+   * `CertificateSyncService.idsFor` keeps the certificates of apps that still
+   * list it in `previous_daemons`; the runner syncs it after retiring it. Goes through `CertificateSyncService`, which
    * serializes writes per daemon (and may recreate an old proxy once, as for
    * any certificate). Returns an error message only when the DESTINATION sync
-   * failed — the move itself stands; the origin sweep is best effort.
+   * failed — the move itself stands.
    */
   private async moveCertificates(
     app: Application,
     rows: Domain[],
-    fromServerId: string | null,
   ): Promise<string | null> {
     if (!rows.some((d) => d.certificateId)) return null;
     let error: string | null = null;
@@ -381,13 +389,6 @@ export class UpdateApplicationService {
         `Application ${app.appName} moved server: certificate sync to the new server failed: ${reason}`,
       );
       error = `The application moved, but its certificate files could not be written to the new server (${reason}). Save the domain or the certificate again to retry.`;
-    }
-    try {
-      await this.certSync.syncServer(fromServerId);
-    } catch (err) {
-      this.logger.warn(
-        `Application ${app.appName} moved server: certificate cleanup on the old server failed: ${err instanceof Error ? err.message : String(err)}`,
-      );
     }
     return error;
   }
@@ -411,9 +412,11 @@ export class UpdateApplicationService {
         currentImage: true,
         imageDigest: true,
         imageCheckedAt: true,
+        previousDaemons: true,
       },
     });
     if (!fresh) return;
+    app.previousDaemons = fresh.previousDaemons;
     app.status = fresh.status;
     app.currentImage = fresh.currentImage;
     app.imageCheckedAt = fresh.imageCheckedAt;

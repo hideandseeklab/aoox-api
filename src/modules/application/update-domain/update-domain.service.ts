@@ -16,6 +16,7 @@ import { ServerService } from '../../server/server.service';
 import { MaintenanceModeService } from '../../maintenance-mode/maintenance-mode.service';
 import { ApplicationService } from '../application.service';
 import { assertCertMode } from '../cert-mode';
+import { Domain } from '../domain.entity';
 import { DeploymentRunnerService } from '../deployment-runner.service';
 import { DomainDnsService } from '../domain-dns.service';
 import { DomainDto, toDomainDto } from '../domain-dto';
@@ -142,21 +143,30 @@ export class UpdateDomainService {
       );
     }
     const certificateChanged = previousCertificateId !== nextCertificateId;
-    domain.certificateId = nextCertificateId;
-    if (middlewares !== undefined) domain.middlewares = middlewares;
-    domain.certMode = nextCertMode;
+    // Only the columns this request changes are written, with `update()`:
+    // `save()` on an entity whose `certificate` relation is null (or loaded)
+    // writes that relation over `certificate_id`, which wiped the assignment on
+    // a middleware-only PATCH. The relation property is never assigned here.
+    const patch: Partial<Domain> = {};
+    if (certificateChanged) patch.certificateId = nextCertificateId;
+    if (middlewaresChanged) patch.middlewares = middlewares ?? [];
+    if (certModeChanged) patch.certMode = nextCertMode;
     // A detached connection's records are removed first, with that connection.
     let dnsCleanupError: string | null = null;
     if (dnsConnectionChanged && previousDnsConnection) {
       dnsCleanupError = await this.domainDns.cleanup(domain);
-      domain.dnsRecords = [];
-      domain.dnsStatus = null;
-      domain.dnsMessage = dnsCleanupError;
+      patch.dnsRecords = [];
+      patch.dnsStatus = null;
+      patch.dnsMessage = dnsCleanupError;
     }
-    domain.dnsConnectionId = nextDnsConnection;
-    domain.dnsProxied = nextProxied;
-    domain.certificate = null; // the id column is what is written
-    await this.applications.domains.save(domain);
+    if (dnsConnectionChanged) patch.dnsConnectionId = nextDnsConnection;
+    if (nextProxied !== (domain.dnsProxied ?? false)) {
+      patch.dnsProxied = nextProxied;
+    }
+    if (Object.keys(patch).length > 0) {
+      await this.applications.domains.update(domain.id, patch);
+    }
+    Object.assign(domain, patch);
 
     if (certificateChanged && (certificate || hadCertificate)) {
       const docker = await this.remote.forServer(app.serverId);
@@ -177,11 +187,13 @@ export class UpdateDomainService {
         this.logger.warn(
           `Certificate sync failed for ${domain.host}: ${String(err)}`,
         );
-        domain.certificateId = previousCertificateId;
-        domain.middlewares = currentMiddlewares;
-        domain.certMode = previousCertMode;
-        domain.certificate = null;
-        await this.applications.domains.save(domain);
+        const restore: Partial<Domain> = {
+          certificateId: previousCertificateId,
+          middlewares: currentMiddlewares,
+          certMode: previousCertMode,
+        };
+        await this.applications.domains.update(domain.id, restore);
+        Object.assign(domain, restore);
         throw new BadGatewayException(
           'The certificate could not be written to the proxy, so the domain was left unchanged; try again',
         );
@@ -206,8 +218,6 @@ export class UpdateDomainService {
       // The router labels change (secure vs secure-custom): recreate, no rebuild.
       await this.runner.applyRuntimeConfig(app);
     }
-    // Not `domain.certificateId`: TypeORM nulls that field on the entity after
-    // `save` because `domain.certificate` is null, although the column was written.
     return toDomainDto(
       { ...domain, certificateId: nextCertificateId },
       certificate?.name ??

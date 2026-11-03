@@ -1,4 +1,9 @@
-import { BadGatewayException, Injectable, Logger } from '@nestjs/common';
+import {
+  BadGatewayException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { BackupPurgeService } from '../../backup-purge/backup-purge.service';
 import { CertificateSyncService } from '../../certificate/certificate-sync.service';
 import { IsNull, Not } from 'typeorm';
@@ -6,6 +11,11 @@ import { DockerEngineError } from '../../docker/docker-engine.client';
 import { RemoteDockerService } from '../../server/remote-docker.service';
 import { Application } from '../application.entity';
 import { ApplicationService, containerNameFor } from '../application.service';
+import {
+  pendingDaemons,
+  removeApplicationContainers,
+  serverIdOf,
+} from '../previous-daemons';
 import { filesVolumeFor, volumeNameFor } from '../mounts';
 import { MetricRetentionService } from '../../monitoring/metric-retention.service';
 import { MaintenanceModeService } from '../../maintenance-mode/maintenance-mode.service';
@@ -78,6 +88,20 @@ export class DeleteApplicationService {
         `Could not remove the container of "${app.name}": ${describe(err)}. The application was kept; try again once the Docker daemon is reachable.`,
       );
     }
+    // Daemons the app was moved away from and not yet swept: their containers
+    // would keep serving the old routes after the row is gone.
+    const pending = pendingDaemons(app.previousDaemons, app.serverId);
+    for (const key of pending) {
+      try {
+        const old = await this.remote.forServer(serverIdOf(key));
+        await removeApplicationContainers(old, app.id);
+      } catch (err) {
+        if (err instanceof NotFoundException) continue; // server row gone
+        throw new BadGatewayException(
+          `Could not remove the old containers of "${app.name}" from its previous ${serverIdOf(key) ? 'server' : 'host daemon'}: ${describe(err)}. The application was kept; try again once it is reachable.`,
+        );
+      }
+    }
     if (options.purge) {
       const mounts = await this.applications.mounts.find({
         where: { applicationId: app.id },
@@ -125,11 +149,19 @@ export class DeleteApplicationService {
     }
     await this.applications.repo.remove(app);
     if (usedCertificate) {
-      await this.certSync
-        .syncServer(app.serverId)
-        .catch((err) =>
-          this.logger.warn(`Certificate cleanup failed: ${String(err)}`),
-        );
+      // The current daemon plus the ones the app left behind (their containers
+      // were removed above; their certificate files were kept until now).
+      const daemons = new Set<string | null>([
+        app.serverId,
+        ...pending.map(serverIdOf),
+      ]);
+      for (const serverId of daemons) {
+        await this.certSync
+          .syncServer(serverId)
+          .catch((err) =>
+            this.logger.warn(`Certificate cleanup failed: ${String(err)}`),
+          );
+      }
     }
   }
 }

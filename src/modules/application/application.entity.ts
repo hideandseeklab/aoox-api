@@ -205,6 +205,14 @@ export class Application {
   serverId: string | null;
 
   /**
+   * Daemons the app was moved away from whose containers may still exist
+   * (`'host'` or a server uuid); swept after the first successful deploy on
+   * the new daemon. See `previous-daemons.ts`.
+   */
+  @Column({ name: 'previous_daemons', type: 'jsonb', default: () => "'[]'" })
+  previousDaemons: string[];
+
+  /**
    * HTTP path probed inside the container (e.g. `/health`). When set,
    * deployments wait for it and — for domain-routed apps without a host
    * port — swap containers blue/green so the old one keeps serving.

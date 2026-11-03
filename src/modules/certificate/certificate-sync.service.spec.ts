@@ -61,6 +61,7 @@ function makeService(opts: {
   upgrade?: boolean;
 }) {
   const where: string[] = [];
+  const pending: string[] = [];
   const domainsRepo = {
     createQueryBuilder: jest.fn(() => {
       let server: string | null = null;
@@ -68,11 +69,14 @@ function makeService(opts: {
         innerJoin: jest.fn().mockReturnThis(),
         select: jest.fn().mockReturnThis(),
         where: jest.fn().mockReturnThis(),
-        andWhere: jest.fn((sql: string, p?: { serverId: string }) => {
-          where.push(sql);
-          server = p?.serverId ?? null;
-          return qb;
-        }),
+        andWhere: jest.fn(
+          (sql: string, p?: { serverId: string; pending?: string }) => {
+            where.push(sql);
+            if (p?.pending) pending.push(p.pending);
+            server = p?.serverId ?? null;
+            return qb;
+          },
+        ),
         getRawMany: jest.fn(() =>
           Promise.resolve(
             (opts.idsByServer[server ?? 'local'] ?? []).map((id) => ({ id })),
@@ -120,7 +124,7 @@ function makeService(opts: {
     remote as never,
     servers as never,
   );
-  return { svc, certs, proxy, local, srv, remote, where };
+  return { svc, certs, proxy, local, srv, remote, where, pending };
 }
 
 describe('CertificateSyncService', () => {
@@ -168,7 +172,15 @@ describe('CertificateSyncService', () => {
     await t.svc.syncServer('srv1');
 
     expect(t.remote.forServer).toHaveBeenCalledWith('srv1');
-    expect(t.where).toEqual(['a.server_id IS NULL', 'a.server_id = :serverId']);
+    // Apps moved away from a daemon but not yet deployed elsewhere still serve
+    // from it (previous_daemons), so their certificates stay on it.
+    expect(t.where).toEqual([
+      expect.stringContaining('a.server_id IS NULL OR a.previous_daemons @>'),
+      expect.stringContaining(
+        'a.server_id = :serverId OR a.previous_daemons @>',
+      ),
+    ]);
+    expect(t.pending).toEqual(['["host"]', '["srv1"]']);
     // Each daemon only receives its own certificate.
     expect(t.local.archives[0].files.map((f) => f.name)).toContain(
       `${A}-abcdef01.crt`,

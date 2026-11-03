@@ -23,6 +23,7 @@ function make(
   const domainsRepo = {
     findOne: jest.fn().mockResolvedValue(domain),
     save: jest.fn((d: unknown) => Promise.resolve(d)),
+    update: jest.fn().mockResolvedValue(undefined),
   };
   const events: string[] = [];
   const runner = {
@@ -119,9 +120,9 @@ describe('UpdateDomainService', () => {
       ['app.example.com'],
       CERT.domains,
     );
-    expect(t.domainsRepo.save).toHaveBeenCalledWith(
-      expect.objectContaining({ certificateId: CERT.id }),
-    );
+    expect(t.domainsRepo.update).toHaveBeenCalledWith('d1', {
+      certificateId: CERT.id,
+    });
     expect(t.events).toEqual(['sync', 'apply']);
     expect(t.certSync.sync).toHaveBeenCalledWith(
       t.handle,
@@ -135,20 +136,10 @@ describe('UpdateDomainService', () => {
     });
   });
 
-  it('answers with the assigned id even when save() nulls it on the entity (TypeORM, relation set to null)', async () => {
-    const t = make(row());
-    t.domainsRepo.save.mockImplementation((d: Record<string, unknown>) => {
-      const written = { ...d };
-      d.certificateId = null; // what TypeORM did to the entity in a live run
-      return Promise.resolve(written);
-    });
-    const dto = await t.svc.execute('owner', 'app1', 'd1', {
-      certificateId: CERT.id,
-    });
-    expect(dto).toMatchObject({
-      certificateId: CERT.id,
-      certificateName: 'wildcard',
-    });
+  it('never uses save(): that would write the null relation over certificate_id', async () => {
+    const t = make(row({ certificateId: CERT.id }));
+    await t.svc.execute('owner', 'app1', 'd1', { middlewares: ['a@file'] });
+    expect(t.domainsRepo.save).not.toHaveBeenCalled();
   });
 
   it('puts the previous assignment back and answers 502 when the certificate cannot be written', async () => {
@@ -157,9 +148,11 @@ describe('UpdateDomainService', () => {
     await expect(
       t.svc.execute('owner', 'app1', 'd1', { certificateId: CERT.id }),
     ).rejects.toBeInstanceOf(BadGatewayException);
-    expect(t.domainsRepo.save).toHaveBeenLastCalledWith(
-      expect.objectContaining({ certificateId: 'old-cert' }),
-    );
+    expect(t.domainsRepo.update).toHaveBeenLastCalledWith('d1', {
+      certificateId: 'old-cert',
+      middlewares: [],
+      certMode: 'http',
+    });
     expect(t.runner.applyRuntimeConfig).not.toHaveBeenCalled();
   });
 
@@ -185,9 +178,9 @@ describe('UpdateDomainService', () => {
       certificateId: null,
     });
     expect(t.certs.findOrFail).not.toHaveBeenCalled();
-    expect(t.domainsRepo.save).toHaveBeenCalledWith(
-      expect.objectContaining({ certificateId: null }),
-    );
+    expect(t.domainsRepo.update).toHaveBeenCalledWith('d1', {
+      certificateId: null,
+    });
     expect(t.proxy.statusOn).not.toHaveBeenCalled();
     expect(t.events).toEqual(['sync', 'apply']);
     expect(dto).toMatchObject({ certificateId: null, certificateName: null });
@@ -205,7 +198,7 @@ describe('UpdateDomainService', () => {
     await expect(
       plain.svc.execute('owner', 'app1', 'd1', { certificateId: CERT.id }),
     ).rejects.toBeInstanceOf(BadRequestException);
-    expect(plain.domainsRepo.save).not.toHaveBeenCalled();
+    expect(plain.domainsRepo.update).not.toHaveBeenCalled();
 
     const uncovered = make(row());
     uncovered.certs.assertCovers.mockImplementation(() => {
@@ -214,7 +207,7 @@ describe('UpdateDomainService', () => {
     await expect(
       uncovered.svc.execute('owner', 'app1', 'd1', { certificateId: CERT.id }),
     ).rejects.toBeInstanceOf(BadRequestException);
-    expect(uncovered.domainsRepo.save).not.toHaveBeenCalled();
+    expect(uncovered.domainsRepo.update).not.toHaveBeenCalled();
     expect(uncovered.certSync.sync).not.toHaveBeenCalled();
   });
 
@@ -236,9 +229,10 @@ describe('UpdateDomainService middlewares', () => {
       'auth@file',
       'hdrs@file',
     ]);
-    expect(t.domainsRepo.save).toHaveBeenCalledWith(
-      expect.objectContaining({ middlewares: ['auth@file', 'hdrs@file'] }),
-    );
+    // only the changed column is written: the certificate column is untouched
+    expect(t.domainsRepo.update).toHaveBeenCalledWith('d1', {
+      middlewares: ['auth@file', 'hdrs@file'],
+    });
     // no certificate involved: nothing is written to the certificate volume
     expect(t.certSync.sync).not.toHaveBeenCalled();
     expect(t.runner.applyRuntimeConfig).toHaveBeenCalledTimes(1);
@@ -261,7 +255,7 @@ describe('UpdateDomainService middlewares', () => {
     await expect(
       t.svc.execute('owner', 'app1', 'd1', { middlewares: ['x@file'] }),
     ).rejects.toBeInstanceOf(BadRequestException);
-    expect(t.domainsRepo.save).not.toHaveBeenCalled();
+    expect(t.domainsRepo.update).not.toHaveBeenCalled();
     expect(t.runner.applyRuntimeConfig).not.toHaveBeenCalled();
   });
 
@@ -274,7 +268,7 @@ describe('UpdateDomainService middlewares', () => {
     expect(t.runner.applyRuntimeConfig).toHaveBeenCalledTimes(1);
     const same = make(row({ middlewares: ['a@file'] }));
     await same.svc.execute('owner', 'app1', 'd1', { middlewares: ['a@file'] });
-    expect(same.domainsRepo.save).not.toHaveBeenCalled();
+    expect(same.domainsRepo.update).not.toHaveBeenCalled();
     expect(same.runner.applyRuntimeConfig).not.toHaveBeenCalled();
   });
 
@@ -284,11 +278,39 @@ describe('UpdateDomainService middlewares', () => {
       middlewares: ['a@file'],
     });
     expect(t.certSync.sync).not.toHaveBeenCalled();
+    // regression: this PATCH used to null certificate_id in the database
+    const written = (
+      t.domainsRepo.update.mock.calls as unknown as [string, object][]
+    ).map((c) => c[1]);
+    expect(written).toEqual([{ middlewares: ['a@file'] }]);
+    expect(written.every((w) => !('certificateId' in w))).toBe(true);
     expect(dto).toMatchObject({
       certificateId: CERT.id,
       certificateName: 'wildcard',
       middlewares: ['a@file'],
     });
+  });
+
+  it('certMode-only and DNS-only PATCHes keep certificate_id out of the update', async () => {
+    const mode = make(row({ certificateId: null, certMode: 'http' }));
+    mode.svc['dnsBindings'] = { get: jest.fn().mockResolvedValue({}) } as never;
+    await mode.svc.execute('owner', 'app1', 'd1', { certMode: 'dns' });
+    expect(mode.domainsRepo.update).toHaveBeenCalledWith('d1', {
+      certMode: 'dns',
+    });
+
+    const dns = make(row({ certificateId: CERT.id, dnsProxied: false }));
+    (dns.svc['domainDns'] as { connectionName: jest.Mock }).connectionName =
+      jest.fn().mockResolvedValue('cf');
+    await dns.svc.execute('owner', 'app1', 'd1', {
+      dnsConnectionId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+      dnsProxied: true,
+    });
+    expect(dns.domainsRepo.update).toHaveBeenCalledWith('d1', {
+      dnsConnectionId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+      dnsProxied: true,
+    });
+    expect(dns.domainsRepo.save).not.toHaveBeenCalled();
   });
 
   it('changing only the certificate keeps the middlewares and does not re-validate them', async () => {

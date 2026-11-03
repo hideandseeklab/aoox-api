@@ -1,4 +1,4 @@
-import { BadGatewayException } from '@nestjs/common';
+import { BadGatewayException, NotFoundException } from '@nestjs/common';
 import { DockerEngineError } from '../../docker/docker-engine.client';
 import { MetricRetentionService } from '../../monitoring/metric-retention.service';
 import { RemoteDockerService } from '../../server/remote-docker.service';
@@ -29,6 +29,7 @@ describe('DeleteApplicationService previews', () => {
         Promise.resolve({ Id: `id-${name}` }),
       ),
       engine: {
+        listContainers: jest.fn().mockResolvedValue([]),
         removeVolume: jest.fn().mockResolvedValue(undefined),
         removeContainer: jest.fn((id: string) => {
           if (failPr && id.endsWith(`-pr${failPr}`)) {
@@ -58,13 +59,15 @@ describe('DeleteApplicationService previews', () => {
     const purgeApp = jest.fn().mockResolvedValue(undefined);
     const appRepo = { remove: jest.fn().mockResolvedValue(undefined) };
     const mountRepo = { find: jest.fn().mockResolvedValue([]) };
+    const certSync = { syncServer: jest.fn().mockResolvedValue(undefined) };
+    const domainsCount = jest.fn().mockResolvedValue(0);
     const svc = new DeleteApplicationService(
       {
         findOwnedOrFail: () => Promise.resolve(app),
         repo: appRepo,
         mounts: mountRepo,
         domains: {
-          count: jest.fn().mockResolvedValue(0),
+          count: domainsCount,
           find: jest.fn().mockResolvedValue([]),
         },
       } as unknown as ApplicationService,
@@ -72,7 +75,7 @@ describe('DeleteApplicationService previews', () => {
       { remove: jest.fn() } as unknown as SwarmDeployService,
       { forget: jest.fn() } as unknown as MetricRetentionService,
       previews,
-      { syncServer: jest.fn().mockResolvedValue(undefined) } as never,
+      certSync as never,
       {
         refresh: jest.fn().mockResolvedValue(undefined),
         deactivate: jest.fn().mockResolvedValue(undefined),
@@ -89,6 +92,8 @@ describe('DeleteApplicationService previews', () => {
       daemon,
       mountRepo,
       purgeApp,
+      certSync,
+      domainsCount,
     };
   };
 
@@ -105,6 +110,80 @@ describe('DeleteApplicationService previews', () => {
     expect(t.purgeApp.mock.invocationCallOrder[0]).toBeLessThan(
       t.appRepo.remove.mock.invocationCallOrder[0],
     );
+  });
+
+  describe('previous daemons after a server move', () => {
+    const moved = (previousDaemons: string[]) =>
+      ({
+        id: 'a1',
+        appName: 'web',
+        name: 'web',
+        serverId: 'srv2',
+        deployMode: 'container',
+        previousDaemons,
+      }) as never;
+
+    it('syncs the current and the pending daemons for certificates after the row is gone', async () => {
+      const t = build('srv2', []);
+      t.domainsCount.mockResolvedValue(1);
+      await t.svc.destroy(moved(['host', 'srv1']));
+      expect(
+        (t.certSync.syncServer.mock.calls as Array<[string | null]>)
+          .map((c) => c[0])
+          .sort(),
+      ).toEqual([null, 'srv1', 'srv2']);
+      for (const order of t.certSync.syncServer.mock.invocationCallOrder) {
+        expect(order).toBeGreaterThan(
+          t.appRepo.remove.mock.invocationCallOrder[0],
+        );
+      }
+    });
+
+    it('no certificate domain: no certificate sync at all', async () => {
+      const t = build('srv2', []);
+      await t.svc.destroy(moved(['host']));
+      expect(t.certSync.syncServer).not.toHaveBeenCalled();
+    });
+
+    it('removes what the app left on the old host and server before the row goes', async () => {
+      const t = build('srv2', []);
+      t.daemon.engine.listContainers.mockResolvedValue([
+        { Id: 'stray', Labels: {} },
+      ]);
+      await t.svc.destroy(moved(['host', 'srv1']));
+      expect(t.forServer).toHaveBeenCalledWith(null);
+      expect(t.forServer).toHaveBeenCalledWith('srv1');
+      expect(t.daemon.engine.listContainers).toHaveBeenCalledWith({
+        label: ['aoox.application=a1'],
+      });
+      expect(t.removed).toContain('stray');
+      expect(t.appRepo.remove).toHaveBeenCalled();
+    });
+
+    it('keeps the row (502) when an old daemon cannot be reached, so the delete can be retried', async () => {
+      const t = build('srv2', []);
+      t.daemon.engine.listContainers.mockRejectedValue(new Error('ssh down'));
+      await expect(t.svc.destroy(moved(['srv1']))).rejects.toBeInstanceOf(
+        BadGatewayException,
+      );
+      expect(t.appRepo.remove).not.toHaveBeenCalled();
+    });
+
+    it('a server row that no longer exists has nothing to clean', async () => {
+      const t = build('srv2', []);
+      t.forServer.mockImplementation(((id: string | null) =>
+        id === 'srv1'
+          ? Promise.reject(new NotFoundException('Server not found'))
+          : Promise.resolve(t.daemon)) as never);
+      await t.svc.destroy(moved(['srv1']));
+      expect(t.appRepo.remove).toHaveBeenCalled();
+    });
+
+    it('no move: the old-daemon sweep makes no listing call', async () => {
+      const t = build('srv2', []);
+      await t.svc.destroy(moved([]));
+      expect(t.daemon.engine.listContainers).not.toHaveBeenCalled();
+    });
   });
 
   it('removes preview containers and rows on the local daemon', async () => {

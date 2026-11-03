@@ -284,6 +284,7 @@ describe('ProxyService custom certificate support', () => {
       expect.arrayContaining([
         '--providers.file.directory=/etc/traefik/dynamic',
         '--providers.file.watch=true',
+        '--serverstransport.forwardingtimeouts.dialtimeout=2s',
       ]),
     );
     expect(body.HostConfig.Binds).toEqual(
@@ -292,5 +293,59 @@ describe('ProxyService custom certificate support', () => {
         'aoox_proxy_acme:/letsencrypt',
       ]),
     );
+  });
+});
+
+describe('ProxyService.buildLabels retry middleware', () => {
+  const domains = [
+    { host: 'a.example.com', https: true },
+    { host: 'b.example.com', https: false, middlewares: ['auth@file'] },
+  ];
+
+  it('is off by default: the labels are exactly what they were', () => {
+    const labels = ProxyService.buildLabels('app', 3000, domains, {
+      httpsPort: 443,
+      acme: true,
+    });
+    expect(Object.keys(labels).some((k) => k.includes('retry'))).toBe(false);
+    expect(
+      Object.values(labels).some((v) => v.includes('app-retry@docker')),
+    ).toBe(false);
+  });
+
+  it('with retry: defines one middleware and puts it first on every serving router, never on the redirect', () => {
+    const plain = ProxyService.buildLabels('app', 3000, domains, {
+      httpsPort: 443,
+      acme: true,
+    });
+    const labels = ProxyService.buildLabels('app', 3000, domains, {
+      httpsPort: 443,
+      acme: true,
+      retry: true,
+    });
+    expect(labels['traefik.http.middlewares.app-retry.retry.attempts']).toBe(
+      '3',
+    );
+    expect(
+      labels['traefik.http.middlewares.app-retry.retry.initialinterval'],
+    ).toBe('100ms');
+    const mwKeys = Object.keys(labels).filter(
+      (k) =>
+        k.startsWith('traefik.http.routers.') && k.endsWith('.middlewares'),
+    );
+    for (const k of mwKeys) {
+      if (k.includes('-redirect')) {
+        expect(labels[k]).toBe('app-https@docker');
+      } else {
+        expect(labels[k].split(',')[0]).toBe('app-retry@docker');
+      }
+    }
+    // the operator's middleware keeps its place after retry
+    const withAuth = mwKeys.find((k) => labels[k].includes('auth@file'));
+    expect(labels[withAuth as string]).toBe('app-retry@docker,auth@file');
+    // router names and rules are unchanged
+    for (const [k, v] of Object.entries(plain)) {
+      if (!k.endsWith('.middlewares')) expect(labels[k]).toBe(v);
+    }
   });
 });

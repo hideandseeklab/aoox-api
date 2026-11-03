@@ -30,6 +30,8 @@ import {
   SNAPSHOT_FORMAT,
   SNAPSHOT_VERSION,
   tableOrder,
+  FOREIGN_KEYS_SQL,
+  type ForeignKeyEdge,
 } from './database-snapshot';
 import {
   INSTANCE_SETTINGS_ID,
@@ -143,9 +145,15 @@ export class InstanceBackupService {
     return b;
   }
 
+  /** Insert order from the live foreign keys plus entity metadata. */
+  private async orderedTables(): Promise<string[]> {
+    const fks = await this.rows<ForeignKeyEdge>(FOREIGN_KEYS_SQL);
+    return tableOrder(this.dataSource.entityMetadatas, fks);
+  }
+
   /** Reads every table into a Snapshot (in memory). */
   async dump(): Promise<Snapshot> {
-    const order = tableOrder(this.dataSource.entityMetadatas);
+    const order = await this.orderedTables();
     const migrations = await this.appliedMigrations();
     const tables: SnapshotTable[] = [];
     for (const name of order) {
@@ -239,7 +247,7 @@ export class InstanceBackupService {
   }
 
   private async apply(snapshot: Snapshot): Promise<RestoreReport> {
-    const order = tableOrder(this.dataSource.entityMetadatas);
+    const order = await this.orderedTables();
     const migrations = await this.appliedMigrations();
     const mine = [...migrations].sort().join('\n');
     const theirs = [...snapshot.migrations].sort().join('\n');

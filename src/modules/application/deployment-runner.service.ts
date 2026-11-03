@@ -1,10 +1,15 @@
-import { ConflictException, Injectable, Logger } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import {
   envTextValuesToRedact,
   Redactor,
   StreamRedactor,
 } from './log-redaction';
-import { In } from 'typeorm';
+import { In, IsNull, Not } from 'typeorm';
 import { hostPortBinding } from '../docker/host-port-bind';
 import { startWithPortRetry } from '../docker/start-with-port-retry';
 import { BuildProgress, RegistryAuth } from '../docker/docker-engine.client';
@@ -45,7 +50,13 @@ import { Application, ApplicationStatus } from './application.entity';
 import { ApplicationService, containerNameFor } from './application.service';
 import { Deployment, DeploymentStatus } from './deployment.entity';
 import { DeploymentEventsService } from './deployment-events.service';
+import {
+  pendingDaemons,
+  removeApplicationContainers,
+  serverIdOf,
+} from './previous-daemons';
 import { slugPart } from './built-repositories';
+import { CertificateSyncService } from '../certificate/certificate-sync.service';
 import { triggerSummary } from './trigger-summary';
 import { revertFollowedTag, type FollowRevert } from './follow-revert';
 import { EnvResolverService, parseEnvLines } from './env-resolver.service';
@@ -85,6 +96,7 @@ export class DeploymentRunnerService {
     private readonly swarm: SwarmService,
     private readonly servers: ServerService,
     private readonly domainConflicts: DomainConflictService,
+    private readonly certSync: CertificateSyncService,
   ) {}
 
   /**
@@ -153,6 +165,7 @@ export class DeploymentRunnerService {
       await this.replaceContainer(app, imageRef, log);
 
       await this.persistOutcome(app, 'running', imageRef, baseline);
+      await this.retirePreviousDaemons(app, log);
       await log.finish('success', `Deployed ${imageRef}`);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -407,6 +420,7 @@ export class DeploymentRunnerService {
       await docker.ensureImage(imageRef);
       await this.replaceContainer(app, imageRef, log);
       await this.persistOutcome(app, 'running', imageRef);
+      await this.retirePreviousDaemons(app, log);
       await log.finish(
         'success',
         deployment.kind === 'config'
@@ -516,6 +530,79 @@ export class DeploymentRunnerService {
   async applyRuntimeConfig(app: Application): Promise<void> {
     if (!app.currentImage) return;
     await this.replaceContainer(app, app.currentImage);
+    await this.retirePreviousDaemons(app);
+  }
+
+  /**
+   * After a server move the app keeps serving from the old daemon (nothing is
+   * recreated by the move). Once it runs on the new one, the containers it
+   * left behind (`aoox-app-<name>`, `-next`, PR previews: all carry the
+   * `aoox.application` label) are removed so their Traefik labels stop
+   * serving the old routes. Best effort: a failure is logged and the daemon
+   * stays recorded in `previous_daemons` for the next deploy; it never fails
+   * the deployment. Costs one DB read when nothing is pending. Skipped when the
+   * app was moved again while this ran (the copy held here is stale).
+   */
+  async retirePreviousDaemons(app: Application, log?: BuildLog): Promise<void> {
+    try {
+      const fresh = await this.applications.repo.findOne({
+        where: { id: app.id },
+        select: { id: true, serverId: true, previousDaemons: true },
+      });
+      if (!fresh || (fresh.serverId ?? null) !== (app.serverId ?? null)) {
+        return;
+      }
+      const targets = pendingDaemons(fresh.previousDaemons, fresh.serverId);
+      if (targets.length === 0) return;
+      const done = new Set<string>();
+      for (const key of targets) {
+        const serverId = serverIdOf(key);
+        try {
+          const docker = await this.remote.forServer(serverId);
+          await removeApplicationContainers(docker, app.id);
+          done.add(key);
+          await log
+            ?.note?.(
+              `Removed the previous containers of ${app.name} from ${serverId ? 'its former server' : 'the aoox host'}`,
+            )
+            .catch(() => undefined);
+        } catch (err) {
+          if (err instanceof NotFoundException) {
+            done.add(key); // the server row is gone: nothing left to clean
+            continue;
+          }
+          this.logger.warn(
+            `Could not remove the old containers of ${app.appName} from ${key}: ${String(err)}`,
+          );
+        }
+      }
+      if (done.size > 0) {
+        await this.applications.repo.update(app.id, {
+          previousDaemons: fresh.previousDaemons.filter((k) => !done.has(k)),
+        });
+        // The retired daemons no longer need this app's certificate files
+        // (they were kept while the old container served).
+        const usedCertificate =
+          (await this.applications.domains.count({
+            where: { applicationId: app.id, certificateId: Not(IsNull()) },
+          })) > 0;
+        if (usedCertificate) {
+          for (const key of done) {
+            await this.certSync
+              .syncServer(serverIdOf(key))
+              .catch((err: unknown) =>
+                this.logger.warn(
+                  `Certificate cleanup on ${key} failed: ${String(err)}`,
+                ),
+              );
+          }
+        }
+      }
+    } catch (err) {
+      this.logger.warn(
+        `Old daemon cleanup for ${app.appName} failed: ${String(err)}`,
+      );
+    }
   }
 
   /**
@@ -692,6 +779,8 @@ export class DeploymentRunnerService {
       app.containerPort,
       domains,
       proxySettings,
+      // Previews are short-lived and never swapped blue/green.
+      { retry: !override },
     );
 
     if (app.deployMode === 'service' && !override) {
@@ -809,6 +898,20 @@ export class DeploymentRunnerService {
         // Traefik learns about the healthy container from a Docker event a
         // moment later; give it time to add the server before the old one goes.
         await new Promise((r) => setTimeout(r, this.proxySettleMs));
+        // Stop the old container gracefully right away. A stopping process
+        // closes its listener, so new connections are refused at once and the
+        // router `retry` middleware re-sends them to `-next`; the `die` event
+        // then makes the docker provider drop the server. (Detaching it from
+        // the proxy network first does NOT help: the provider ignores network
+        // events, keeps the server in the pool and dials to its vanished IP
+        // hang until the dial timeout.)
+        await docker.engine
+          .stopContainer(existing.Id, this.oldContainerStopSeconds)
+          .catch((err: unknown) =>
+            this.logger.warn(
+              `Could not stop the old container gracefully: ${String(err)}`,
+            ),
+          );
         await docker.engine.removeContainer(existing.Id, true);
         await docker.engine.renameContainer(id, name);
       }
@@ -859,6 +962,8 @@ export class DeploymentRunnerService {
   healthPollMs = 2000;
   /** Grace for the proxy to pick up the new container before the old one is removed. */
   proxySettleMs = 3000;
+  /** SIGTERM grace for the old container of a blue/green swap. */
+  oldContainerStopSeconds = 10;
 
   /**
    * True only when the daemon positively says `/bin/sh` is absent in the
