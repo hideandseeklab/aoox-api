@@ -49,7 +49,7 @@ describe('ProxyService.buildLabels', () => {
       'traefik.http.routers.my-app-redirect.rule': 'Host(`b.example.com`)',
       'traefik.http.routers.my-app-redirect.entrypoints': 'web',
       'traefik.http.routers.my-app-redirect.service': 'my-app',
-      'traefik.http.routers.my-app-redirect.middlewares': 'my-app-https@docker',
+      'traefik.http.routers.my-app-redirect.middlewares': 'my-app-https',
       'traefik.http.middlewares.my-app-https.redirectscheme.scheme': 'https',
       'traefik.http.middlewares.my-app-https.redirectscheme.permanent': 'true',
       'traefik.http.routers.my-app-secure.entrypoints': 'websecure',
@@ -188,7 +188,7 @@ describe('ProxyService.buildLabels with operator middlewares', () => {
     expect(labels[plainKey!]).toBe('rl@file');
     // the redirect router keeps only its own redirect middleware
     expect(labels['traefik.http.routers.app-redirect.middlewares']).toBe(
-      'app-https@docker',
+      'app-https',
     );
   });
 

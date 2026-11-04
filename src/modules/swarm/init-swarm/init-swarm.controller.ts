@@ -22,6 +22,9 @@ export class InitSwarmController {
   @Post('init')
   @HttpCode(HttpStatus.CREATED)
   init(@Body() dto: InitSwarmDto): Promise<SwarmStatus> {
-    return this.swarm.init(dto.advertiseAddr?.trim() || undefined);
+    return this.swarm.init(dto.advertiseAddr?.trim() || undefined, {
+      listenAddr: dto.listenAddr?.trim() || undefined,
+      overlayMtu: dto.overlayMtu,
+    });
   }
 }

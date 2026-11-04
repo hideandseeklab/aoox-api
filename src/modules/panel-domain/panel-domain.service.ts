@@ -48,6 +48,15 @@ export interface UpdatePanelDomainResult {
    */
   proxyAutoProvisioned: boolean;
   /**
+   * True when the proxy was already running but without an ACME resolver for
+   * this email (provisioned earlier without one, or with another email), so
+   * `apply()` recreates it once with the saved email; otherwise HTTPS would
+   * keep serving Traefik's default certificate. Every routed app is
+   * unreachable for a few seconds while that happens. Never set on an
+   * idempotent re-save.
+   */
+  proxyRecreated: boolean;
+  /**
    * Set when "only allow access through the domain" is on: what to do if the
    * domain stops working and IP:port access is gone.
    */
@@ -172,6 +181,15 @@ export class PanelDomainService {
       throw toDaemonUnreachable(err);
     });
     const proxyAutoProvisioned = !proxyStatus.running;
+    const effectiveEmail =
+      dto.acmeEmail !== undefined
+        ? dto.acmeEmail.trim() || null
+        : row.acmeEmail;
+    const proxyRecreated = proxyStatus.running
+      ? await this.proxy
+          .acmeRecreateNeeded(this.docker, effectiveEmail)
+          .catch(() => false)
+      : false;
 
     const saved = await this.repo.save(
       this.repo.merge(row, {
@@ -197,6 +215,7 @@ export class PanelDomainService {
     return {
       settings: saved,
       proxyAutoProvisioned,
+      proxyRecreated,
       restrictPortsNote: restrictPorts ? RESTRICT_PORTS_RECOVERY : null,
     };
   }
@@ -271,7 +290,8 @@ export class PanelDomainService {
     // fail: domain saved fine, container got its labels, but nothing was
     // listening on 80/443). Only when it isn't already running: a running
     // proxy is left untouched so this doesn't clobber ACME state or disrupt
-    // routing for other apps every time the panel domain is saved.
+    // routing for other apps every time the panel domain is saved (see the
+    // ACME branch below for the one exception).
     const proxyStatus = await this.proxy.status();
     if (!proxyStatus.running) {
       this.logger.log('Proxy is not running — provisioning it automatically');
@@ -281,6 +301,19 @@ export class PanelDomainService {
         acmeEmail,
         acmeStaging: this.proxy.localSettings.acmeStaging,
       });
+    } else if (acmeEmail) {
+      // Running but without the `le` resolver (provisioned earlier with no
+      // ACME email) or with another email: without this the domain serves
+      // Traefik's default certificate and nothing reports an error. Saving a
+      // panel domain already recreates web/api and the domain cannot work
+      // without the resolver, so this is automatic (no confirmation step);
+      // the PATCH answer says so (`proxyRecreated`). A proxy that matches is
+      // left alone, so re-saving never interrupts routing.
+      await this.proxy.recreateWithAcme(
+        this.docker,
+        acmeEmail,
+        this.proxy.localSettings,
+      );
     }
 
     const override = renderPanelOverride(settings.webHost!, settings.apiHost!, {

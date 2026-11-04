@@ -61,6 +61,7 @@ import { StaticSiteBuilderService } from './static-site-builder.service';
 import { ImageDigestService } from './image-digest.service';
 import { SwarmDeployService } from './swarm-deploy.service';
 import { ServiceHealthWatcherService } from './service-health-watcher.service';
+import { SwarmTaskWatcherService } from './swarm-task-watcher.service';
 import { SwarmModule } from '../swarm/swarm.module';
 import { ImageUpdateWatcherService } from './image-update-watcher.service';
 import { CheckImageUpdateService } from './check-image-update/check-image-update.service';
@@ -216,6 +217,7 @@ import { UpdateApplicationService } from './update-application/update-applicatio
     ImageDigestService,
     SwarmDeployService,
     ServiceHealthWatcherService,
+    SwarmTaskWatcherService,
     ImageUpdateWatcherService,
     CheckImageUpdateService,
     SetMaintenanceService,

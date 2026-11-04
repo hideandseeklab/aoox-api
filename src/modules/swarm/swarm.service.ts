@@ -18,6 +18,36 @@ import { RegistryService } from '../registry/registry.service';
 // beside it; both networks stay, containers join both.
 export { SWARM_NETWORK };
 
+export const SWARM_PORT = 2377;
+
+/** Delay before the proxy is re-provisioned after init/leave, so the response goes out first. */
+export const PROXY_REPROVISION_DELAY_MS = 1500;
+
+/** What a successful leave tells the operator (see the moby issue below). */
+export interface LeaveSwarmResult {
+  restartDockerRequired: true;
+  notice: string;
+}
+
+export const DOCKER_RESTART_NOTICE =
+  'Leaving the swarm triggers a Docker bug (moby/moby#45144, still open): the embedded DNS stops resolving container names on bridge networks for the containers that are already running. The panel keeps working until its api container is recreated or restarted, for example by the next update, and then it cannot reach its database. Run "sudo systemctl restart docker" on this server now; every aoox container restarts by itself afterwards. https://github.com/moby/moby/issues/45144';
+
+/**
+ * Control-plane listen address for `swarm init`: an explicit `listenAddr`
+ * wins; otherwise the advertised host (so the port is not open on every
+ * interface, e.g. the public one); with neither, every interface as before.
+ */
+export function swarmListenAddr(
+  advertiseAddr?: string,
+  listenAddr?: string,
+): string {
+  const withPort = (a: string) =>
+    /^[^:]+:\d+$/.test(a) || a.split(':').length > 2 ? a : `${a}:${SWARM_PORT}`;
+  if (listenAddr) return withPort(listenAddr);
+  if (advertiseAddr) return withPort(advertiseAddr);
+  return `0.0.0.0:${SWARM_PORT}`;
+}
+
 export interface SwarmNodeInfo {
   id: string;
   hostname: string;
@@ -51,6 +81,8 @@ export interface SwarmStatus {
    * nodes fail to start until REGISTRY_PUBLIC_HOST names a reachable host.
    */
   registry: { url: string | null; reachableFromNodes: boolean };
+  /** MTU option of the `aoox-swarm` overlay (null = Docker default, or no overlay). */
+  overlayMtu: number | null;
 }
 
 /**
@@ -79,6 +111,7 @@ export class SwarmService {
       where: { deployMode: 'service' },
     });
     const registry = await this.registryCheck();
+    const overlayMtu = isManager ? await this.overlayMtu() : null;
     if (!isManager) {
       return {
         state,
@@ -90,6 +123,7 @@ export class SwarmService {
         joinTokens: null,
         serviceApps,
         registry,
+        overlayMtu,
       };
     }
     const [inspect, nodes] = await Promise.all([
@@ -111,7 +145,16 @@ export class SwarmService {
         : null,
       serviceApps,
       registry,
+      overlayMtu,
     };
+  }
+
+  private async overlayMtu(): Promise<number | null> {
+    const net = await this.docker.engine
+      .inspectNetwork(SWARM_NETWORK)
+      .catch(() => null);
+    const mtu = Number(net?.Options?.['com.docker.network.driver.mtu']);
+    return Number.isInteger(mtu) && mtu > 0 ? mtu : null;
   }
 
   private async registryCheck(): Promise<SwarmStatus['registry']> {
@@ -141,7 +184,10 @@ export class SwarmService {
    * `error` (expired certificates after a long pause) is left first, since
    * `init` refuses while the old membership exists.
    */
-  async init(advertiseAddr?: string): Promise<SwarmStatus> {
+  async init(
+    advertiseAddr?: string,
+    opts: { listenAddr?: string; overlayMtu?: number } = {},
+  ): Promise<SwarmStatus> {
     const info = await this.docker.engine.systemInfo();
     const state = info.Swarm?.LocalNodeState ?? 'inactive';
     if (state === 'active') {
@@ -150,21 +196,45 @@ export class SwarmService {
     if (state === 'error' || state === 'pending') {
       await this.docker.engine.leaveSwarm(true);
     }
-    const nodeId = await this.docker.engine.initSwarm(
-      advertiseAddr ? { AdvertiseAddr: advertiseAddr } : {},
-    );
+    const nodeId = await this.docker.engine.initSwarm({
+      ...(advertiseAddr ? { AdvertiseAddr: advertiseAddr } : {}),
+      ListenAddr: swarmListenAddr(advertiseAddr, opts.listenAddr),
+    });
     this.logger.log(`Swarm initialised; this node is ${nodeId}`);
-    await this.ensureNetwork();
-    // Traefik only gets the swarm provider flags at start: re-create it.
-    if ((await this.proxy.status()).installed) await this.proxy.provision();
+    await this.ensureNetwork(opts.overlayMtu);
+    // Traefik only gets the swarm provider flags at start: re-create it, but
+    // after the answer is sent (with the panel behind that proxy the browser
+    // connection dies mid-request otherwise).
+    this.reprovisionProxyLater();
     return this.status();
   }
 
+  /**
+   * Re-provisions the proxy (if installed) detached, like PanelDomainService:
+   * the panel itself may be served through it, so the HTTP response has to be
+   * flushed first. Failures are only logged.
+   */
+  private reprovisionProxyLater(): void {
+    setTimeout(() => {
+      void (async () => {
+        try {
+          if ((await this.proxy.status()).installed) {
+            await this.proxy.provision();
+          }
+        } catch (err) {
+          this.logger.error(`Re-provisioning the proxy failed: ${String(err)}`);
+        }
+      })();
+    }, PROXY_REPROVISION_DELAY_MS).unref();
+  }
+
   /** Creates the overlay and attaches the proxy + managed databases so services can reach/be reached. */
-  async ensureNetwork(): Promise<void> {
+  async ensureNetwork(mtu?: number): Promise<void> {
     if (!(await this.docker.engine.inspectNetwork(SWARM_NETWORK))) {
-      await this.docker.engine.createOverlayNetwork(SWARM_NETWORK);
-      this.logger.log(`Created overlay network ${SWARM_NETWORK}`);
+      await this.docker.engine.createOverlayNetwork(SWARM_NETWORK, mtu);
+      this.logger.log(
+        `Created overlay network ${SWARM_NETWORK}${mtu ? ` (MTU ${mtu})` : ''}`,
+      );
     }
     const containers = await this.docker.engine.listContainers({
       label: ['aoox.component'],
@@ -187,7 +257,7 @@ export class SwarmService {
   }
 
   /** Leaves the swarm (force). Refused while apps still run as services. */
-  async leave(): Promise<void> {
+  async leave(): Promise<LeaveSwarmResult> {
     const serviceApps = await this.applications.count({
       where: { deployMode: 'service' },
     });
@@ -198,7 +268,8 @@ export class SwarmService {
     }
     await this.docker.engine.leaveSwarm(true);
     this.logger.warn('Left the swarm');
-    if ((await this.proxy.status()).installed) await this.proxy.provision();
+    this.reprovisionProxyLater();
+    return { restartDockerRequired: true, notice: DOCKER_RESTART_NOTICE };
   }
 
   async updateNode(

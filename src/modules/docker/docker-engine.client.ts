@@ -595,9 +595,11 @@ export class DockerEngineClient {
   // ---- networks -----------------------------------------------------------
 
   /** `GET /networks/{id}`; null when missing. */
-  async inspectNetwork(
-    name: string,
-  ): Promise<{ Id: string; Name: string } | null> {
+  async inspectNetwork(name: string): Promise<{
+    Id: string;
+    Name: string;
+    Options?: Record<string, string>;
+  } | null> {
     try {
       return await this.json('GET', `/networks/${encodeURIComponent(name)}`);
     } catch (err) {
@@ -636,9 +638,12 @@ export class DockerEngineClient {
     ListenAddr?: string;
     AdvertiseAddr?: string;
   }): Promise<string> {
+    // The control port (2377) is the swarm's whole trust boundary: callers
+    // narrow it to the advertised address; only with no address at all does it
+    // stay on every interface, as the daemon itself would.
     return this.json('POST', '/swarm/init', {
-      ListenAddr: '0.0.0.0:2377',
       ...body,
+      ListenAddr: body.ListenAddr ?? '0.0.0.0:2377',
     });
   }
 
@@ -789,11 +794,15 @@ export class DockerEngineClient {
   }
 
   /** `POST /networks/create` — attachable overlay shared by services and plain containers. */
-  async createOverlayNetwork(name: string): Promise<void> {
+  async createOverlayNetwork(name: string, mtu?: number): Promise<void> {
     await this.request('POST', '/networks/create', {
       Name: name,
       Driver: 'overlay',
       Attachable: true,
+      // Engine API: network `Options`, driver option for the container MTU.
+      ...(mtu
+        ? { Options: { 'com.docker.network.driver.mtu': String(mtu) } }
+        : {}),
       Labels: { 'aoox.component': 'network' },
     });
   }

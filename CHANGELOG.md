@@ -8,6 +8,19 @@ Versions below 1.0.0 may include breaking changes in a minor release.
 
 ## [Unreleased]
 
+### Added
+
+- **Leaving the swarm warns about a Docker bug.** `DELETE /swarm` now answers 200 with `{restartDockerRequired: true, notice}` instead of 204: after `docker swarm leave` Docker's embedded DNS stops resolving container names on bridge networks (moby/moby#45144, open), which takes the panel down at its next api restart; the notice says to run `sudo systemctl restart docker` on the server. aoox does not restart Docker itself.
+- **Swarm over a VPN.** `POST /swarm/init` accepts an optional `listenAddr` (`host` or `host:port`) and `overlayMtu` (576-9000). `overlayMtu` is set as the `com.docker.network.driver.mtu` option of the `aoox-swarm` overlay (the MTU of the network under the VXLAN, i.e. the tunnel MTU: 1420 for WireGuard; Docker takes 50 off inside containers, so tasks get 1370 instead of 1450); `GET /swarm` reports it as `overlayMtu` (null = Docker default). An existing swarm keeps its network: leave and initialise again to change it.
+- **Crashed tasks on other swarm nodes are reported.** A watcher polls the manager's task list every 30 s for service-mode applications and sends the usual `containerDown` notification (inbox variant `task`, now with a `node` param) for tasks newly `failed`/`rejected`/`orphaned` on a node other than the manager, at most once per application per 10 minutes. Tasks on the manager keep being reported by the die events (no duplicates), and history present at boot is not alerted.
+
+### Fixed
+
+- **Saving a panel domain now enables HTTPS when the proxy was already running without Let's Encrypt.** The apply step only provisioned the proxy when it was not running, so a proxy created earlier without an ACME email kept serving Traefik's default certificate after the domain was saved (web/api were recreated with `https://` origins, no error anywhere). Now, when the running proxy has no `le` resolver or another email than the one being saved, it is recreated once with the saved email, keeping ports, staging flag, swarm/file-provider flags, the ACME and certs volumes and the DNS-01 binding, so issued certificates survive. It needs no confirmation (saving a domain already recreates web/api and cannot work without the resolver). `PATCH /instance/domain` answers an additive `proxyRecreated` (true = routed apps are unreachable for a few seconds). Re-saving the same values does not touch the proxy, and saving without an email never removes a working resolver.
+- **Swarm init and leave no longer lose their response when the panel is opened through its domain.** Both re-provisioned the proxy before answering, so the browser connection died mid-request ("Failed to fetch") although the server finished, and the restart-Docker alert after leave never showed. The proxy is now re-provisioned about 1.5 s after the response is sent (failures are only logged); the leave answer is unchanged (`{restartDockerRequired, notice}`).
+- **Applications in service (Swarm) mode were not routed.** Their routers referenced the retry and redirect middlewares as `<name>@docker`, but Traefik's swarm provider defines them in the `swarm` namespace, so the router was dropped ("middleware does not exist") and the domain answered 404. They are now referenced without a provider suffix, which Traefik resolves in the router's own provider (docker for containers, swarm for services). Operator middlewares (`name@file`) are unchanged. The labels apply from the next deploy of each application.
+- **The swarm control port is no longer open on every interface by default.** With an advertise address, `swarm init` now listens on `<advertise>:2377` instead of `0.0.0.0:2377` (set `listenAddr` to override; without any address it stays on all interfaces).
+
 ## [0.1.0-beta.0] - 2026-11-03
 
 ### Security

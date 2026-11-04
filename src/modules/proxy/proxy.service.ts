@@ -275,6 +275,79 @@ export class ProxyService {
     return true;
   }
 
+  /** Pure: the ACME email (HTTP-01 resolver `le`) a proxy container was created with, null = no resolver. */
+  static acmeEmailOf(inspect: {
+    Config: { Cmd?: string[] | null };
+  }): string | null {
+    return ProxyService.settingsOf(inspect, {
+      httpPort: 80,
+      httpsPort: 443,
+      acmeEmail: null,
+      acmeStaging: false,
+    }).acmeEmail;
+  }
+
+  /**
+   * Pure: must a running proxy be recreated so that it serves ACME
+   * certificates for `wanted`? True when it runs without the `le` resolver or
+   * with another email. A proxy that already matches (an idempotent re-save)
+   * and a request without an email (never downgrade a working resolver) are
+   * left alone.
+   */
+  static needsAcmeRecreate(
+    current: string | null,
+    wanted: string | null,
+  ): boolean {
+    return !!wanted && current !== wanted;
+  }
+
+  /** Does the RUNNING proxy on `docker` need recreating for ACME email `wanted`? (Truth = the container.) */
+  async acmeRecreateNeeded(
+    docker: DockerHandle,
+    wanted: string | null,
+  ): Promise<boolean> {
+    if (!wanted) return false;
+    const c = await docker.findContainerByName(PROXY_CONTAINER);
+    if (!c || c.State !== 'running') return false;
+    const inspect = await docker.engine.inspectContainer(c.Id);
+    if (!inspect) return false;
+    return ProxyService.needsAcmeRecreate(
+      ProxyService.acmeEmailOf(inspect),
+      wanted,
+    );
+  }
+
+  /**
+   * Recreates the running proxy once with ACME email `wanted`, keeping what it
+   * already runs with (ports, staging flag, swarm/file provider flags, the
+   * ACME and certs volumes, the DNS-01 binding), a few seconds of downtime for
+   * every routed app. Returns false (and touches nothing) when it already
+   * matches or is not running.
+   */
+  async recreateWithAcme(
+    docker: DockerHandle,
+    wanted: string,
+    fallback: ProxySettings,
+  ): Promise<boolean> {
+    const c = await docker.findContainerByName(PROXY_CONTAINER);
+    if (!c || c.State !== 'running') return false;
+    const inspect = await docker.engine.inspectContainer(c.Id);
+    if (
+      !inspect ||
+      !ProxyService.needsAcmeRecreate(ProxyService.acmeEmailOf(inspect), wanted)
+    ) {
+      return false;
+    }
+    await this.provisionOn(docker, {
+      ...ProxyService.settingsOf(inspect, fallback),
+      acmeEmail: wanted,
+    });
+    this.logger.log(
+      `Proxy on ${docker.engine.target} recreated with ACME email ${wanted}`,
+    );
+    return true;
+  }
+
   /** Creates the network + acme volume and starts Traefik on `docker` (local host or a remote server). */
   async provisionOn(
     docker: DockerHandle,
@@ -484,8 +557,13 @@ export class ProxyService {
       labels[`traefik.http.middlewares.${retryName}.retry.initialinterval`] =
         RETRY_INITIAL_INTERVAL;
     }
+    // Middlewares defined by these very labels are referenced WITHOUT a provider
+    // suffix: Traefik resolves a bare name in the router's own provider, which is
+    // `docker` for a container but `swarm` for a service, so `@docker` made
+    // every service-mode router fail and get dropped. Only operator middlewares
+    // from dynamic config files carry `@file`.
     const chainOf = (list: string[]): string[] =>
-      opts.retry ? [`${retryName}@docker`, ...list] : list;
+      opts.retry ? [retryName, ...list] : list;
     for (const g of byMiddlewares(
       domains.filter((d) => plain.includes(d.host)),
     )) {
@@ -504,7 +582,7 @@ export class ProxyService {
       labels[`traefik.http.routers.${name}.rule`] = rule(redirectHosts);
       labels[`traefik.http.routers.${name}.entrypoints`] = 'web';
       labels[`traefik.http.routers.${name}.service`] = routerName;
-      labels[`traefik.http.routers.${name}.middlewares`] = `${mw}@docker`;
+      labels[`traefik.http.routers.${name}.middlewares`] = mw;
       labels[`traefik.http.middlewares.${mw}.redirectscheme.scheme`] = 'https';
       labels[`traefik.http.middlewares.${mw}.redirectscheme.permanent`] =
         'true';

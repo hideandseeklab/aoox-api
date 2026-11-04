@@ -101,7 +101,10 @@ describe('PanelDomainService restrictPorts', () => {
         k === 'INSTALL_DIR' ? '/opt/aoox' : undefined,
       ),
     };
-    const proxy = { status: jest.fn(() => Promise.resolve({ running: true })) };
+    const proxy = {
+      status: jest.fn(() => Promise.resolve({ running: true })),
+      acmeRecreateNeeded: jest.fn(() => Promise.resolve(false)),
+    };
     const service = new PanelDomainService(
       repo as never,
       {} as DockerService,
