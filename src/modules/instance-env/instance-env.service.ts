@@ -17,6 +17,7 @@ const ENV_KEYS = {
   terminalSshPassword: 'TERMINAL_SSH_PASSWORD',
   publicIp: 'PUBLIC_IP',
   registryPublicHost: 'REGISTRY_PUBLIC_HOST',
+  proxyReadTimeout: 'PROXY_READ_TIMEOUT',
 } as const;
 
 export interface InstanceEnvStatus {
@@ -31,6 +32,8 @@ export interface InstanceEnvStatus {
   terminalSshPasswordSet: boolean;
   publicIp: string | null;
   registryPublicHost: string | null;
+  /** Raw `PROXY_READ_TIMEOUT` (null when unset/empty). */
+  proxyReadTimeout: string | null;
 }
 
 /**
@@ -67,6 +70,8 @@ export class InstanceEnvService {
       publicIp: this.config.get<string>('PUBLIC_IP') || null,
       registryPublicHost:
         this.config.get<string>('REGISTRY_PUBLIC_HOST') || null,
+      proxyReadTimeout:
+        this.config.get<string>('PROXY_READ_TIMEOUT')?.trim() || null,
     };
   }
 

@@ -12,6 +12,11 @@ import {
 } from '../docker/docker.service';
 import { ProxyDnsBindingService } from '../dns-provider/proxy-dns-binding.service';
 import { MIDDLEWARE_REF } from './middleware-ref';
+import {
+  readTimeoutFlags,
+  readTimeoutFromEnv,
+  readTimeoutOf,
+} from './read-timeout';
 
 /**
  * Traefik reverse proxy managed by aoox: routes domains to application
@@ -71,6 +76,13 @@ export interface ProxyStatus {
   customCerts: boolean;
   /** The running container has the DNS-01 resolver (`le-dns`). False while not installed. */
   dnsChallenge: boolean;
+  /**
+   * Entrypoint read timeout (seconds) the RUNNING container was created with,
+   * null = Traefik's default (60 s) or not installed.
+   */
+  readTimeout: number | null;
+  /** `PROXY_READ_TIMEOUT` as configured on the panel (null = default); applied on the next (re)provision. */
+  configuredReadTimeout: number | null;
 }
 
 /** Ports and ACME for one proxy: env for the aoox host, a row for remote servers. */
@@ -160,6 +172,22 @@ export class ProxyService {
     };
   }
 
+  /** `PROXY_READ_TIMEOUT` in seconds, null = not set / invalid (Traefik default). Warns on an invalid value, never throws. */
+  get readTimeoutSeconds(): number | null {
+    const { seconds, invalid } = readTimeoutFromEnv(
+      this.config.get<string>('PROXY_READ_TIMEOUT'),
+    );
+    if (invalid && !this.warnedReadTimeout) {
+      this.warnedReadTimeout = true;
+      this.logger.warn(
+        'PROXY_READ_TIMEOUT is not whole seconds or a duration like 300s/5m within 1-86400: ignored (Traefik default applies)',
+      );
+    }
+    return seconds;
+  }
+
+  private warnedReadTimeout = false;
+
   status(): Promise<ProxyStatus> {
     return this.statusOn(this.docker, this.localSettings);
   }
@@ -190,6 +218,8 @@ export class ProxyService {
       dnsChallenge: inspect
         ? ProxyService.supportsDnsChallenge(inspect)
         : false,
+      readTimeout: inspect ? readTimeoutOf(inspect) : null,
+      configuredReadTimeout: this.readTimeoutSeconds,
     };
   }
 
@@ -390,6 +420,10 @@ export class ProxyService {
       '--serverstransport.forwardingtimeouts.dialtimeout=1s',
       '--log.level=INFO',
     ];
+    // Static config: how long a client may take to send a whole request
+    // (body included). Same value on every proxy this panel provisions.
+    const readTimeout = this.readTimeoutSeconds;
+    if (readTimeout !== null) cmd.push(...readTimeoutFlags(readTimeout));
     const email = settings.acmeEmail;
     if (email) {
       cmd.push(

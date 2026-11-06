@@ -135,6 +135,9 @@ services:
       # Which proxy hops may set the client IP (X-Forwarded-For). Empty = private networks
       # only (Traefik, the web container); see TRUST_PROXY in .env.dist.example.
       TRUST_PROXY: ${TRUST_PROXY:-}
+      # Traefik entrypoint read timeout (whole seconds or a duration like 300s/5m, 1-86400);
+      # empty = Traefik's default (60 s). Applied when the proxy is (re)installed.
+      PROXY_READ_TIMEOUT: ${PROXY_READ_TIMEOUT:-}
     # The api container runs as the unprivileged `node` user; add the gid that
     # owns the docker socket on the host (stat -c %g /var/run/docker.sock).
     group_add:
