@@ -21,6 +21,14 @@ export class InstanceUpdateState {
   @Column({ name: 'web_digest', type: 'varchar', nullable: true })
   webDigest: string | null;
 
+  /** Image reference `api_digest` was taken for; a different ref = no baseline. */
+  @Column({ name: 'api_ref', type: 'varchar', nullable: true })
+  apiRef: string | null;
+
+  /** Image reference `web_digest` was taken for. */
+  @Column({ name: 'web_ref', type: 'varchar', nullable: true })
+  webRef: string | null;
+
   @Column({ name: 'checked_at', type: 'timestamptz', nullable: true })
   checkedAt: Date | null;
 

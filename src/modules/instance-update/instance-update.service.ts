@@ -1,6 +1,7 @@
 import {
   BadGatewayException,
   BadRequestException,
+  ConflictException,
   Injectable,
   Logger,
 } from '@nestjs/common';
@@ -15,6 +16,7 @@ import {
   runComposeHelper,
 } from '../docker/compose-apply.util';
 import { DockerService } from '../docker/docker.service';
+import { applyBlockReason } from './apply-guard';
 import { fetchRemoteDigest } from '../registry/remote-digest';
 import {
   InstanceVersionInfo,
@@ -52,6 +54,12 @@ export interface InstanceUpdateStatus {
    * uses) — refreshed by every manual check, so the two never disagree.
    */
   version: InstanceVersionInfo;
+  /**
+   * Why "apply" would not change the version (a pinned install whose tag did
+   * not move), null when applying makes sense. `POST /instance/update/apply`
+   * answers 409 with the same text.
+   */
+  applyBlocked: string | null;
 }
 
 /** Cheap poll target for the web UI while an update is applying — no registry calls. */
@@ -113,7 +121,9 @@ export class InstanceUpdateService {
       this.repo.create({
         id: INSTANCE_UPDATE_STATE_ID,
         apiDigest: null,
+        apiRef: null,
         webDigest: null,
+        webRef: null,
         checkedAt: null,
         applyStartedAt: null,
         applyFromVersion: null,
@@ -182,6 +192,15 @@ export class InstanceUpdateService {
     }
   }
 
+  /** The stored digest, only when it was taken for exactly this reference. */
+  private baseline(
+    digest: string | null,
+    ref: string | null,
+    image: string,
+  ): string | null {
+    return ref === image ? digest : null;
+  }
+
   private imageStatus(
     image: string,
     baseline: string | null,
@@ -204,6 +223,9 @@ export class InstanceUpdateService {
    * — that check's digests become the baseline and `updateAvailable` reads
    * `false`, since there is nothing yet to compare against. From the next
    * check onward (or right after `apply()`) comparisons are meaningful.
+   * The same holds whenever the tracked image reference changed since the
+   * baseline was taken (pinned, unpinned, new tag): a baseline of another
+   * reference is never compared, the new reference starts its own.
    */
   async check(): Promise<InstanceUpdateStatus> {
     const row = await this.state();
@@ -215,17 +237,24 @@ export class InstanceUpdateService {
       this.tryRemoteDigest(this.webImage),
     ]);
 
-    const api = this.imageStatus(this.apiImage, row.apiDigest, apiLookup);
-    const web = this.imageStatus(this.webImage, row.webDigest, webLookup);
+    const apiBase = this.baseline(row.apiDigest, row.apiRef, this.apiImage);
+    const webBase = this.baseline(row.webDigest, row.webRef, this.webImage);
+    const api = this.imageStatus(this.apiImage, apiBase, apiLookup);
+    const web = this.imageStatus(this.webImage, webBase, webLookup);
 
-    if (row.apiDigest === null && apiLookup.digest)
+    if (apiBase === null && apiLookup.digest) {
       row.apiDigest = apiLookup.digest;
-    if (row.webDigest === null && webLookup.digest)
+      row.apiRef = this.apiImage;
+    }
+    if (webBase === null && webLookup.digest) {
       row.webDigest = webLookup.digest;
+      row.webRef = this.webImage;
+    }
     row.checkedAt = new Date();
     await this.repo.save(row);
     // The manual check also refreshes the cached version the sidebar reads.
     await this.versions.refresh();
+    const version = await this.versions.info();
 
     return {
       currentVersion,
@@ -235,8 +264,26 @@ export class InstanceUpdateService {
       applyStartedAt: row.applyStartedAt,
       api,
       web,
-      version: await this.versions.info(),
+      version,
+      applyBlocked: await this.blockReason(
+        api.updateAvailable || web.updateAvailable,
+        version.latestVersion,
+      ),
     };
+  }
+
+  private async blockReason(
+    digestChanged: boolean,
+    latestVersion: string | null,
+  ): Promise<string | null> {
+    const { tracking, tag } = await this.versions.tracked();
+    return applyBlockReason({
+      tracking,
+      trackedTag: tag,
+      checkedTag: parseImageRef(this.apiImage).tag,
+      latestVersion,
+      digestChanged,
+    });
   }
 
   /**
@@ -289,8 +336,20 @@ export class InstanceUpdateService {
       );
     }
     const row = await this.state();
+    const apiBase = this.baseline(row.apiDigest, row.apiRef, this.apiImage);
+    const webBase = this.baseline(row.webDigest, row.webRef, this.webImage);
+    // A pinned tag only moves when the registry republished that very tag:
+    // refuse before claiming an update that `pull` cannot deliver.
+    const blocked = await this.blockReason(
+      (apiBase !== null && apiBase !== apiLookup.digest) ||
+        (webBase !== null && webBase !== webLookup.digest),
+      row.latestVersion,
+    );
+    if (blocked) throw new ConflictException(blocked);
     row.apiDigest = apiLookup.digest;
+    row.apiRef = this.apiImage;
     row.webDigest = webLookup.digest;
+    row.webRef = this.webImage;
     row.checkedAt = new Date();
     row.applyStartedAt = new Date();
     row.applyFromVersion = this.currentVersion;

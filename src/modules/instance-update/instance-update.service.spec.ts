@@ -1,4 +1,4 @@
-import { BadGatewayException } from '@nestjs/common';
+import { BadGatewayException, ConflictException } from '@nestjs/common';
 import { fetchRemoteDigest } from '../registry/remote-digest';
 import { InstanceUpdateService } from './instance-update.service';
 import { INSTANCE_UPDATE_STATE_ID } from './instance-update-state.entity';
@@ -7,11 +7,11 @@ jest.mock('../registry/remote-digest', () => ({
   fetchRemoteDigest: jest.fn().mockResolvedValue('sha256:remote'),
 }));
 jest.mock('../application/image-reference', () => ({
-  parseImageRef: jest.fn().mockReturnValue({
+  parseImageRef: jest.fn().mockImplementation((ref: string) => ({
     registry: 'registry-1.docker.io',
     repository: 'library/x',
-    tag: 'latest',
-  }),
+    tag: ref.includes(':') ? ref.split(':')[1] : 'latest',
+  })),
 }));
 
 describe('InstanceUpdateService', () => {
@@ -28,15 +28,22 @@ describe('InstanceUpdateService', () => {
   });
   afterEach(() => jest.useRealTimers());
 
-  function build(configValues: Record<string, string> = {}) {
-    let stored: Record<string, unknown> | null = null;
+  function build(
+    configValues: Record<string, string> = {},
+    shared?: { stored: Record<string, unknown> | null },
+    tracked: { tracking: string; tag: string | null } = {
+      tracking: 'latest',
+      tag: 'latest',
+    },
+  ) {
+    const box = shared ?? { stored: null };
     function save(row: Record<string, unknown>) {
-      stored = { ...row };
-      return Promise.resolve(stored);
+      box.stored = { ...row };
+      return Promise.resolve(box.stored);
     }
     const saveMock = jest.fn(save);
     const repo = {
-      findOne: jest.fn().mockImplementation(() => Promise.resolve(stored)),
+      findOne: jest.fn().mockImplementation(() => Promise.resolve(box.stored)),
       create: jest.fn().mockImplementation((v: Record<string, unknown>) => ({
         ...v,
       })),
@@ -48,7 +55,11 @@ describe('InstanceUpdateService', () => {
     };
     const versions = {
       refresh: jest.fn().mockResolvedValue(true),
-      info: jest.fn().mockResolvedValue({ updateAvailable: false }),
+      info: jest.fn().mockResolvedValue({
+        updateAvailable: false,
+        latestVersion: '0.1.0-beta.1',
+      }),
+      tracked: jest.fn().mockResolvedValue(tracked),
     };
     const service = new InstanceUpdateService(
       repo as never,
@@ -56,7 +67,7 @@ describe('InstanceUpdateService', () => {
       config as never,
       versions as never,
     );
-    return { service, repo, versions };
+    return { service, repo, versions, box };
   }
 
   function mockVersion(service: InstanceUpdateService, version: string) {
@@ -200,5 +211,158 @@ describe('InstanceUpdateService', () => {
 
     expect(progress.applying).toBe(true);
     expect(progress.applyStartedAt).toBeInstanceOf(Date);
+  });
+
+  describe('baseline per image reference', () => {
+    it('does not compare a baseline taken for another tag (unpin / pin)', async () => {
+      const { service, box } = build({
+        API_IMAGE: 'x/api:0.1.0-beta.0',
+        WEB_IMAGE: 'x/web:0.1.0-beta.0',
+      });
+      mockVersion(service, '0.1.0-beta.0');
+      (fetchRemoteDigest as jest.Mock).mockResolvedValue('sha256:beta0');
+      await service.check();
+      expect(box.stored).toMatchObject({
+        apiDigest: 'sha256:beta0',
+        apiRef: 'x/api:0.1.0-beta.0',
+      });
+
+      // Unpinned: now following latest, whose digest is different.
+      const latest = build({}, box);
+      mockVersion(latest.service, '0.1.0-beta.0');
+      (fetchRemoteDigest as jest.Mock).mockResolvedValue('sha256:beta1');
+      const status = await latest.service.check();
+      expect(status.api.updateAvailable).toBe(false);
+      expect(status.api.currentDigest).toBeNull();
+      expect(box.stored).toMatchObject({
+        apiDigest: 'sha256:beta1',
+        apiRef: 'hideandseeklab/aoox-api:latest',
+        webRef: 'hideandseeklab/aoox-web:latest',
+      });
+
+      // Same ref again, digest moved: now a real update.
+      (fetchRemoteDigest as jest.Mock).mockResolvedValue('sha256:beta2');
+      const again = await latest.service.check();
+      expect(again.api.updateAvailable).toBe(true);
+      (fetchRemoteDigest as jest.Mock).mockResolvedValue('sha256:remote');
+    });
+
+    it('treats a legacy baseline without a ref as no baseline', async () => {
+      const { service } = build(
+        {},
+        {
+          stored: {
+            id: INSTANCE_UPDATE_STATE_ID,
+            apiDigest: 'sha256:old',
+            webDigest: 'sha256:old',
+            apiRef: null,
+            webRef: null,
+            checkedAt: null,
+            applyStartedAt: null,
+            applyFromVersion: null,
+            latestVersion: null,
+            latestCheckedAt: null,
+          },
+        },
+      );
+      mockVersion(service, '0.1.0-beta.1');
+      const status = await service.check();
+      expect(status.api.updateAvailable).toBe(false);
+      expect(status.web.currentDigest).toBeNull();
+    });
+  });
+
+  describe('pinned installs', () => {
+    const pinnedEnv = {
+      INSTALL_DIR: '/opt/aoox',
+      API_IMAGE: 'x/api:0.1.0-beta.0',
+      WEB_IMAGE: 'x/web:0.1.0-beta.0',
+    };
+    const pinned = { tracking: 'pinned', tag: '0.1.0-beta.0' };
+    const seeded = (
+      digest: string,
+      ref = 'x/api:0.1.0-beta.0',
+      webRef = 'x/web:0.1.0-beta.0',
+    ) => ({
+      stored: {
+        id: INSTANCE_UPDATE_STATE_ID,
+        apiDigest: digest,
+        apiRef: ref,
+        webDigest: digest,
+        webRef,
+        checkedAt: null,
+        applyStartedAt: null,
+        applyFromVersion: null,
+        latestVersion: '0.1.0-beta.1',
+        latestCheckedAt: null,
+      } as Record<string, unknown> | null,
+    });
+
+    it('apply() answers 409 when the pinned tag did not change and stores nothing', async () => {
+      const { service, repo } = build(
+        pinnedEnv,
+        seeded('sha256:remote'),
+        pinned,
+      );
+      mockVersion(service, '0.1.0-beta.0');
+      await expect(service.apply()).rejects.toBeInstanceOf(ConflictException);
+      expect(repo.save).not.toHaveBeenCalled();
+    });
+
+    it('apply() answers 409 when there is no baseline for this ref yet', async () => {
+      const { service, repo } = build(
+        pinnedEnv,
+        seeded(
+          'sha256:other',
+          'hideandseeklab/aoox-api:latest',
+          'hideandseeklab/aoox-web:latest',
+        ),
+        pinned,
+      );
+      mockVersion(service, '0.1.0-beta.0');
+      await expect(service.apply()).rejects.toThrow('pinned to 0.1.0-beta.0');
+      expect(repo.save).not.toHaveBeenCalled();
+    });
+
+    it('apply() is allowed when the same pinned tag was republished', async () => {
+      const { service, box } = build(
+        pinnedEnv,
+        seeded('sha256:previous'),
+        pinned,
+      );
+      mockVersion(service, '0.1.0-beta.0');
+      await expect(service.apply()).resolves.toBeUndefined();
+      expect(box.stored).toMatchObject({
+        apiDigest: 'sha256:remote',
+        apiRef: 'x/api:0.1.0-beta.0',
+      });
+    });
+
+    it('apply() is refused when the check tracks another tag than the running container', async () => {
+      // API_IMAGE unset (old compose) so the check follows latest, while the container runs a pinned tag.
+      const { service } = build(
+        { INSTALL_DIR: '/opt/aoox' },
+        seeded(
+          'sha256:previous',
+          'hideandseeklab/aoox-api:latest',
+          'hideandseeklab/aoox-web:latest',
+        ),
+        pinned,
+      );
+      mockVersion(service, '0.1.0-beta.0');
+      await expect(service.apply()).rejects.toBeInstanceOf(ConflictException);
+    });
+
+    it('check() reports applyBlocked for a pinned install and null otherwise', async () => {
+      const blocked = build(pinnedEnv, seeded('sha256:remote'), pinned);
+      mockVersion(blocked.service, '0.1.0-beta.0');
+      expect((await blocked.service.check()).applyBlocked).toContain(
+        'aoox reinstall',
+      );
+
+      const free = build({ INSTALL_DIR: '/opt/aoox' });
+      mockVersion(free.service, '0.1.0-beta.0');
+      expect((await free.service.check()).applyBlocked).toBeNull();
+    });
   });
 });

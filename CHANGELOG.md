@@ -8,6 +8,10 @@ Versions below 1.0.0 may include breaking changes in a minor release.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Update aoox no longer reports a false update after changing the tracked tag, and refuses to "apply" on a pinned install.** The digest baseline was stored without the image reference it belonged to, so a pinned `API_IMAGE`/`WEB_IMAGE` compared against the baseline of `:latest` (or the other way round after unpinning) showed an update that `pull` could never deliver; `POST /instance/update/apply` answered 202 and the version did not move. The baseline is now stored per reference (migration `InstanceUpdateRefs`, additive, the first check after upgrading only re-baselines), a changed reference starts a fresh baseline, and applying on a pinned install answers 409 with the way out (set `API_IMAGE`/`WEB_IMAGE` to the new tag or remove them, then `aoox reinstall`) unless the pinned tag itself was republished. `GET /instance/update` adds `applyBlocked` (the same text, or null).
+
 ## [0.1.0-beta.1] - 2026-11-07
 
 ### Added
