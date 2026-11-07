@@ -8,6 +8,8 @@ Versions below 1.0.0 may include breaking changes in a minor release.
 
 ## [Unreleased]
 
+## [0.1.0-beta.1] - 2026-11-07
+
 ### Added
 
 - **Configurable Traefik read timeout (`PROXY_READ_TIMEOUT`).** Traefik's entrypoints cut a request that takes longer than `respondingTimeouts.readTimeout` (default 60 s, body included) to arrive, so a large upload over a slow connection was aborted. The new env (whole seconds like `300`, or a duration like `300s`/`5m`, 1-86400; empty or invalid = Traefik's default, invalid also logs a warning) adds `--entrypoints.web|websecure.transport.respondingtimeouts.readtimeout=<n>s` to every proxy aoox provisions (host and remote servers; also the recreates for custom certificates, ACME, DNS-01 and swarm). It is static proxy configuration: it applies when the proxy is reinstalled. `GET /proxy` and `GET /servers/:id/proxy` add `readTimeout` (read back from the running container, null = default) and `configuredReadTimeout`; `GET`/`PATCH /instance/env` gain `proxyReadTimeout` (empty removes it); the api service in `docker-compose.dist.yml` passes the variable (bundled copy updated; existing installs get it with `aoox reinstall`). aoox adds no request body size limit.
@@ -737,7 +739,8 @@ Read before upgrading; back up first (Settings → Infrastructure → Instance b
 - Monitoring with metrics history, disk cleanup tooling, and project/instance export-import for
   backup and migration between hosts.
 
-[Unreleased]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-beta.0...HEAD
+[Unreleased]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-beta.1...HEAD
+[0.1.0-beta.1]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-beta.0...v0.1.0-beta.1
 [0.1.0-beta.0]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-alpha.13...v0.1.0-beta.0
 [0.1.0-alpha.13]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-alpha.12...v0.1.0-alpha.13
 [0.1.0-alpha.12]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-alpha.11...v0.1.0-alpha.12
