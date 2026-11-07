@@ -285,7 +285,7 @@ Replaced the per-project environments of 0.1.0-alpha.9 (stages 1-3 of "Project e
 ## Docker / distribution
 
 - `Dockerfile` (multi-stage, `node:24-bookworm-slim` — not alpine, because `node-pty` needs glibc and the terminal needs bash).
-  The image runs as the `node` user; `DB_MIGRATIONS_RUN=true` → TypeORM runs migrations at boot (`migrationsRun`).
+  The image runs as the `node` user; `DB_MIGRATIONS_RUN=true` → TypeORM runs migrations at boot (`migrationsRun`). Production logs migration lines only (`logging: ['migration','schema']`: which migrations ran, and failures), no queries or errors, because handled query errors are normal here.
 - All containers created by the API (registry, proxy, apps) get the label `com.docker.compose.project=aoox` (`composeLabels()` in `docker.service.ts`),
   and both compose files use `name: aoox`, so Docker Desktop shows them as one group. The dev Postgres volume is pinned to the old name `aoox-api_postgres_data`.
 - `docker-compose.yml` = Postgres for development only. `docker-compose.dist.yml` = the distribution stack (postgres + api + web, images `hideandseeklab/aoox-api`/`aoox-web` from Docker Hub; `-f docker-compose.build.yml` to build locally from `../aoox-web`);

@@ -8,6 +8,10 @@ Versions below 1.0.0 may include breaking changes in a minor release.
 
 ## [Unreleased]
 
+### Changed
+
+- In production the API now logs which database migrations ran at startup (and any migration failure), so `docker logs` shows what an upgrade applied. Queries and handled query errors are still not logged.
+
 ## [0.1.0-beta.2] - 2026-11-07
 
 ### Fixed

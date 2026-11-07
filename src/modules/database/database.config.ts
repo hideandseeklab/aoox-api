@@ -15,6 +15,9 @@ export function buildDatabaseOptions(
     synchronize: false,
     // In containers there is no separate migration step: apply on boot.
     migrationsRun: env.DB_MIGRATIONS_RUN === 'true',
-    logging: env.NODE_ENV !== 'production',
+    // Production: migration lines only. TypeORM prints the "executed
+    // successfully" lines at the 'schema' level and failures at 'migration'
+    // (always on). No 'query'/'error': services rely on handled query errors.
+    logging: env.NODE_ENV !== 'production' ? true : ['migration', 'schema'],
   };
 }
