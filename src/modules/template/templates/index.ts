@@ -6,7 +6,7 @@ import { gitea } from './gitea';
 import { grafana } from './grafana';
 import { mattermost } from './mattermost';
 import { metabase } from './metabase';
-import { minio } from './minio';
+import { rustfs } from './rustfs';
 import { n8n } from './n8n';
 import { nextcloud } from './nextcloud';
 import { odoo } from './odoo';
@@ -21,7 +21,7 @@ export const TEMPLATES: readonly Template[] = [
   ghost,
   n8n,
   uptimeKuma,
-  minio,
+  rustfs,
   gitea,
   vaultwarden,
   umami,

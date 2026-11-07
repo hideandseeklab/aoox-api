@@ -238,7 +238,7 @@ failures and timeouts trigger notifications.
 
 ### One-click templates
 
-**Templates** lists ready-made stacks (WordPress, Ghost, n8n, Uptime Kuma, MinIO, Gitea). Pick a project, optionally a
+**Templates** lists ready-made stacks (WordPress, Ghost, n8n, Uptime Kuma, RustFS, Gitea). Pick a project, optionally a
 hostname per exposed service (routed by the proxy, HTTPS when ACME is configured) and fill the few variables — passwords
 left empty are generated. The result is an ordinary compose stack: its `docker-compose.yml` and env can be edited on the
 stack's page and redeployed.

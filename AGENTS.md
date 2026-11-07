@@ -467,7 +467,7 @@ Replaced the per-project environments of 0.1.0-alpha.9 (stages 1-3 of "Project e
   helper; `GIT_TERMINAL_PROMPT=0`) and then `nixpacks build /src --out /src --no-cache --env K=V` — it only writes `.nixpacks/Dockerfile`, no docker; the whole
   source is `tar`red → `readFileFromContainer` (archive API) → (3) `buildFromTar` (`POST /build` with body `application/x-tar`, `dockerfile=.nixpacks/Dockerfile`, classic builder).
   `--no-cache` is **required**: nixpacks' cache mounts are BuildKit syntax (`RUN --mount`), and `POST /build?version=2` needs a BuildKit gRPC session that our hand-written client does not have
-  (tested: without the flag the build hangs). Consequences: no dependency cache between builds, the first build is slow (base `ghcr.io/railwayapp/nixpacks:ubuntu-*`
+  (tested: without the flag the build hangs). Consequences: no dependency cache MOUNTS (the classic Docker builder still reuses its LAYER cache: measured cold build 295 s, redeploy with unchanged source 12 s via "Using cache"; a change to dependency files rebuilds from that layer and downloads dependencies again), the first build is slow (base `ghcr.io/railwayapp/nixpacks:ubuntu-*`
   ~350 MB + `nix-env`), the tar context is held in memory (source tree only, `.git` removed). `buildArgs` → nixpacks `--env` (e.g. `NIXPACKS_NODE_VERSION`) and Docker `buildargs`.
   The nixpacks version is pinned in `NIXPACKS_VERSION`; bumping it = a new helper image automatically. `aoox.component=build` for the helper (ignored by monitoring/container-down because it is neither an app nor a DB).
 - **Mounts** (`mount.entity.ts`, table `mounts`, unique per `application_id`+`container_path`): `volume` (Docker volume `aoox_app_<appName>_<name>`, data survives between deploys),
@@ -539,7 +539,7 @@ Replaced the per-project environments of 0.1.0-alpha.9 (stages 1-3 of "Project e
   The resulting image is loaded into the daemon and then follows the same push/replaceContainer path. **Host only** (`serverId` + railpack → a clear error; BuildKit per server is out of scope).
   Runtime: the railpack image listens on `$PORT` (Railway convention, default 80) → the runner adds `PORT=<containerPort>` to the container env unless the app sets it itself.
   The BuildKit cache is not visible to the daemon's `POST /build/prune`, so `MaintenanceService.cleanup()` calls `railpack.pruneCache(BUILDKIT_CACHE_KEEP_GB × 1 GB, default 10)`
-  (`buildctl prune --keep-storage` via exec) and reports it as `buildkitCache` in `CleanupReport` (shown in the Disk card). Note: the "no dependency cache" limitation in the nixpacks paragraph
+  (`buildctl prune --keep-storage` via exec) and reports it as `buildkitCache` in `CleanupReport` (shown in the Disk card). Note: the "no dependency cache mounts" limitation in the nixpacks paragraph
   applies only to nixpacks/static, not to railpack.
 - **Root directory / monorepo** (`Application.rootDirectory` nullable + `watchRootOnly` bool, migration `ApplicationRootDirectory`; `root-directory.ts`): builds a **subfolder** of the repo for
   ALL git build types, including PR previews (which go through the same `buildImage`). Null/empty = repo root (old behavior). **Mechanism per path**: Dockerfile →
@@ -1196,7 +1196,7 @@ Replaced the per-project environments of 0.1.0-alpha.9 (stages 1-3 of "Project e
 
 - `src/modules/template/` — a **static catalog in TypeScript** (`templates/*.ts`, `Template` in `template.types.ts`: id, version, `variables` `{key,label,default,generate,required,hint}`,
   `services` `{service,port,label}` that may be given a domain, `compose`). It is not fetched from a URL at runtime (offline, and cannot be replaced by someone else's YAML); no nest-cli `assets` needed.
-  Contents (15): wordpress, ghost, n8n, uptime-kuma, minio, gitea, **vaultwarden** (1.37.3), **umami** (`ghcr.io/umami-software/umami:postgresql-v2.20.2` + postgres), **grafana** (13.0.2, SQLite),
+  Contents (15): wordpress, ghost, n8n, uptime-kuma, **rustfs** (`rustfs/rustfs:1.0.4`, replaced `minio`: `minio/minio` is no longer pullable from Docker Hub; S3 on 9000, console on 9001, `RUSTFS_ACCESS_KEY`/`RUSTFS_SECRET_KEY` generated, healthcheck `curl /health`; stacks created from the old `minio` template keep running, they carry their own `composeContent`, and the compose page simply shows no domain suggestions for an unknown `templateId`), gitea, **vaultwarden** (1.37.3), **umami** (`ghcr.io/umami-software/umami:postgresql-v2.20.2` + postgres), **grafana** (13.0.2, SQLite),
   **metabase** (v0.63.18.5 + postgres), **directus** (12.4.1 + postgres; variables named `KEY`/`SECRET` are indeed Directus env names), **mattermost** (`mattermost-team-edition:11.11.1` + postgres) and
   **nextcloud** (`32.0.15-apache` + postgres + redis `--requirepass` + a `cron` service with `entrypoint: /cron.sh`; `PROTOCOL` defaults to https for `OVERWRITEPROTOCOL`, http only for local testing).
   **odoo** (`odoo:19.0-20260926` Community + postgres; a dated tag because `19.0` shifts every night; configuration via an inline compose `configs` entry -> `/etc/odoo/odoo.conf`
