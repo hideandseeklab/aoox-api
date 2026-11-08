@@ -320,6 +320,29 @@ describe('DatabaseCompanionService', () => {
       expect(b.rows[0].hostPortBind).toBe('public');
     });
 
+    it('reports a public host port as such, and no bind for a domain-only companion', async () => {
+      const a = makeService();
+      const pub = await a.service.create(makeDb(), {
+        tool: 'adminer',
+        hostPort: 9000,
+        hostPortBind: 'public',
+      });
+      expect(pub).toMatchObject({
+        hostPortBind: 'public',
+        loopbackOnly: false,
+      });
+      const b = makeService();
+      const domainOnly = await b.service.create(makeDb(), {
+        tool: 'adminer',
+        host: 'db.example.com',
+      });
+      expect(domainOnly).toMatchObject({
+        hostPort: null,
+        hostPortBind: null,
+        loopbackOnly: false,
+      });
+    });
+
     it('stores an encrypted generated password only for tools without the database login', async () => {
       const a = makeService();
       await a.service.create(makeDb({ engine: 'mongodb' }), {

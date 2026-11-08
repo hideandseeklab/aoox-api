@@ -27,6 +27,11 @@ jobs:
       - name: Lint
         run: npx eslint "{src,apps,libs,test}/**/*.ts"
 
+      # The build excludes *.spec.ts and Jest does not type-check them, so
+      # check the whole project (specs included) here.
+      - name: Type check
+        run: npm run typecheck
+
       - name: Build
         run: npm run build
 

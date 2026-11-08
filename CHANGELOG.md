@@ -8,9 +8,14 @@ Versions below 1.0.0 may include breaking changes in a minor release.
 
 ## [Unreleased]
 
+### Fixed
+
+- A database companion installed with a domain only (no host port) now reports `hostPortBind: null` instead of a contradictory `loopback` next to `loopbackOnly: false`. The stored value is unchanged.
+
 ### Changed
 
 - In production the API now logs which database migrations ran at startup (and any migration failure), so `docker logs` shows what an upgrade applied. Queries and handled query errors are still not logged.
+- CI now type-checks the whole project, specs included (`npm run typecheck`, `tsc --noEmit`): the build skips `*.spec.ts` and Jest does not type-check, so two type errors in a spec had gone unnoticed (fixed).
 
 ## [0.1.0-beta.2] - 2026-11-07
 

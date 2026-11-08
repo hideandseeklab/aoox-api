@@ -345,7 +345,8 @@ export class DatabaseCompanionService {
       host: row.host,
       https: row.https,
       hostPort: row.hostPort,
-      hostPortBind: normalizeBind(row.hostPortBind),
+      // The bind only means something when a host port is published.
+      hostPortBind: row.hostPort ? normalizeBind(row.hostPortBind) : null,
       loopbackOnly:
         !row.host &&
         !!row.hostPort &&

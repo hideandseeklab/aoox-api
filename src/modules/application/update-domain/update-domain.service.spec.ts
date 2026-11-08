@@ -293,15 +293,18 @@ describe('UpdateDomainService middlewares', () => {
 
   it('certMode-only and DNS-only PATCHes keep certificate_id out of the update', async () => {
     const mode = make(row({ certificateId: null, certMode: 'http' }));
-    mode.svc['dnsBindings'] = { get: jest.fn().mockResolvedValue({}) } as never;
+    (mode.svc as unknown as { dnsBindings: unknown }).dnsBindings = {
+      get: jest.fn().mockResolvedValue({}),
+    };
     await mode.svc.execute('owner', 'app1', 'd1', { certMode: 'dns' });
     expect(mode.domainsRepo.update).toHaveBeenCalledWith('d1', {
       certMode: 'dns',
     });
 
     const dns = make(row({ certificateId: CERT.id, dnsProxied: false }));
-    (dns.svc['domainDns'] as { connectionName: jest.Mock }).connectionName =
-      jest.fn().mockResolvedValue('cf');
+    (
+      dns.svc['domainDns'] as unknown as { connectionName: jest.Mock }
+    ).connectionName = jest.fn().mockResolvedValue('cf');
     await dns.svc.execute('owner', 'app1', 'd1', {
       dnsConnectionId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
       dnsProxied: true,

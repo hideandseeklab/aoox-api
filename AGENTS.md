@@ -302,7 +302,7 @@ Replaced the per-project environments of 0.1.0-alpha.9 (stages 1-3 of "Project e
 
 - `npm test` — unit specs (Jest) for the important invariants: `setup` only when empty, bootstrap is idempotent, the gateway rejects wrong/member-role/reused tickets, throttle 429.
   New specs go next to the file they test (`*.spec.ts`), with mocked repositories/DataSource — no Postgres needed.
-- GitHub CI: `.github/workflows/ci.yml` runs lint/build/test on every pull request and on pushes to main; `docker-publish.yml` publishes images to Docker Hub on version tags (the old GitLab CI config was removed after the repo moved to GitHub).
+- GitHub CI: `.github/workflows/ci.yml` runs lint, type check (`npm run typecheck` = `tsc --noEmit` over the whole project, specs included: the build excludes `*.spec.ts` and Jest does not type-check), build and test on every pull request and on pushes to main; `docker-publish.yml` publishes images to Docker Hub on version tags (the old GitLab CI config was removed after the repo moved to GitHub).
   `docker-compose.dist.yml` uses the Docker Hub images (`API_IMAGE`/`WEB_IMAGE` to pin versions, see `.env.dist.example`); `docker-compose.build.yml` for local builds.
 
 ## Docker & Registry
@@ -1136,6 +1136,7 @@ Replaced the per-project environments of 0.1.0-alpha.9 (stages 1-3 of "Project e
   daemon unreachable → the previous status is kept. There is no watcher. **Stopping the database does not touch the companion** (it keeps running and just cannot connect until the database is started again; there is no re-provisioning on start).
 - **Delete**: `DELETE .../companion` removes the container and then the row. `ManagedDatabaseService.remove()` removes the companion container **by name** (try/catch, warning only — it must not block deleting the DB) before
   the database container; the row is removed via FK cascade. `DatabaseCompanionModule` does not import `ManagedDatabaseModule` (cycle), hence the name-based lookup. Deleting a **project** also removes the companion container, through `ManagedDatabaseService.remove()` (see Project → Delete project).
+- `hostPortBind` in the companion response is `null` when no `hostPort` is published (domain-only); the stored column keeps its `loopback` default and `loopbackOnly` stays false.
 - Project export/import does **not** carry companions. Unit-tested (catalog, service, host-port) **and** smoke-tested for real on Docker Desktop (host-port mode, real API; one DB per engine, removed afterwards):
   - adminer+MariaDB and adminer+PostgreSQL: login with the real DB credentials succeeds; the URL `?pgsql=<host>` really selects the PostgreSQL driver (without the query, the default driver is "MySQL / MariaDB").
   - phpmyadmin+MySQL 8: DB login succeeds; the form has no server field and a manually sent `pma_servername` is ignored (the host stays `PMA_HOST`).

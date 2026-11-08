@@ -76,8 +76,8 @@ export class CompanionDto {
   host: string | null;
   https: boolean;
   hostPort: number | null;
-  /** Interface the host port listens on (new admin apps default to loopback). */
-  hostPortBind: HostPortBind;
+  /** Interface the host port listens on (new admin apps default to loopback); null when no host port is published. */
+  hostPortBind: HostPortBind | null;
   /** true when the only way in is the host port bound to 127.0.0.1: reachable from this server (SSH tunnel) only. */
   loopbackOnly: boolean;
   /**
