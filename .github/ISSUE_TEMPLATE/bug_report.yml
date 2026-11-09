@@ -1,0 +1,96 @@
+name: Bug report
+description: Report a problem in aoox (API, dashboard, CLI/installer or docs). All aoox bugs are tracked here.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for testing aoox. This repository is the single place for bug reports for the API, the dashboard (aoox-web), the CLI/installer (aoox-cli) and the docs/website.
+
+        Security vulnerabilities must not be reported here. Please follow the [security policy](https://github.com/hideandseeklab/aoox-api/security/policy).
+  - type: checkboxes
+    id: searched
+    attributes:
+      label: Existing issues
+      options:
+        - label: I searched the existing issues and could not find this bug.
+          required: true
+  - type: input
+    id: aoox-version
+    attributes:
+      label: aoox version
+      description: Shown below the logo in the dashboard sidebar, or in the `version` field of `GET /` on the API.
+      placeholder: 0.1.0-rc.1
+    validations:
+      required: true
+  - type: input
+    id: cli-version
+    attributes:
+      label: CLI version
+      description: Output of `aoox --version`. Write "not used" if you do not use the CLI.
+      placeholder: "@hideandseeklab/aoox/0.1.0-rc.1 linux-x64 node-v24.12.0"
+    validations:
+      required: false
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - Dashboard / web
+        - API
+        - CLI / installer
+        - Docs / website
+        - Not sure
+    validations:
+      required: true
+  - type: dropdown
+    id: install-type
+    attributes:
+      label: Install type
+      options:
+        - aoox install (CLI installer)
+        - Manual compose install
+        - Development setup (from source)
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Host OS and Docker version
+      description: Your Linux distribution or OS and version, plus the output of `docker version`.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Describe the problem. Screenshots are welcome.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Go to ...
+        2. Click ...
+        3. See the error
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: |
+        For example `docker logs aoox-api-1` (or your API container name), the browser console, or the CLI output.
+        WARNING: remove secrets, tokens, passwords, API keys, private keys and connection strings before pasting. Logs are public.
+      render: shell
+    validations:
+      required: false

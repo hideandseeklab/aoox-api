@@ -2,6 +2,8 @@
 
 Self-hosted PaaS — deploy from Git or images on your own server, with databases, domains and monitoring in one dashboard.
 
+> **Status: 0.1.0-rc.1, release candidate.** Expect rough edges. Please report bugs at [aoox-api issues](https://github.com/hideandseeklab/aoox-api/issues/new/choose) (one place for the API, dashboard, CLI and docs).
+
 Website: [aoox.dev](https://aoox.dev) · Docs: [aoox.dev/docs](https://aoox.dev/docs) · Changelog: [aoox.dev/changelog](https://aoox.dev/changelog)
 
 Four repos:
@@ -11,7 +13,20 @@ Four repos:
 - [aoox-cli](https://github.com/hideandseeklab/aoox-cli) — the `aoox` command line ([npm](https://www.npmjs.com/package/@hideandseeklab/aoox))
 - [aoox-landing](https://github.com/hideandseeklab/aoox-landing) — the website and documentation at [aoox.dev](https://aoox.dev)
 
-## Run with Docker (distribution)
+## Install (recommended: the CLI)
+
+On a fresh Linux server (see [Choosing a VPS](https://aoox.dev/docs/fresh-vps)):
+
+```bash
+curl -fsSL https://aoox.dev/install-cli.sh | sh
+sudo aoox install
+```
+
+`aoox install` installs Docker if needed, generates the secrets and starts the stack. Then open the web
+address it prints; on first run you are sent to **/setup** to create the owner account.
+Full guide: [aoox.dev/docs/installation](https://aoox.dev/docs/installation).
+
+## Manual install (Docker Compose)
 
 Requirements: Docker 24+ with Compose v2.
 
@@ -287,7 +302,9 @@ This repo follows [Semantic Versioning](https://semver.org/) independently from 
 
 ## Contributing
 
-Issues and pull requests are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
+Issues and pull requests are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). Found a bug or have an idea?
+Use the issue forms: [report a bug or request a feature](https://github.com/hideandseeklab/aoox-api/issues/new/choose). This repository is the single place for
+issues about the API, dashboard, CLI and docs. Security issues: see [SECURITY.md](SECURITY.md).
 
 ## License
 

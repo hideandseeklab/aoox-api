@@ -21,7 +21,11 @@ npm run start:dev           # http://localhost:3001
 
 ## Reporting bugs
 
-Open an issue with steps to reproduce, what you expected, and what happened instead.
+All aoox issues, including bugs and feature requests for the dashboard ([aoox-web](https://github.com/hideandseeklab/aoox-web)), the CLI ([aoox-cli](https://github.com/hideandseeklab/aoox-cli)) and the docs/website, are tracked in this repository. Use the [issue forms](https://github.com/hideandseeklab/aoox-api/issues/new/choose) and give steps to reproduce, what you expected, and what happened instead.
+
+## Contributing to other repositories
+
+Issues go here, but pull requests go to the repository that holds the code: [aoox-web](https://github.com/hideandseeklab/aoox-web) for the dashboard, [aoox-cli](https://github.com/hideandseeklab/aoox-cli) for the CLI, [aoox-landing](https://github.com/hideandseeklab/aoox-landing) for the website and docs. Each repository has its own setup in its README.
 
 ## Reporting security issues
 

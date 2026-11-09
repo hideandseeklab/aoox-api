@@ -8,6 +8,10 @@ Versions below 1.0.0 may include breaking changes in a minor release.
 
 ## [Unreleased]
 
+### Added
+
+- GitHub issue forms (bug report, feature request) for all aoox components; this repository is the single intake for bug reports. The README now shows the release-candidate status and the CLI install path first, and CONTRIBUTING points UI and CLI contributors to their repositories.
+
 ### Fixed
 
 - A deployment-runner test no longer fails on a busy CI runner: it waits on a time limit instead of a fixed number of event-loop turns.
