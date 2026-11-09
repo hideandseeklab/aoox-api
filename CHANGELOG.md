@@ -8,6 +8,10 @@ Versions below 1.0.0 may include breaking changes in a minor release.
 
 ## [Unreleased]
 
+### Fixed
+
+- A deployment-runner test no longer fails on a busy CI runner: it waits on a time limit instead of a fixed number of event-loop turns.
+
 ## [0.1.0-rc.1] - 2026-11-09
 
 ### Fixed

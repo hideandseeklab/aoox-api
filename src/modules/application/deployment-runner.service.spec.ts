@@ -158,8 +158,11 @@ describe('DeploymentRunnerService', () => {
     followRevert?: FollowRevert,
   ) => {
     runner.start(d, a, followRevert);
-    for (let i = 0; i < 500 && !['success', 'failed'].includes(d.status); i++) {
-      await new Promise((r) => setImmediate(r));
+    // Wall-clock deadline, not a tick count: the runner sleeps on real timers
+    // (health polls, proxy settle), which a busy CI runner can delay.
+    const deadline = Date.now() + 5000;
+    while (!['success', 'failed'].includes(d.status) && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 1));
     }
     return d;
   };
