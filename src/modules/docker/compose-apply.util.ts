@@ -1,4 +1,5 @@
 import { tarFiles } from '../application/nixpacks-builder.service';
+import { DockerEngineError } from './docker-engine.client';
 import { DockerService } from './docker.service';
 
 const COMPOSE_CLI_IMAGE = 'docker:29-cli';
@@ -53,6 +54,10 @@ export async function runComposeHelper(
         `${installDir}:${installDir}`,
       ],
       NetworkMode: 'bridge',
+      // `docker compose up -d` recreates the api container that runs this
+      // code, so the process can die before the cleanup below. The daemon
+      // removes the helper itself when it exits instead.
+      AutoRemove: true,
     },
   });
   try {
@@ -60,8 +65,15 @@ export async function runComposeHelper(
       await docker.engine.putArchive(id, installDir, tarFiles(files));
     }
     await docker.engine.startContainer(id);
-    await docker.engine.waitContainer(id);
+    try {
+      await docker.engine.waitContainer(id, 'removed');
+    } catch (err) {
+      // Already auto-removed before the wait was registered: finished.
+      if (!(err instanceof DockerEngineError && err.status === 404)) throw err;
+    }
   } finally {
+    // Fallback only: covers a failure before start (the container never ran,
+    // so AutoRemove did not fire). 404 (already auto-removed) is swallowed.
     await docker.engine.removeContainer(id, true, true).catch(() => undefined);
   }
 }

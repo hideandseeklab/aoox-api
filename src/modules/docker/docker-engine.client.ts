@@ -65,6 +65,8 @@ export interface ContainerCreateBody {
     RestartPolicy?: { Name: string; MaximumRetryCount?: number };
     /** Needed by nested builders (BuildKit); nothing else asks for it. */
     Privileged?: boolean;
+    /** The daemon removes the container as soon as it exits (spec: HostConfig.AutoRemove). */
+    AutoRemove?: boolean;
     /** Network name to attach to (bridge network created by us). */
     NetworkMode?: string;
     /** Resource limits (see resource-limits.ts); 0 = unlimited. */
@@ -536,11 +538,19 @@ export class DockerEngineClient {
     await this.request('POST', `/containers/${id}/start`);
   }
 
-  /** `POST /containers/{id}/wait` -> exit code */
-  async waitContainer(id: string): Promise<number> {
+  /**
+   * `POST /containers/{id}/wait` -> exit code. `condition` is the optional
+   * spec parameter (`not-running` is the daemon default, `next-exit`,
+   * `removed`); omitted, the request is identical to before.
+   */
+  async waitContainer(
+    id: string,
+    condition?: 'not-running' | 'next-exit' | 'removed',
+  ): Promise<number> {
+    const qs = condition ? `?condition=${condition}` : '';
     const res = await this.json<{ StatusCode: number }>(
       'POST',
-      `/containers/${id}/wait`,
+      `/containers/${id}/wait${qs}`,
     );
     return res.StatusCode;
   }

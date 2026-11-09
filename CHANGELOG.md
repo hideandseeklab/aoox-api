@@ -10,6 +10,7 @@ Versions below 1.0.0 may include breaking changes in a minor release.
 
 ### Fixed
 
+- Applying a panel domain, an instance update or instance environment changes no longer leaves a stopped `docker:29-cli` helper container behind on every apply (the helper recreates the API container, which died before it could remove it; the daemon now removes it via `AutoRemove`). Leftovers from older versions can be removed with `docker rm`.
 - A database companion installed with a domain only (no host port) now reports `hostPortBind: null` instead of a contradictory `loopback` next to `loopbackOnly: false`. The stored value is unchanged.
 
 ### Changed

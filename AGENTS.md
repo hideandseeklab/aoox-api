@@ -1413,6 +1413,7 @@ Replaced the per-project environments of 0.1.0-alpha.9 (stages 1-3 of "Project e
 - `docker/compose-apply.util.ts` (used by `panel-domain`, `instance-update`, `instance-env`): `envUpsertLine()` (pure, unit-tested) and `runComposeHelper()`
   (creates a `docker:29-cli` container, binds `installDir` + the docker socket, optionally writes files via `putArchive`, starts, waits, removes) — previously copied by hand in two
   places (and nearly a third time for this feature), now a single source of truth for the pattern "edit `.env.dist`/compose, then `docker compose up` from inside its own container".
+  The helper is created with `HostConfig.AutoRemove: true` and awaited with `waitContainer(id, 'removed')` (404 = already removed = finished), because `up -d` recreates the api container itself and its `finally` remove never ran, leaving a stopped helper per apply; the `finally` remove stays only as a fallback for failures before start. Helpers left by older versions (stopped `docker:29-cli` containers labelled `aoox.component=build`) can be removed with `docker rm`.
 
 ## Docker Swarm (stages 1–2: single node, apps as services)
 
