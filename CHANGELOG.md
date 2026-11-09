@@ -8,6 +8,8 @@ Versions below 1.0.0 may include breaking changes in a minor release.
 
 ## [Unreleased]
 
+## [0.1.0-rc.1] - 2026-11-09
+
 ### Fixed
 
 - Applying a panel domain, an instance update or instance environment changes no longer leaves a stopped `docker:29-cli` helper container behind on every apply (the helper recreates the API container, which died before it could remove it; the daemon now removes it via `AutoRemove`). Leftovers from older versions can be removed with `docker rm`.
@@ -755,7 +757,8 @@ Read before upgrading; back up first (Settings → Infrastructure → Instance b
 - Monitoring with metrics history, disk cleanup tooling, and project/instance export-import for
   backup and migration between hosts.
 
-[Unreleased]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-beta.2...HEAD
+[Unreleased]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-rc.1...HEAD
+[0.1.0-rc.1]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-beta.2...v0.1.0-rc.1
 [0.1.0-beta.2]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-beta.1...v0.1.0-beta.2
 [0.1.0-beta.1]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-beta.0...v0.1.0-beta.1
 [0.1.0-beta.0]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-alpha.13...v0.1.0-beta.0
