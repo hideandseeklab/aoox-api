@@ -16,6 +16,10 @@ Versions below 1.0.0 may include breaking changes in a minor release.
 
 - A deployment-runner test no longer fails on a busy CI runner: it waits on a time limit instead of a fixed number of event-loop turns.
 
+### UI UX Improvement
+
+- **New aoox logo** for the API favicon (`/favicon.svg`, `/favicon.ico`, Swagger UI at `/docs`): a lime chevron on a square dark tile replaces the `$` mark in a circle.
+
 ## [0.1.0-rc.1] - 2026-11-09
 
 ### Fixed

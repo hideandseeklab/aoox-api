@@ -1,8 +1,9 @@
 /**
- * The `$` mark shared with aoox-web and the landing page, inlined so the
- * runtime image (dist/ only) can serve it for the Swagger UI and browser tabs.
+ * The aoox mark (a lime chevron on a square #0c1013 tile), shared with
+ * aoox-web and the landing page and inlined so the runtime image (dist/ only)
+ * can serve it for the Swagger UI and browser tabs.
  */
 export const FAVICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <circle cx="32" cy="32" r="32" fill="#0c1013"/>
-  <path fill="#84cc16" transform="translate(20.713 45.733) scale(0.03762 -0.03762)" d="M268.6 -140V-8.4Q171.1 -0.4 114.6 54.1Q58.2 108.7 57.4 195.9H182.5Q182.5 159.1 205.2 134.6Q228 110 268.6 102.4V313.5L250.9 318.6Q165.4 341 118.5 398.2Q71.5 455.4 71.5 536.1Q71.5 621.3 124.5 675.7Q177.5 730 268.6 738V870H331.5V739Q423.3 731 477.4 677.5Q531.5 624.1 531.9 539.1H406.8Q406.8 575 387.2 598.1Q367.7 621.2 331.5 628.2V426.4L363.9 417.5Q450.9 395.1 496.8 338.6Q542.6 282.1 542.6 199.4Q542.6 112.1 485.4 55.8Q428.3 -0.6 331.5 -9V-140ZM331.5 101.3Q372.3 107.5 394.9 131.6Q417.5 155.8 417.5 194.4Q417.5 237.9 387 266.8Q356.5 295.7 302 298.7L331.5 336.6ZM268.6 387.8V628.2Q233.9 621.2 215.3 599.4Q196.6 577.7 196.6 542.9Q196.6 497.9 227.5 468.3Q258.3 438.6 313 436.6Z"/>
+  <rect width="64" height="64" fill="#0c1013"/>
+  <path d="M21.6 20.6 39.7 29.7Q45 32 39.7 34.3L21.6 43.4" fill="none" stroke="#84cc16" stroke-width="5.9" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>`;
