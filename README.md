@@ -13,6 +13,43 @@ Four repos:
 - [aoox-cli](https://github.com/hideandseeklab/aoox-cli) — the `aoox` command line ([npm](https://www.npmjs.com/package/@hideandseeklab/aoox))
 - [aoox-landing](https://github.com/hideandseeklab/aoox-landing) — the website and documentation at [aoox.dev](https://aoox.dev)
 
+## Screenshots
+
+![Deploying an application from the aoox dashboard](docs/images/deploy.gif)
+
+**Projects** group applications, databases and stacks, with live status and resource use.
+
+![Projects overview](docs/images/projects-dark.webp)
+
+**Deploy** from Git or an image and follow the build log live, with metrics and history beside it.
+
+![Deploying with a live log](docs/images/deploy-dark.webp)
+
+**Data browser**: browse tables and run SQL on a managed database without leaving the dashboard.
+
+![Data browser](docs/images/data-dark.webp)
+
+**Environment**: variables and shared variable sets, with references to your databases.
+
+![Environment variables](docs/images/environment-dark.webp)
+
+<details>
+<summary>More screenshots (light theme, backups, Indonesian)</summary>
+
+Deployment history in the light theme:
+
+![Deployment history, light theme](docs/images/history-light.webp)
+
+Scheduled and manual database backups, optionally copied to S3:
+
+![Database backups](docs/images/backups-light.webp)
+
+The dashboard is also available in Indonesian:
+
+![Projects overview in Indonesian](docs/images/projects-id-dark.webp)
+
+</details>
+
 ## Install (recommended: the CLI)
 
 On a fresh Linux server (see [Choosing a VPS](https://aoox.dev/docs/fresh-vps)):

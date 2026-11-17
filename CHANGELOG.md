@@ -8,6 +8,10 @@ Versions below 1.0.0 may include breaking changes in a minor release.
 
 ## [Unreleased]
 
+### Changed
+
+- README: new Screenshots section with a deploy animation and screenshots of the dashboard (projects, deploy with live log, data browser, environment, and a collapsible set with the light theme, backups and the Indonesian dashboard). Images live in `docs/images/`.
+
 ### Fixed
 
 - README: the one-click template list now names all 15 templates (it listed 6), the database backup section lists every engine (PostgreSQL variants, Valkey and MongoDB were missing), UI names that were still Indonesian now use the English dashboard labels (Structure, History, Members, Placement, Deployment history, Deploy mode, Static site, Export, Import, 24 hours / 7 days / 30 days), `ENCRYPTION_KEY` is described as encrypting every stored secret, and a short "Also included" section mentions the features added since (variable sets, Infisical, Cloudflare DNS-01, custom certificates, Traefik editor, maintenance mode, HTTP monitor, resource alerts, Docker manager). The web terminal section now describes the automatic platform key, the Authorize button and `TERMINAL_SSH_USER` default; navigation paths match the dashboard (Infrastructure → Reverse proxy / Docker / Docker Swarm / Instance backup / Remote servers, Settings → Account → API token, Settings → Team); the image-source section covers follow-version-tags ("Also follow newer version tags") and the disk cleanup section covers orphan containers and compose volumes.
