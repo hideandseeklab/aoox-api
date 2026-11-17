@@ -41,7 +41,7 @@ Edit `.env.dist` — at minimum:
 |---|---|
 | `POSTGRES_PASSWORD` | any strong password |
 | `JWT_SECRET` | `openssl rand -hex 32` |
-| `ENCRYPTION_KEY` | `openssl rand -hex 32` (encrypts registry credentials) |
+| `ENCRYPTION_KEY` | `openssl rand -hex 32` (encrypts every stored credential and secret; back it up, losing it makes them unreadable) |
 | `DOCKER_GID` | gid of `/var/run/docker.sock` on the host, so the api container may use Docker |
 | `WEB_ORIGIN` / `PUBLIC_API_URL` | the URLs users will reach the web and API on (e.g. `http://192.168.1.10:3000` / `http://192.168.1.10:3001`) |
 
@@ -61,17 +61,25 @@ side by side and add `-f docker-compose.build.yml --build`.
 
 ### Web terminal (shell on the host)
 
-A container cannot open a shell on its host directly, so the API connects to the host over SSH:
+A container cannot open a shell on its host directly, so the API connects to the host over SSH (set
+`TERMINAL_SSH_HOST` empty to get a shell inside the api container instead). Only `owner`/`admin` users can use it.
+There is nothing to generate by hand: aoox creates a **platform SSH key** on first use (stored in `./secrets`, or
+`/run/secrets/aoox` in the dist stack) and signs in as `TERMINAL_SSH_USER`.
 
 1. Run an SSH server on the host (Linux: `sshd`; Windows: the *OpenSSH Server* optional feature).
-2. `ssh-keygen -t ed25519 -f ./secrets/terminal_ssh_key -N ""` and add `secrets/terminal_ssh_key.pub` to that user's `authorized_keys`.
-3. Set `TERMINAL_SSH_HOST` (default `host.docker.internal`), `TERMINAL_SSH_USER` and keep `TERMINAL_SSH_PRIVATE_KEY_FILE` as in the example.
+2. Set `TERMINAL_SSH_HOST` (default `host.docker.internal`) and `TERMINAL_SSH_USER` (empty means `root`, but cloud images
+   often refuse root login; `aoox install` writes the user that ran `sudo`). Both can also be changed under
+   **Infrastructure → Environment**.
+3. Open **Infrastructure → Terminal access**. If the key is not accepted yet, press **Authorize automatically** (aoox adds
+   the platform public key to that user's `~/.ssh/authorized_keys` on the host; owner only) or run the one-line command
+   shown there as that user.
 
-Leave `TERMINAL_SSH_HOST` empty and the terminal opens inside the api container instead. Only `owner`/`admin` users can use it.
+To use your own credentials instead, set `TERMINAL_SSH_PRIVATE_KEY_FILE` (or `TERMINAL_SSH_PRIVATE_KEY`) or
+`TERMINAL_SSH_PASSWORD`; they take priority over the platform key.
 
 ### Local Docker registry
 
-**Registry → Provision registry** starts `registry:3` on the host engine (container `aoox-registry`, data in the
+**Registry → Enable local registry** starts `registry:3` on the host engine (container `aoox-registry`, data in the
 `aoox_registry_data` volume) with htpasswd auth; the generated password is shown once. Push with
 
 ```bash
@@ -86,7 +94,7 @@ External registries (Docker Hub, GHCR, GitLab) can be added on the same page; cr
 
 ### Domains and HTTPS for applications
 
-**Settings → Provision proxy** starts Traefik (`aoox-proxy`) on `PROXY_HTTP_PORT`/`PROXY_HTTPS_PORT` (80/443).
+**Infrastructure → Reverse proxy → Enable proxy** starts Traefik (`aoox-proxy`) on `PROXY_HTTP_PORT`/`PROXY_HTTPS_PORT` (80/443).
 Add hostnames on an application's **Domain** tab; the container is re-created with Traefik labels and joins the
 `aoox` network, so no host port is needed. Point the DNS A record at the server. With `PROXY_ACME_EMAIL` set,
 domains marked HTTPS get Let's Encrypt certificates (HTTP-01 challenge, so port 80 must be reachable from the internet;
@@ -94,8 +102,8 @@ domains marked HTTPS get Let's Encrypt certificates (HTTP-01 challenge, so port 
 
 ### Data browser
 
-Every managed database has a **Data** tab — a small phpMyAdmin: browse tables (paged, sortable), a **Struktur** view of
-each table's columns and primary key, one SQL statement or Redis command at a time, and a **Riwayat** dropdown of your
+Every managed database has a **Data** tab — a small phpMyAdmin: browse tables (paged, sortable), a **Structure** view of
+each table's columns and primary key, one SQL statement, Redis/Valkey command or MongoDB `collection.find({...})` at a time, and a **History** dropdown of your
 own recent statements to re-run. Owners and admins can also edit or delete a single row (targeted by its primary key —
 a table without one has to be edited with SQL) and export a table or a full database dump as CSV/SQL; members get a
 read-only session. Every call spins up a short-lived container of the database's own image, so nothing needs a driver
@@ -103,10 +111,10 @@ installed in the API.
 
 ### Database backups
 
-Every managed database (Postgres, MySQL, MariaDB, Redis) has a **Backup** section on its page: run a backup now, restore
+Every managed database (PostgreSQL including the pgvector, PostGIS and TimescaleDB variants, MySQL, MariaDB, Redis, Valkey, MongoDB) has a **Backup** section on its page: run a backup now, restore
 one (overwrites the current data), download it, or schedule backups with a cron expression and a retention count
 (old *scheduled* backups beyond that count are pruned; manual backups are kept). Dumps live in the `aoox_backups`
-Docker volume, one folder per database, and are produced by the engine's own tools (`pg_dump`, `mysqldump`, `redis-cli --rdb`)
+Docker volume, one folder per database, and are produced by the engine's own tools (`pg_dump`, `mysqldump`, `redis-cli --rdb`, `mongodump`)
 running in a throw-away container, so nothing extra needs to be installed. To move backups off the server, copy that volume
 (e.g. `docker run --rm -v aoox_backups:/b -v "$PWD":/out busybox tar czf /out/backups.tgz -C /b .`).
 
@@ -118,22 +126,24 @@ container immediately — no rebuild.
 
 ### Disk cleanup
 
-**Settings → Docker disk** shows what images, volumes, build cache and containers use, and **Clean now**
+**Infrastructure → Docker** (the *Docker disk* strip at the top) shows what images, volumes, build cache and containers use, and **Clean now**
 (also nightly at 04:30, `MAINTENANCE_NIGHTLY=false` to disable) prunes old deployment images beyond each
-application's *Riwayat deployment* (default 10, the running image is always kept), dangling images, the build cache and
+application's *Deployment history* (default 10, the running image is always kept), dangling images, the build cache and
 the local registry's orphaned blobs. If any local volumes are named like aoox's own but no longer belong to any
 project (an app, database or compose stack deleted without its mounts, or a leftover from an older version), they are
 listed too and can be removed with the same button via an extra "Also delete orphan volumes" switch — off by default
-and never included in the nightly run, since a volume can hold data nothing else backs up.
+and never included in the nightly run, since a volume can hold data nothing else backs up. Leftover containers from projects deleted on older versions are listed with a per-container remove button (and an
+"Also remove leftover containers" switch, never part of the nightly run), and volumes declared inside a compose
+file are listed report-only (with a copyable `docker volume rm`); aoox never deletes those itself.
 
 ### Docker Swarm (optional)
 
-**Settings → Infrastructure → Docker Swarm** turns the host daemon into a (single-node) swarm manager. An application
-can then choose **Mode deploy: Swarm service** with N replicas: the daemon does the rolling update (`start-first`,
+**Infrastructure → Docker Swarm** turns the host daemon into a (single-node) swarm manager. An application
+can then choose **Deploy mode: Swarm service** with N replicas: the daemon does the rolling update (`start-first`,
 automatic rollback on failure), Traefik load-balances the tasks, stop/start scale to 0 and back, logs and metrics come
 from the tasks. Everything else (databases, compose stacks, previews) stays plain containers, and leaving the swarm is
 refused while service-mode apps exist. Extra nodes can join with the shown `docker swarm join` command; a service can
-then be pinned to a node (**Penempatan**) or placed anywhere, while apps with mounts always stay on the host where
+then be pinned to a node (**Placement**) or placed anywhere, while apps with mounts always stay on the host where
 their volumes live. Built images are pulled from the self-hosted registry, so for other nodes set `REGISTRY_PUBLIC_HOST`
 to an address every node can reach (plus `insecure-registries` or TLS on each daemon) and re-provision the registry —
 public images need nothing. Job exec and metrics only cover tasks running on the host; logs cover every node.
@@ -142,7 +152,7 @@ public images need nothing. Job exec and metrics only cover tasks running on the
 
 The CPU/memory/network panel on an application or database keeps its live hour in memory as before, and now also
 stores a rollup: one row per minute (kept 48 hours) and one per hour (kept `METRICS_RETENTION_DAYS`, default 30), so
-the **24 jam / 7 hari / 30 hari** buttons work and history survives an API restart. Compose stacks get the same
+the **24 hours / 7 days / 30 days** buttons work and history survives an API restart. Compose stacks get the same
 buttons for any service that has a domain, host port, mount or resource limit configured — that is what tags its
 containers for the rollup; a stack with none of those stays live-only, same as before.
 
@@ -164,7 +174,7 @@ automatically when you restore or download them.
 ### Project members
 
 Platform owners/admins see every project. Other users only see projects they created or were added to: open a
-project → **Anggota** and add an existing account by e-mail as admin, developer or viewer (project admins manage
+project → **Members** and add an existing account by e-mail as admin, developer or viewer (project admins manage
 members and may delete the project; developers do everything else; viewers can only read). Upgrading keeps everyone's
 current access — existing members are added to every existing project.
 
@@ -172,12 +182,12 @@ current access — existing members are added to every existing project.
 
 **Settings → Account** lets every user change their password and turn on two-factor authentication (TOTP: scan the QR
 with any authenticator app, keep the ten backup codes). Sign-in then asks for a code after the password. Owners can
-reset a member's password or switch off their 2FA from the Members card. **Settings → Audit log** (owner/admin) lists
+reset a member's password or switch off their 2FA from **Settings → Team**. **Settings → Audit log** (owner/admin) lists
 every state-changing request and sign-in attempt for 90 days: who, via session/API token/webhook, what, and the result.
 
 ### API tokens and OpenAPI docs
 
-**Settings → API token** creates a personal access token (`aoox_…`, shown once) for CI or scripts; send it as
+**Settings → Account → API token** creates a personal access token (`aoox_…`, shown once) for CI or scripts; send it as
 `Authorization: Bearer aoox_…` and it acts as your user. A token can be narrowed when you create it: **read only**
 (every state-changing request is refused) and/or **limited to projects** — such a token sees only those projects
 and cannot manage platform settings (registries, servers, proxy, swarm, notifications, members, audit log); the
@@ -191,14 +201,22 @@ curl -X POST http://localhost:3001/applications/<id>/deploy -H "Authorization: B
 
 ### Remote servers
 
-Add a server (Settings → Servers) and deploy applications to it over SSH. **Proxy** on the server card provisions a
+Add a server (Infrastructure → Remote servers) and deploy applications to it over SSH. **Proxy** on the server card provisions a
 Traefik on that server (own ports, own ACME e-mail), so domains and HTTPS work there like on the host; volume backups
 (including S3 copies) run on the server's daemon too.
+
+### Also included
+
+Variable sets (shared, versioned environment variables linked to applications and stacks), an optional Infisical secret
+source, a Cloudflare DNS provider (automatic A records and DNS-01 / wildcard certificates), uploaded custom SSL
+certificates, a Traefik dynamic-configuration editor with presets, per-application maintenance mode, an optional HTTP
+monitor and CPU/memory threshold alerts, an inbox of platform events, and an Infrastructure → Docker page (containers,
+images, volumes, networks, open ports). Details are in the [documentation](https://aoox.dev/docs).
 
 ### Notifications and outgoing webhooks
 
 Channels (Telegram, Slack, Discord, e-mail, generic webhook) get deployment, backup, job and container-down events,
-plus **disk almost full** (daily, `DISK_ALERT_PERCENT`, default 90), **certificate failures** (Traefik ACME errors,
+server-down, HTTP monitor and CPU/memory threshold alerts, plus **disk almost full** (daily, `DISK_ALERT_PERCENT`, default 90), **certificate failures** (Traefik ACME errors,
 checked every 10 minutes) and **DNS issues** (every registered domain re-checked every 15 minutes; a domain that
 stays mismatched or unresolved for two checks in a row alerts once a day — this usually catches the cause of an
 ACME failure before the certificate attempt itself fails). A generic webhook with a *secret* signs every delivery: verify
@@ -211,7 +229,8 @@ Choose **Ready-made image** as the source to run an existing image (`nginx:1.27`
 build: it is pulled on every deploy (so `latest` follows the registry) using the credentials of a registry from the
 Registry page for private images. Env, mounts, domains, jobs and rollback work the same as for built apps.
 Turn on **Auto update** to redeploy whenever the tag's digest changes in the registry (Watchtower-style: the
-manifest is compared through the registry API every N minutes, no pull), or press **Check image update** to check now.
+manifest is compared through the registry API every N minutes, no pull), or press **Check image update** to check now. With **Also follow newer version tags** (needs Auto update) a semver tag such as
+`1.4.2` is moved to the newest compatible release (same major; for `0.x`, same minor); a failed follow deployment puts the previous tag back.
 
 ### Railpack builds (with cache)
 
@@ -220,18 +239,18 @@ Railpack compiles the repo into a BuildKit plan, so dependency layers are cached
 284 s cold, 8 s for a redeploy with no source change. It starts a shared `moby/buildkit` container (own volume) on
 first use; the nightly cleanup trims that cache to `BUILDKIT_CACHE_KEEP_GB` (default 10). Railpack images listen on
 `$PORT`, which aoox sets to the app's container port. Host only — applications on a remote server keep using
-Dockerfile or Nixpacks.
+Dockerfile, Nixpacks or static builds.
 
 ### Static sites
 
-Pick **Situs statis (nginx)** as the build type for plain HTML or SPA repos: an optional build command runs in
+Pick **Static site (nginx)** as the build type for plain HTML or SPA repos: an optional build command runs in
 `node:22-alpine`, the output folder (`dist`, `build`, `out` or `.`) is served by nginx on port 80, with an SPA fallback
 to `index.html` when enabled.
 
 ### Compose stacks
 
 A stack is a `docker-compose.yml` from a repository (or a template): deploy, stop, start and tear down from the panel.
-The **Riwayat** tab keeps the last 20 runs with their output — what was run, when, and whether a push triggered it —
+The **History** tab keeps the last 20 runs with their output — what was run, when, and whether a push triggered it —
 and the **Webhook auto-deploy** card on Settings gives a URL to paste into GitHub/GitLab, with an optional shared
 secret that every delivery must prove. Stack containers now also show live CPU/RAM per service, and a service that
 dies outside a deploy raises the same "container down" notification applications get.
@@ -253,7 +272,7 @@ failures and timeouts trigger notifications.
 
 ### One-click templates
 
-**Templates** lists ready-made stacks (WordPress, Ghost, n8n, Uptime Kuma, RustFS, Gitea). Pick a project, optionally a
+**Templates** lists ready-made stacks (WordPress, Ghost, n8n, Uptime Kuma, RustFS, Gitea, Vaultwarden, Umami, Grafana, Metabase, Directus, Mattermost, Nextcloud, Odoo, Excalidraw). Pick a project, optionally a
 hostname per exposed service (routed by the proxy, HTTPS when ACME is configured) and fill the few variables — passwords
 left empty are generated. The result is an ordinary compose stack: its `docker-compose.yml` and env can be edited on the
 stack's page and redeployed.
@@ -265,16 +284,16 @@ The session cookie gets the `Secure` flag automatically when `WEB_ORIGIN` is `ht
 
 ### Project export and import
 
-**Ekspor** on a project page downloads its definition as `<name>.aoox.json`: applications (source, build, env,
+**Export** on a project page downloads its definition as `<name>.aoox.json`: applications (source, build, env,
 domains, mounts, jobs, backup schedule), databases and compose stacks. Registries, git credentials, backup destinations
-and servers are referenced by *name*; owners can include database passwords. **Impor** on the projects page creates a
+and servers are referenced by *name*; owners can include database passwords. **Import** on the projects page creates a
 new project from such a file on this or another instance: nothing is deployed, databases are provisioned empty
 (imported or fresh password), webhook tokens are regenerated, and a report lists what could not be matched (renamed
 slugs, missing references, host ports or domains already in use).
 
 ### Instance backup and restore
 
-**Settings → Infrastructure → Instance backup** (owner) snapshots the panel's own database — projects, applications,
+**Infrastructure → Instance backup** (owner) snapshots the panel's own database — projects, applications,
 databases, users, servers, notifications, schedules — into `aoox_backups/_instance/<stamp>.json.gz`, on demand
 or on a cron, with an optional S3 copy and retention. Secrets stay encrypted. To move to a new server: install the
 same aoox version with the same `ENCRYPTION_KEY` (and `JWT_SECRET`), then **Restore from file** with the
