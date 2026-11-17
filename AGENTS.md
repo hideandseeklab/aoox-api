@@ -302,7 +302,7 @@ Replaced the per-project environments of 0.1.0-alpha.9 (stages 1-3 of "Project e
 
 - `npm test` — unit specs (Jest) for the important invariants: `setup` only when empty, bootstrap is idempotent, the gateway rejects wrong/member-role/reused tickets, throttle 429.
   New specs go next to the file they test (`*.spec.ts`), with mocked repositories/DataSource — no Postgres needed.
-- GitHub CI: `.github/workflows/ci.yml` runs lint, type check (`npm run typecheck` = `tsc --noEmit` over the whole project, specs included: the build excludes `*.spec.ts` and Jest does not type-check), build and test on every pull request and on pushes to main; `docker-publish.yml` publishes images to Docker Hub on version tags (the old GitLab CI config was removed after the repo moved to GitHub).
+- GitHub CI: `.github/workflows/ci.yml` runs lint, type check (`npm run typecheck` = `tsc --noEmit` over the whole project, specs included: the build excludes `*.spec.ts` and Jest does not type-check), build and test on every pull request and on pushes to main; `docker-publish.yml` publishes images to Docker Hub on version tags (`<version>` always; `:latest` only when the version has no `-`, so a pre-release never becomes the compose default; manual runs push `<branch>` and no `latest`; the old GitLab CI config was removed after the repo moved to GitHub).
   `docker-compose.dist.yml` uses the Docker Hub images (`API_IMAGE`/`WEB_IMAGE` to pin versions, see `.env.dist.example`); `docker-compose.build.yml` for local builds.
 
 ## Docker & Registry

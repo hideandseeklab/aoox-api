@@ -2,7 +2,7 @@
 
 Self-hosted PaaS — deploy from Git or images on your own server, with databases, domains and monitoring in one dashboard.
 
-> **Status: 0.1.0-rc.1, release candidate.** Expect rough edges. Please report bugs at [aoox-api issues](https://github.com/hideandseeklab/aoox-api/issues/new/choose) (one place for the API, dashboard, CLI and docs).
+> **Status: 0.1.0, the first stable release.** aoox is pre-1.0: a minor release may still include breaking changes, so read the changelog before upgrading. Please report bugs at [aoox-api issues](https://github.com/hideandseeklab/aoox-api/issues/new/choose) (one place for the API, dashboard, CLI and docs).
 
 Website: [aoox.dev](https://aoox.dev) · Docs: [aoox.dev/docs](https://aoox.dev/docs) · Changelog: [aoox.dev/changelog](https://aoox.dev/changelog)
 
@@ -56,7 +56,7 @@ For non-interactive installs set `ADMIN_EMAIL` / `ADMIN_PASSWORD` in `.env.dist`
 applied while the users table is empty and never overwrite an existing account.
 
 Images are published to Docker Hub (`hideandseeklab/aoox-api`, `hideandseeklab/aoox-web`) on every
-tagged release, tagged `latest` and `<version>`. To build from source instead, check out both repos
+tagged release, tagged `<version>`; `latest` is added only for stable versions (a pre-release such as `0.2.0-rc.1` never moves it). To build from source instead, check out both repos
 side by side and add `-f docker-compose.build.yml --build`.
 
 ### Web terminal (shell on the host)

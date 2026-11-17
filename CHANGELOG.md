@@ -8,13 +8,21 @@ Versions below 1.0.0 may include breaking changes in a minor release.
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-11-17
+
+First stable release. The feature set is that of 0.1.0-rc.1; this release only adds the new logo, GitHub issue forms and a test fix.
+
 ### Added
 
-- GitHub issue forms (bug report, feature request) for all aoox components; this repository is the single intake for bug reports. The README now shows the release-candidate status and the CLI install path first, and CONTRIBUTING points UI and CLI contributors to their repositories.
+- GitHub issue forms (bug report, feature request) for all aoox components; this repository is the single intake for bug reports. The README now shows the project status and the CLI install path first, and CONTRIBUTING points UI and CLI contributors to their repositories.
 
 ### Fixed
 
 - A deployment-runner test no longer fails on a busy CI runner: it waits on a time limit instead of a fixed number of event-loop turns.
+
+### Changed
+
+- The Docker Hub publish workflow pushes `hideandseeklab/aoox-api:latest` only for stable versions (no `-` in the tag); a pre-release such as `0.2.0-rc.1` pushes just its own version tag, so `latest` (the compose default) never moves onto a pre-release. A manual run on a branch pushes `<branch>` and no longer pushes `latest`.
 
 ### UI UX Improvement
 
@@ -769,7 +777,8 @@ Read before upgrading; back up first (Settings → Infrastructure → Instance b
 - Monitoring with metrics history, disk cleanup tooling, and project/instance export-import for
   backup and migration between hosts.
 
-[Unreleased]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-rc.1...HEAD
+[Unreleased]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-rc.1...v0.1.0
 [0.1.0-rc.1]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-beta.2...v0.1.0-rc.1
 [0.1.0-beta.2]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-beta.1...v0.1.0-beta.2
 [0.1.0-beta.1]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-beta.0...v0.1.0-beta.1

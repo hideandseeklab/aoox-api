@@ -4,6 +4,12 @@ name: Build and push Docker image
 # `version` is the source of truth: `npm version <x>` bumps it and creates the
 # matching tag; `git push --follow-tags` sends both to GitHub, which triggers
 # this workflow. Manual runs are also allowed for testing.
+#
+# Tags pushed: always `<version>`; `:latest` ONLY for a stable version (no "-"
+# in it, e.g. 0.1.0). A pre-release (0.2.0-rc.1, 0.1.0-alpha.3, ...) pushes just
+# its own version tag, so `:latest` (the compose default) never moves onto a
+# pre-release once a stable exists. Manual runs (workflow_dispatch) on a branch
+# push `<branch>` (slashes -> "-") and never `:latest`.
 on:
   push:
     tags:
@@ -37,10 +43,24 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       # Strip the leading "v" so the image tag matches package.json's version
-      # exactly (v0.1.0-alpha.0 -> 0.1.0-alpha.0).
-      - name: Derive image version from tag
-        id: version
-        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+      # exactly (v0.1.0-alpha.0 -> 0.1.0-alpha.0). `:latest` is added only for a
+      # tag push whose version is plain MAJOR.MINOR.PATCH (stable). A manual run
+      # on a branch has GITHUB_REF_NAME = the branch name: it gets that name
+      # (slashes replaced, Docker tags cannot contain them) and no `:latest`.
+      - name: Derive image tags
+        id: tags
+        run: |
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="$(printf '%s' "$GITHUB_REF_NAME" | tr '/' '-')"
+          fi
+          tags="$IMAGE_NAME:$version"
+          if [ "$GITHUB_REF_TYPE" = "tag" ] && printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            tags="$tags,$IMAGE_NAME:latest"
+          fi
+          echo "tags=$tags" >> "$GITHUB_OUTPUT"
+          echo "Pushing tags: $tags"
 
       - name: Build and push
         uses: docker/build-push-action@v6
@@ -50,6 +70,4 @@ jobs:
           platforms: linux/amd64,linux/arm64
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          tags: |
-            ${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}
-            ${{ env.IMAGE_NAME }}:latest
+          tags: ${{ steps.tags.outputs.tags }}
