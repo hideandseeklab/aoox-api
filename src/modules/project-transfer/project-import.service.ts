@@ -16,7 +16,8 @@ import { GitCredentialService } from '../git-credential/git-credential.service';
 import { HttpMonitorService } from '../http-monitor/http-monitor.service';
 import { ResourceAlertService } from '../resource-alert/resource-alert.service';
 import { JobSchedulerService } from '../job/job-scheduler.service';
-import { Job } from '../job/job.entity';
+import { Job, JobNotify } from '../job/job.entity';
+import { isJobNotify } from '../job/job-notify';
 import { JobService } from '../job/job.service';
 import { defaultTagFor, ENGINES } from '../managed-database/engines';
 import { ManagedDatabaseService } from '../managed-database/managed-database.service';
@@ -574,6 +575,15 @@ export class ProjectImportService {
         warnings.push(`${where}: job without name/command skipped`);
         continue;
       }
+      // Not validated by class-validator on this path: check it here.
+      let notify: JobNotify = 'failure';
+      if (j.notify !== undefined && j.notify !== null) {
+        if (isJobNotify(j.notify)) notify = j.notify;
+        else
+          warnings.push(
+            `${where}: job "${j.name}" has an unknown notify value, using "failure"`,
+          );
+      }
       let job: Job;
       try {
         job = this.jobs.build(
@@ -585,6 +595,7 @@ export class ProjectImportService {
             target: j.target ?? 'container',
             enabled: j.enabled ?? true,
             timeoutSeconds: j.timeoutSeconds ?? 600,
+            notify,
           },
           owner.composeAppId ? (j.service ?? null) : null,
         );

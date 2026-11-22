@@ -120,6 +120,14 @@ export class CreateNotificationDto {
 
   @IsOptional()
   @IsBoolean()
+  onJobStarted?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  onJobSuccess?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
   onDiskLow?: boolean;
 
   @IsOptional()

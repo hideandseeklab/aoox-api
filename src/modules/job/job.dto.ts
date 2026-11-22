@@ -11,7 +11,8 @@ import {
   MaxLength,
   Min,
 } from 'class-validator';
-import type { JobTarget } from './job.entity';
+import type { JobNotify, JobTarget } from './job.entity';
+import { JOB_NOTIFY_LEVELS } from './job-notify';
 
 export class JobFieldsDto {
   @IsOptional()
@@ -43,6 +44,11 @@ export class JobFieldsDto {
   @Min(1)
   @Max(86_400)
   timeoutSeconds?: number;
+
+  /** Which runs notify: `failure` (default), `finish`, `all`. */
+  @IsOptional()
+  @IsIn(JOB_NOTIFY_LEVELS)
+  notify?: JobNotify;
 }
 
 export class UpdateJobDto extends JobFieldsDto {

@@ -23,6 +23,8 @@ function channel(name: string, toggles: Partial<Notification>): Notification {
     onDeploymentFailure: false,
     onBackupFailure: false,
     onJobFailure: false,
+    onJobStarted: false,
+    onJobSuccess: false,
     onContainerDown: false,
     onDiskLow: false,
     onCertificateFailure: false,

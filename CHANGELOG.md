@@ -8,6 +8,10 @@ Versions below 1.0.0 may include breaking changes in a minor release.
 
 ## [Unreleased]
 
+### Added
+
+- **Job run notifications.** Each job has a `notify` setting: `failure` (default, what every job did before: failed and timed-out runs only), `finish` (also successful runs) or `all` (also the start of each run), on create/update of application, database and compose jobs and in project export/import (absent in older files = `failure`; an unknown value = `failure` plus a warning). New events `jobStarted` and `jobSuccess` with channel toggles `on_job_started` / `on_job_success` (on by default: the job setting is the opt-in). A run that succeeds right after a failed or timed-out run of the same job always sends one "recovered" message under the `jobFailure` event (level success, webhook `event: job.recovered`), at every level, instead of a success message; the previous run is read from the stored run history. Messages name the job, its application/database/stack (and service), project, trigger, status, duration, exit code and command; only failures carry the output tail (masked as before). Inbox `params` for `jobStarted`, `jobSuccess` and `jobFailure` (now with `variant` `failure`/`recovered`) never carry output. Started messages are sent when the run row is created, never for a skipped cron tick or a 409 manual run, and a failing channel never fails a run. Migration `JobNotifications1790409000000` (additive).
+
 ### Changed
 
 - README: new Screenshots section with a deploy animation and screenshots of the dashboard (projects, deploy with live log, data browser, environment, and a collapsible set with the light theme, backups and the Indonesian dashboard). Images live in `docs/images/`.

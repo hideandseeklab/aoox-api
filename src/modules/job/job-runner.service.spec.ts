@@ -11,6 +11,8 @@ import {
   shellCommand,
 } from './job-runner.service';
 import { Job } from './job.entity';
+import { JobSchedulerService } from './job-scheduler.service';
+import { RunJobController } from './run-job/run-job.controller';
 import { JobService } from './job.service';
 
 describe('shellCommand', () => {
@@ -39,6 +41,7 @@ describe('JobRunnerService', () => {
     update: jest.fn().mockResolvedValue(undefined),
     find: jest.fn().mockResolvedValue([]),
     remove: jest.fn().mockResolvedValue(undefined),
+    findOne: jest.fn().mockResolvedValue(null),
   };
   const repo = { update: jest.fn().mockResolvedValue(undefined) };
   const app = {
@@ -49,7 +52,12 @@ describe('JobRunnerService', () => {
     project: { env: '' },
   };
   const applications = {
-    repo: { findOneOrFail: jest.fn().mockResolvedValue(app) },
+    repo: {
+      findOneOrFail: jest.fn().mockResolvedValue(app),
+      findOne: jest
+        .fn()
+        .mockResolvedValue({ ...app, name: 'Web', project: { name: 'Shop' } }),
+    },
     mounts: { find: jest.fn().mockResolvedValue([]) },
   };
   const engine = {
@@ -98,6 +106,16 @@ describe('JobRunnerService', () => {
   const flush = () => new Promise((r) => setTimeout(r, 20));
 
   beforeEach(() => jest.clearAllMocks());
+
+  const calls = () => broadcast.mock.calls as Array<[string, unknown]>;
+  const events = () => calls().map((c) => c[0]);
+  const messageOf = (i: number) =>
+    calls()[i][1] as {
+      level: string;
+      fields: Array<[string, string]>;
+      params: Record<string, unknown>;
+      data: Record<string, unknown>;
+    };
 
   it('execs in the running container and records success without notifying', async () => {
     engine.execWithCode.mockResolvedValue({ output: 'hi\n', code: 0 });
@@ -210,5 +228,136 @@ describe('JobRunnerService', () => {
     await flush();
     const [, patch] = runs.update.mock.calls[0] as [string, { output: string }];
     expect(patch.output).toBe('echo ***\n');
+  });
+
+  it('notify=all: started on the run row, then success, with owner and project', async () => {
+    engine.execWithCode.mockResolvedValue({ output: 'secret-out', code: 0 });
+    await svc.start(job({ notify: 'all' }), 'scheduled');
+    await flush();
+    expect(events()).toEqual(['jobStarted', 'jobSuccess']);
+    const started = messageOf(0);
+    expect(started.params).toMatchObject({
+      job: 'nightly',
+      owner: 'Web',
+      ownerKind: 'application',
+      project: 'Shop',
+      trigger: 'scheduled',
+    });
+    expect(started.data).toMatchObject({ applicationId: 'a1' });
+    const done = messageOf(1);
+    expect(done.params).toMatchObject({ exitCode: 0, status: 'success' });
+    expect(JSON.stringify(done)).not.toContain('secret-out');
+  });
+
+  it('notify=finish: no start message, a success message', async () => {
+    engine.execWithCode.mockResolvedValue({ output: '', code: 0 });
+    await svc.start(job({ notify: 'finish' }), 'manual');
+    await flush();
+    expect(events()).toEqual(['jobSuccess']);
+  });
+
+  it('a success after a failed run sends one recovered message, even at the default level', async () => {
+    engine.execWithCode.mockResolvedValue({ output: '', code: 0 });
+    runs.findOne.mockResolvedValueOnce({ id: 'old', status: 'failed' });
+    await svc.start(job({}), 'manual');
+    await flush();
+    expect(events()).toEqual(['jobFailure']);
+    expect(messageOf(0).level).toBe('success');
+    expect(messageOf(0).data).toMatchObject({ event: 'job.recovered' });
+    expect(messageOf(0).params).toMatchObject({ variant: 'recovered' });
+    // Looked up among stored runs, excluding this one and unfinished ones.
+    const [query] = runs.findOne.mock.calls[0] as [
+      { where: { jobId: string } },
+    ];
+    expect(query.where.jobId).toBe('j1');
+  });
+
+  it('a success after a successful run stays silent at the default level', async () => {
+    engine.execWithCode.mockResolvedValue({ output: '', code: 0 });
+    runs.findOne.mockResolvedValueOnce({ id: 'old', status: 'success' });
+    await svc.start(job({ notify: 'failure' }), 'manual');
+    await flush();
+    expect(broadcast).not.toHaveBeenCalled();
+  });
+
+  it('the failure message carries the redacted output tail; params do not', async () => {
+    envResolve.mockResolvedValueOnce({
+      env: [],
+      secrets: ['marker-value-123'],
+    });
+    engine.execWithCode.mockResolvedValue({
+      output: 'token marker-value-123 failed',
+      code: 1,
+    });
+    await svc.start(job({}), 'manual');
+    await flush();
+    expect(events()).toEqual(['jobFailure']);
+    const m = messageOf(0);
+    expect(m.fields).toContainEqual(['Output', 'token *** failed']);
+    expect(m.params).toMatchObject({ variant: 'failure', status: 'failed' });
+    expect(JSON.stringify(m.params)).not.toContain('token');
+  });
+
+  it('a channel that never answers does not keep the job active', async () => {
+    engine.execWithCode.mockResolvedValue({ output: '', code: 1 });
+    broadcast.mockReturnValue(new Promise(() => undefined));
+    await svc.start(job({ notify: 'all' }), 'manual');
+    await flush();
+    expect(runs.update).toHaveBeenCalledWith(
+      'run1',
+      expect.objectContaining({ status: 'failed' }),
+    );
+    expect(svc.isActive('j1')).toBe(false);
+    broadcast.mockResolvedValue(undefined);
+  });
+
+  it('a failing channel or owner lookup never fails the run', async () => {
+    engine.execWithCode.mockResolvedValue({ output: '', code: 1 });
+    broadcast.mockRejectedValue(new Error('channel down'));
+    applications.repo.findOne.mockRejectedValueOnce(new Error('db gone'));
+    await svc.start(job({ notify: 'all' }), 'manual');
+    await flush();
+    expect(runs.update).toHaveBeenCalledWith(
+      'run1',
+      expect.objectContaining({ status: 'failed' }),
+    );
+    expect(events()).toEqual(['jobStarted', 'jobFailure']);
+    broadcast.mockResolvedValue(undefined);
+  });
+});
+
+describe('JobSchedulerService / run guard', () => {
+  it('a tick while the job still runs starts nothing (so notifies nothing)', async () => {
+    const runner = {
+      isActive: jest.fn().mockReturnValue(true),
+      start: jest.fn(),
+    };
+    const scheduler = new JobSchedulerService(
+      {} as never,
+      {
+        repo: {
+          findOne: jest
+            .fn()
+            .mockResolvedValue({ id: 'j1', name: 'x', enabled: true }),
+        },
+      } as never,
+      runner as never,
+    );
+    await (
+      scheduler as unknown as { tick: (id: string) => Promise<void> }
+    ).tick('j1');
+    expect(runner.start).not.toHaveBeenCalled();
+  });
+
+  it('a manual run while the job still runs is a 409 before anything starts', async () => {
+    const runner = { isActive: () => true, start: jest.fn() };
+    const ctl = new RunJobController(
+      { findOwnedOrFail: jest.fn().mockResolvedValue({ id: 'j1' }) } as never,
+      runner as never,
+    );
+    await expect(ctl.run({ sub: 'u' } as never, { id: 'j1' })).rejects.toThrow(
+      'already running',
+    );
+    expect(runner.start).not.toHaveBeenCalled();
   });
 });

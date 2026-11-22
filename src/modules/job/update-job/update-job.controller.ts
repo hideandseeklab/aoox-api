@@ -43,6 +43,7 @@ export class UpdateJobController {
     if (dto.enabled !== undefined) patch.enabled = dto.enabled;
     if (dto.timeoutSeconds !== undefined)
       patch.timeoutSeconds = dto.timeoutSeconds;
+    if (dto.notify !== undefined) patch.notify = dto.notify;
     if (dto.service !== undefined && job.composeAppId)
       patch.service = dto.service;
     await this.jobs.repo.update(job.id, patch);

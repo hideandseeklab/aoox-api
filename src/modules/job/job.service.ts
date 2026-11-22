@@ -61,6 +61,7 @@ export class JobService {
       target: dto.target ?? 'container',
       enabled: dto.enabled ?? true,
       timeoutSeconds: dto.timeoutSeconds ?? 600,
+      notify: dto.notify ?? 'failure',
     });
   }
 }

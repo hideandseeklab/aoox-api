@@ -19,6 +19,8 @@ export interface NotificationDto {
   onDeploymentFailure: boolean;
   onBackupFailure: boolean;
   onJobFailure: boolean;
+  onJobStarted: boolean;
+  onJobSuccess: boolean;
   onContainerDown: boolean;
   onDiskLow: boolean;
   onCertificateFailure: boolean;
@@ -36,6 +38,8 @@ export type NotificationEvent =
   | 'deploymentFailure'
   | 'backupFailure'
   | 'jobFailure'
+  | 'jobStarted'
+  | 'jobSuccess'
   | 'containerDown'
   | 'diskLow'
   | 'certificateFailure'
@@ -51,6 +55,8 @@ export const EVENT_TOGGLE: Record<NotificationEvent, keyof Notification> = {
   deploymentFailure: 'onDeploymentFailure',
   backupFailure: 'onBackupFailure',
   jobFailure: 'onJobFailure',
+  jobStarted: 'onJobStarted',
+  jobSuccess: 'onJobSuccess',
   containerDown: 'onContainerDown',
   diskLow: 'onDiskLow',
   certificateFailure: 'onCertificateFailure',
@@ -86,6 +92,8 @@ export class NotificationService {
       onDeploymentFailure: n.onDeploymentFailure,
       onBackupFailure: n.onBackupFailure,
       onJobFailure: n.onJobFailure,
+      onJobStarted: n.onJobStarted,
+      onJobSuccess: n.onJobSuccess,
       onContainerDown: n.onContainerDown,
       onDiskLow: n.onDiskLow,
       onCertificateFailure: n.onCertificateFailure,

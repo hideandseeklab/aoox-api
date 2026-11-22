@@ -21,6 +21,11 @@ import { ManagedDatabase } from '../managed-database/managed-database.entity';
  */
 export type JobTarget = 'container' | 'run';
 export type JobRunStatus = 'running' | 'success' | 'failed' | 'timeout';
+/**
+ * Which runs notify (`job-notify.ts`): `failure` failed/timed-out runs only
+ * (default), `finish` also successful runs, `all` also the start of each run.
+ */
+export type JobNotify = 'failure' | 'finish' | 'all';
 
 /** A cron-scheduled command for an application. */
 @Entity({ name: 'jobs' })
@@ -76,6 +81,10 @@ export class Job {
 
   @Column({ name: 'timeout_seconds', type: 'int', default: 600 })
   timeoutSeconds: number;
+
+  /** No CHECK constraint: the DTOs validate and readers treat unknown values as `failure`. */
+  @Column({ type: 'varchar', default: 'failure' })
+  notify: JobNotify;
 
   @Column({ name: 'last_run_at', type: 'timestamptz', nullable: true })
   lastRunAt: Date | null;

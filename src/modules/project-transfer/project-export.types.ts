@@ -29,6 +29,8 @@ export interface ExportedJob {
   target: 'container' | 'run';
   enabled: boolean;
   timeoutSeconds: number;
+  /** Which runs notify; optional in older files (absent = `failure`). */
+  notify?: 'failure' | 'finish' | 'all';
   /** Compose jobs only. */
   service?: string | null;
 }

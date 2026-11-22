@@ -20,6 +20,14 @@ import { resourceLimits } from '../docker/resource-limits';
 import { NotificationService } from '../notification/notification.service';
 import { APP_NETWORK } from '../proxy/proxy.service';
 import { RemoteDockerService } from '../server/remote-docker.service';
+import { Not } from 'typeorm';
+import {
+  finishMessage,
+  finishNotice,
+  JobOwnerInfo,
+  notifiesStart,
+  startedMessage,
+} from './job-notify';
 import { JobRun, JobTrigger } from './job-run.entity';
 import { Job, JobRunStatus } from './job.entity';
 import { JobService } from './job.service';
@@ -98,21 +106,61 @@ export class JobRunnerService {
     return this.active.has(jobId);
   }
 
-  /** Creates the run row and executes detached; the row tells the story. */
+  /**
+   * Creates the run row and executes detached; the row tells the story.
+   * Notifications are fire-and-forget: nothing here waits for them and a
+   * failing channel never fails the run. A skipped tick or a 409 "already
+   * running" never reaches this method, so it sends nothing.
+   */
   async start(job: Job, trigger: JobTrigger): Promise<JobRun> {
+    const begunAt = Date.now();
     const run = await this.jobs.runs.save(
       this.jobs.runs.create({ jobId: job.id, status: 'running', trigger }),
     );
     this.active.add(job.id);
-    void this.execute(job, run)
+    // Looked up once, never rejects; the finish message reuses it.
+    const owner = this.ownerInfo(job);
+    // The finish message waits for the start message, so a fast run cannot
+    // land in the inbox before its own "started".
+    const started = notifiesStart(job.notify)
+      ? owner.then((o) =>
+          this.send(
+            startedMessage({
+              job,
+              owner: o,
+              trigger,
+              runId: run.id,
+              url: this.ownerUrl(job),
+            }),
+          ),
+        )
+      : Promise.resolve();
+    // The job stops being "active" when the run ends, not when its
+    // notifications are delivered: a slow channel must never skip a tick or
+    // turn a manual Run into a 409.
+    const finished = this.execute(job, run)
+      .then((result) => ({ ...result, endedAt: Date.now() }))
+      .finally(() => this.active.delete(job.id));
+    void finished
+      .then((result) =>
+        started.then(() =>
+          this.notifyFinish(job, run, trigger, owner, begunAt, result),
+        ),
+      )
       .catch((err) =>
         this.logger.error(`job ${job.name} crashed: ${String(err)}`),
-      )
-      .finally(() => this.active.delete(job.id));
+      );
     return run;
   }
 
-  private async execute(job: Job, run: JobRun): Promise<void> {
+  private async execute(
+    job: Job,
+    run: JobRun,
+  ): Promise<{
+    status: JobRunStatus;
+    exitCode: number | null;
+    output: string;
+  }> {
     let status: JobRunStatus = 'failed';
     let exitCode: number | null = null;
     let output = '';
@@ -154,7 +202,7 @@ export class JobRunnerService {
       lastStatus: status,
     });
     await this.prune(job.id);
-    if (status !== 'success') this.notifyFailure(job, status, output);
+    return { status, exitCode, output };
   }
 
   /**
@@ -371,29 +419,109 @@ export class JobRunnerService {
     if (old.length) await this.jobs.runs.remove(old);
   }
 
-  private notifyFailure(job: Job, status: JobRunStatus, output: string): void {
+  private ownerUrl(job: Job): string | undefined {
     const origin = this.config.get<string>('WEB_ORIGIN')?.trim();
-    void this.notifications
-      .broadcast('jobFailure', {
-        title: `Job ${status === 'timeout' ? 'timed out' : 'failed'}: ${job.name}`,
-        level: 'failure',
-        fields: [
-          ['Job', job.name],
-          ['Command', job.command.slice(0, 200)],
-          ['Output', output.slice(-500)],
-        ],
-        url: origin ? `${origin}${ownerPath(job)}` : undefined,
-        // The command output stays out: it is a log.
-        params: { job: job.name, status },
-        data: {
-          event: 'job.failure',
-          jobId: job.id,
-          applicationId: job.applicationId,
-          databaseId: job.databaseId,
-          composeAppId: job.composeAppId,
-          status,
-        },
-      })
+    return origin ? `${origin}${ownerPath(job)}` : undefined;
+  }
+
+  /** Name and project of the job's owner for messages; never rejects. */
+  private async ownerInfo(job: Job): Promise<JobOwnerInfo> {
+    const kind: JobOwnerInfo['kind'] = job.applicationId
+      ? 'application'
+      : job.databaseId
+        ? 'database'
+        : 'compose';
+    const info: JobOwnerInfo = {
+      kind,
+      name: null,
+      service: kind === 'compose' ? job.service : null,
+      project: null,
+    };
+    try {
+      const row = job.applicationId
+        ? await this.applications.repo.findOne({
+            where: { id: job.applicationId },
+            relations: { project: true },
+          })
+        : job.databaseId
+          ? await this.databases.repo.findOne({
+              where: { id: job.databaseId },
+              relations: { project: true },
+            })
+          : job.composeAppId
+            ? await this.compose.repo.findOne({
+                where: { id: job.composeAppId },
+                relations: { project: true },
+              })
+            : null;
+      info.name = row?.name ?? null;
+      info.project = row?.project?.name ?? null;
+    } catch (err) {
+      this.logger.debug(`Job owner lookup failed: ${String(err)}`);
+    }
+    return info;
+  }
+
+  /**
+   * The status of the run before `run` (newest finished one), for the
+   * "recovered" message. Stored rows, not memory: survives an API restart.
+   */
+  private async previousStatus(
+    job: Job,
+    run: JobRun,
+  ): Promise<JobRunStatus | null> {
+    const prev = await this.jobs.runs.findOne({
+      where: { jobId: job.id, id: Not(run.id), status: Not('running') },
+      order: { startedAt: 'DESC' },
+      select: { id: true, status: true },
+    });
+    return prev?.status ?? null;
+  }
+
+  private async notifyFinish(
+    job: Job,
+    run: JobRun,
+    trigger: JobTrigger,
+    owner: Promise<JobOwnerInfo>,
+    begunAt: number,
+    result: {
+      status: JobRunStatus;
+      exitCode: number | null;
+      output: string;
+      endedAt: number;
+    },
+  ): Promise<void> {
+    try {
+      const previous =
+        result.status === 'success'
+          ? await this.previousStatus(job, run)
+          : null;
+      const notice = finishNotice(job.notify, result.status, previous);
+      if (!notice) return;
+      await this.send(
+        finishMessage(notice, {
+          job,
+          owner: await owner,
+          trigger,
+          runId: run.id,
+          url: this.ownerUrl(job),
+          status: result.status,
+          exitCode: result.exitCode,
+          durationSeconds: (result.endedAt - begunAt) / 1000,
+          output: result.output,
+        }),
+      );
+    } catch (err) {
+      this.logger.warn(`Job notification failed: ${String(err)}`);
+    }
+  }
+
+  private send({
+    event,
+    message,
+  }: ReturnType<typeof startedMessage>): Promise<void> {
+    return this.notifications
+      .broadcast(event, message)
       .catch((err) =>
         this.logger.warn(`Job notification failed: ${String(err)}`),
       );

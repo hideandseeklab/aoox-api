@@ -18,6 +18,8 @@ export class CreateNotificationService {
       onDeploymentFailure: dto.onDeploymentFailure ?? true,
       onBackupFailure: dto.onBackupFailure ?? true,
       onJobFailure: dto.onJobFailure ?? true,
+      onJobStarted: dto.onJobStarted ?? true,
+      onJobSuccess: dto.onJobSuccess ?? true,
       onDiskLow: dto.onDiskLow ?? true,
       onCertificateFailure: dto.onCertificateFailure ?? true,
       onContainerDown: dto.onContainerDown ?? true,

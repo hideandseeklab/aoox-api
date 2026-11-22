@@ -63,6 +63,14 @@ export class Notification {
   @Column({ name: 'on_job_failure', default: true })
   onJobFailure: boolean;
 
+  /** A job run started. On by default: each job opts in with its `notify` setting (`all`). */
+  @Column({ name: 'on_job_started', default: true })
+  onJobStarted: boolean;
+
+  /** A job run succeeded. On by default: each job opts in with its `notify` setting (`finish`/`all`). */
+  @Column({ name: 'on_job_success', default: true })
+  onJobSuccess: boolean;
+
   /** Docker disk above `DISK_ALERT_PERCENT` (daily check). */
   @Column({ name: 'on_disk_low', default: true })
   onDiskLow: boolean;

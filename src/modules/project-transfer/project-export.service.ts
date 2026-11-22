@@ -279,6 +279,7 @@ function exportJob(j: Job): ExportedJob {
     target: j.target,
     enabled: j.enabled,
     timeoutSeconds: j.timeoutSeconds,
+    notify: j.notify,
     ...(j.service ? { service: j.service } : {}),
   };
 }

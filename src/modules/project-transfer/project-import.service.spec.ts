@@ -493,6 +493,44 @@ describe('ProjectImportService', () => {
       'database "cache": no password in file, a new one was generated',
     ]);
   });
+  it('carries the notify level of jobs: absent = failure, invalid = failure with a warning', async () => {
+    const { service, jobs } = build();
+    const report = await service.import(
+      {
+        ...base,
+        databases: [
+          {
+            name: 'main',
+            engine: 'postgres',
+            password: 'secret',
+            jobs: [
+              { name: 'a', cron: null, command: 'true', notify: 'all' },
+              { name: 'b', cron: null, command: 'true' },
+              {
+                name: 'c',
+                cron: null,
+                command: 'true',
+                notify: 'loud' as never,
+              },
+            ],
+          },
+        ],
+      },
+      options,
+    );
+    const saved = jobs.save.mock.calls.map(
+      (c) => c[0] as { name: string; notify: string },
+    );
+    expect(saved.map((j) => [j.name, j.notify])).toEqual([
+      ['a', 'all'],
+      ['b', 'failure'],
+      ['c', 'failure'],
+    ]);
+    expect(report.warnings).toContain(
+      'database "main": job "c" has an unknown notify value, using "failure"',
+    );
+  });
+
   it('hands the monitor settings of an application to the monitor service, and skips files without them', async () => {
     const { service, importMonitor } = build();
     const monitor = {
