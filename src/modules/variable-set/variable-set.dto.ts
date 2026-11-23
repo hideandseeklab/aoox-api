@@ -1,3 +1,4 @@
+import { NormalizeNewlines } from '../docker/normalize-newlines';
 import { Type } from 'class-transformer';
 import {
   ArrayMaxSize,
@@ -115,6 +116,7 @@ export class UpdateEnvironmentDto {
   /** The whole `KEY=VALUE` text of the environment (replaces it). */
   @IsString()
   @MaxLength(ENV_TEXT_MAX)
+  @NormalizeNewlines()
   variables: string;
 
   /**

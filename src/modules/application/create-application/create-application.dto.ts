@@ -1,3 +1,4 @@
+import { NormalizeNewlines } from '../../docker/normalize-newlines';
 import {
   HOST_PORT_BINDS,
   type HostPortBind,
@@ -216,6 +217,7 @@ export class CreateApplicationDto {
   @IsOptional()
   @IsString()
   @MaxLength(20_000)
+  @NormalizeNewlines()
   env?: string;
 
   /**
@@ -233,6 +235,7 @@ export class CreateApplicationDto {
   @IsOptional()
   @IsString()
   @MaxLength(5_000)
+  @NormalizeNewlines()
   buildArgs?: string;
 
   @IsOptional()

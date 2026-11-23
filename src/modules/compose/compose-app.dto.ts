@@ -1,3 +1,4 @@
+import { NormalizeNewlines } from '../docker/normalize-newlines';
 import { HOST_PORT_BINDS, type HostPortBind } from '../docker/host-port-bind';
 import { Type } from 'class-transformer';
 import {
@@ -114,12 +115,14 @@ export class ComposeAppFieldsDto {
   @IsOptional()
   @IsString()
   @MaxLength(20_000)
+  @NormalizeNewlines()
   env?: string;
 
   /** Only for `template` stacks: the compose file itself. */
   @IsOptional()
   @IsString()
   @Length(1, 200_000)
+  @NormalizeNewlines()
   composeContent?: string;
 
   @IsOptional()
