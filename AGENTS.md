@@ -799,7 +799,7 @@ Replaced the per-project environments of 0.1.0-alpha.9 (stages 1-3 of "Project e
   **Domain DNS** — `dnsIssue`/`on_dns_issue`: see `dns-watcher.service.ts` in the Proxy & Domain → DNS check section (not here, because it needs the `Domain` repo).
 - **Signed outgoing webhooks**: the webhook config has an optional `secret`; `webhookHeaders()` (pure, unit-tested) adds `X-Aoox-Event`, `X-Aoox-Delivery`
   (= `body.id`, a UUID per delivery) and `X-Aoox-Signature: sha256=HMAC-SHA256(secret, raw body)` — computed over the exact bytes sent (`raw` in `sendNotification`), GitHub scheme.
-  The webhook body now always contains `id` and `timestamp`.
+  The webhook body now always contains `id` and `timestamp`, and `fields: [{label, value}]` = the same readable details the other channels show (e.g. a job's `Command` and `Output`, the `Example N` log lines of an app error), next to the `data` keys.
 - Sending from the application module: `deployment-notifier.service.ts` subscribes to `DeploymentEventsService.onStatus` (emitted **synchronously** from inside the runner → the listener only schedules work,
   and never throws), only for `success`/`failed`, then **re-reads the Deployment row** (the error has already been redacted by `DeploymentLog`) and calls `NotificationService.broadcast(event, message)`;
   failures per channel are only logged. Link to `${WEB_ORIGIN}/applications/<id>` when `WEB_ORIGIN` is set. `ApplicationModule` imports `NotificationModule` (not the other way around).

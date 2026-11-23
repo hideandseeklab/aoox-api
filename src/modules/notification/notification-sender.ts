@@ -203,6 +203,9 @@ export function requestFor(
           title: message.title,
           level: message.level,
           url: message.url ?? null,
+          // The same details the other channels show (e.g. a job's command and
+          // output tail), next to the machine-readable `data` keys.
+          fields: message.fields.map(([label, value]) => ({ label, value })),
           ...message.data,
         },
       };

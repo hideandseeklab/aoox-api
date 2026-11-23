@@ -70,7 +70,7 @@ describe('requestFor', () => {
     });
   });
 
-  it('webhook: flat JSON with the machine-readable data', () => {
+  it('webhook: flat JSON with the readable fields and the machine-readable data', () => {
     const r = requestFor(
       { type: 'webhook', url: 'http://ci.local/hook' },
       message,
@@ -83,6 +83,10 @@ describe('requestFor', () => {
       title: 'Deployment succeeded: my-app',
       level: 'success',
       url: 'https://panel.example.com/applications/1',
+      fields: [
+        { label: 'Application', value: 'my-app' },
+        { label: 'Error', value: '<script>&' },
+      ],
       event: 'deployment.success',
       deploymentId: 'd1',
     });
