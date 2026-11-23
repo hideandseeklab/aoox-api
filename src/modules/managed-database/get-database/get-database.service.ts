@@ -7,10 +7,16 @@ import {
   containerNameForDb,
   ManagedDatabaseService,
 } from '../managed-database.service';
+import {
+  daemonUnreachableReason,
+  isDaemonConnectError,
+} from '../../docker/daemon-unreachable';
 import { retryModeFor, type RetryMode } from '../retry-plan';
 
 export interface ManagedDatabaseDetail extends ManagedDatabase {
   container: { id: string; state: string; status: string } | null;
+  /** Why the container state could not be read (daemon not reachable), or null; then `container: null` means "unknown". */
+  daemonError: string | null;
   /** The actor's role in the owning project (UI hides what a viewer cannot do). */
   projectRole: ProjectRole;
   /**
@@ -36,13 +42,19 @@ export class GetDatabaseService {
   async execute(ownerId: string, id: string): Promise<ManagedDatabaseDetail> {
     const db = await this.databases.findOwnedOrFail(id, ownerId);
     const projectRole = (await this.access.roleFor(ownerId, db.project))!;
+    let daemonError: string | null = null;
     const c = await this.docker
       .findContainerByName(containerNameForDb(db))
-      .catch(() => null);
+      .catch((err) => {
+        if (isDaemonConnectError(err))
+          daemonError = daemonUnreachableReason(err);
+        return null;
+      });
     const retryMode = retryModeFor(db);
     return {
       ...db,
       container: c ? { id: c.Id, state: c.State, status: c.Status } : null,
+      daemonError,
       projectRole,
       retryable: retryMode !== null,
       retryMode,

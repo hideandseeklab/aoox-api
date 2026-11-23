@@ -5,6 +5,10 @@ import { ApplicationService, containerNameFor } from '../application.service';
 import { ProjectAccessService } from '../../project/project-access.service';
 import type { ProjectRole } from '../../project/project-member.entity';
 import { readExposedPorts } from '../exposed-ports';
+import {
+  daemonUnreachableReason,
+  isDaemonConnectError,
+} from '../../docker/daemon-unreachable';
 import { ServiceStatus, SwarmDeployService } from '../swarm-deploy.service';
 import { SecretSourceService } from '../../secret-source/secret-source.service';
 import {
@@ -32,6 +36,11 @@ interface ApplicationExtras {
    * daemon, daemon unreachable or slow. [] = the image exposes nothing.
    */
   exposedPorts: number[] | null;
+  /**
+   * Why the live container state could not be read (the Docker daemon is not
+   * reachable), or null. While set, `container: null` means "unknown", not "not deployed".
+   */
+  daemonError: string | null;
   /** Linked variable set environments in merge order (no values), with per-key conflicts. */
   variableSets: LinkView[];
 }
@@ -67,7 +76,12 @@ export class GetApplicationService {
       app.env,
     );
     if (app.deployMode === 'service') {
-      const service = await this.swarmDeploy.status(app).catch(() => null);
+      let daemonError: string | null = null;
+      const service = await this.swarmDeploy.status(app).catch((err) => {
+        if (isDaemonConnectError(err))
+          daemonError = daemonUnreachableReason(err);
+        return null;
+      });
       // The "container" summary is what the web renders; derive it from the tasks.
       const container = service
         ? {
@@ -91,12 +105,18 @@ export class GetApplicationService {
         projectRole,
         secretSource,
         exposedPorts,
+        daemonError,
         variableSets,
       };
     }
     const docker = await this.remote.forServer(app.serverId);
+    let daemonError: string | null = null;
     const [c, exposedPorts] = await Promise.all([
-      docker.findContainerByName(containerNameFor(app)).catch(() => null),
+      docker.findContainerByName(containerNameFor(app)).catch((err) => {
+        if (isDaemonConnectError(err))
+          daemonError = daemonUnreachableReason(err);
+        return null;
+      }),
       app.currentImage
         ? readExposedPorts(docker.engine, app.currentImage)
         : Promise.resolve(null),
@@ -108,6 +128,7 @@ export class GetApplicationService {
       projectRole,
       secretSource,
       exposedPorts,
+      daemonError,
       variableSets,
     };
   }

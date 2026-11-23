@@ -1,6 +1,7 @@
 import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_FILTER, APP_GUARD } from '@nestjs/core';
+import { DaemonUnreachableFilter } from './modules/docker/daemon-unreachable.filter';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
@@ -101,6 +102,7 @@ import { VolumeBackupModule } from './modules/volume-backup/volume-backup.module
   providers: [
     AppService,
     { provide: APP_GUARD, useClass: IdentityThrottlerGuard },
+    { provide: APP_FILTER, useClass: DaemonUnreachableFilter },
   ],
 })
 export class AppModule implements NestModule {
