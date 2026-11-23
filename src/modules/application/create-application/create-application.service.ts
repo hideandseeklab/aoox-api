@@ -110,9 +110,10 @@ export class CreateApplicationService {
     // Without links the application has none (no default environment).
     const links = (dto.variableSetLinks ?? []).map((l) => l.environmentId);
     const owner = { kind: 'application' as const, projectId: project.id };
-    if (links.length > 0) {
-      await this.variableSets.check(owner, app, links, ownerId);
-    }
+    // Same validation as update-application, also without links: a bad
+    // `${{app.�}}`, `${{database.�}}`, `${{vars.�}}` or `${{secret.�}}`
+    // reference is a 400 now instead of a failed deployment later.
+    await this.variableSets.check(owner, app, links, ownerId);
     const saved = await this.applications.repo.save(app);
     if (links.length > 0) {
       await this.variableSets.replace(

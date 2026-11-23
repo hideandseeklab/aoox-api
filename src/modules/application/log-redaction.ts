@@ -157,6 +157,43 @@ export function redactorForEnv(env: string[]): Redactor {
   return redactor;
 }
 
+/** The slice of an inspected container the env subtraction needs. */
+export interface InspectedContainerEnv {
+  /** Id of the image the container was created from (`sha256:…`). */
+  Image?: string;
+  Config?: { Image?: string; Env?: string[] | null } | null;
+}
+
+/**
+ * The container's env without the entries its image already carries
+ * (`NGINX_VERSION`, `PKG_RELEASE`…): an entry is dropped only when key AND
+ * value are identical to an image entry, so a variable the user overrode with
+ * another value is still returned (and masked). Image-baked values are public
+ * and, masked, mangle ordinary log text (`nginx/***`). When the image cannot
+ * be read the full env is returned: over-masking rather than leaking.
+ */
+export async function envWithoutImageDefaults(
+  engine: {
+    inspectImage(ref: string): Promise<Record<string, unknown> | null>;
+  },
+  info: InspectedContainerEnv | null | undefined,
+): Promise<string[]> {
+  const env = info?.Config?.Env ?? [];
+  const ref = info?.Image || info?.Config?.Image;
+  if (!ref || env.length === 0) return env;
+  try {
+    const image = await engine.inspectImage(ref);
+    const config = image?.Config as { Env?: unknown } | null | undefined;
+    if (!Array.isArray(config?.Env)) return env;
+    const baked = new Set(
+      config.Env.filter((e): e is string => typeof e === 'string'),
+    );
+    return env.filter((e) => !baked.has(e));
+  } catch {
+    return env;
+  }
+}
+
 function splitEntry(entry: string): [string, string] {
   const eq = entry.indexOf('=');
   return eq < 0 ? ['', ''] : [entry.slice(0, eq), entry.slice(eq + 1)];

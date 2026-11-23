@@ -1,5 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { Redactor, envValuesToRedact } from '../application/log-redaction';
+import {
+  Redactor,
+  envValuesToRedact,
+  envWithoutImageDefaults,
+} from '../application/log-redaction';
 import { ConfigService } from '@nestjs/config';
 import {
   ApplicationService,
@@ -229,7 +233,11 @@ export class JobRunnerService {
         try {
           const c = await docker.findContainerByName(containerNameFor(app));
           const info = c && (await docker.engine.inspectContainer(c.Id));
-          redact.push(...envValuesToRedact(info?.Config.Env ?? []));
+          redact.push(
+            ...envValuesToRedact(
+              await envWithoutImageDefaults(docker.engine, info),
+            ),
+          );
         } catch {
           // nothing more to learn; the command output is stored as is
         }
@@ -339,7 +347,11 @@ export class JobRunnerService {
               `Service ${job.service} has no container (deploy the stack first)`,
             );
           }
-          redact.push(...envValuesToRedact(info.Config.Env ?? []));
+          redact.push(
+            ...envValuesToRedact(
+              await envWithoutImageDefaults(docker.engine, info),
+            ),
+          );
           return {
             Image: info.Config.Image,
             Env: info.Config.Env ?? [],
@@ -361,7 +373,11 @@ export class JobRunnerService {
     }
     if (ctx.redactContainerEnv) {
       const info = await ctx.docker.engine.inspectContainer(c.Id);
-      ctx.redact?.push(...envValuesToRedact(info?.Config.Env ?? []));
+      ctx.redact?.push(
+        ...envValuesToRedact(
+          await envWithoutImageDefaults(ctx.docker.engine, info),
+        ),
+      );
     }
     const exec = ctx.docker.engine.execWithCode(c.Id, {
       Cmd: shellCommand(job.command, job.timeoutSeconds),

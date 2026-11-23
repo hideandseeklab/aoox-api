@@ -1,7 +1,7 @@
 import { BadGatewayException, Injectable } from '@nestjs/common';
 import { RemoteDockerService } from '../../server/remote-docker.service';
 import { ApplicationService, containerNameFor } from '../application.service';
-import { redactorForEnv } from '../log-redaction';
+import { envWithoutImageDefaults, redactorForEnv } from '../log-redaction';
 import { SwarmDeployService } from '../swarm-deploy.service';
 import { ApplicationLogsResponseDto } from './application-logs.dto';
 
@@ -37,14 +37,16 @@ export class ApplicationLogsService {
     const c = await docker.findContainerByName(containerNameFor(app));
     if (!c) return { logs: '' };
     // Fail closed: without the env the output cannot be masked.
-    let env: string[];
+    let info: Awaited<ReturnType<typeof docker.engine.inspectContainer>>;
     try {
-      env = (await docker.engine.inspectContainer(c.Id))?.Config?.Env ?? [];
+      info = await docker.engine.inspectContainer(c.Id);
     } catch {
       throw new BadGatewayException(
         'Could not read the container, so its logs cannot be masked.',
       );
     }
+    // Values baked into the image are not secrets (`nginx/1.31.9`).
+    const env = await envWithoutImageDefaults(docker.engine, info);
     const logs = await docker.engine.containerLogs(c.Id, tail);
     return { logs: redactorForEnv(env).apply(logs) };
   }

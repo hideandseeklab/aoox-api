@@ -1,6 +1,8 @@
 import {
   envTextValuesToRedact,
   envValuesToRedact,
+  envWithoutImageDefaults,
+  redactorForEnv,
   Redactor,
   StreamRedactor,
 } from './log-redaction';
@@ -145,5 +147,65 @@ describe('StreamRedactor', () => {
     r.add('abcdef');
     expect(s.push('abc')).toBe('');
     expect(s.push('def!')).toBe('***!');
+  });
+});
+
+describe('envWithoutImageDefaults', () => {
+  const info = {
+    Image: 'sha256:abc',
+    Config: {
+      Image: 'nginx:latest',
+      Env: [
+        'NGINX_VERSION=1.31.9',
+        'PKG_RELEASE=1~trixie',
+        'DB_PASSWORD=hunter2hunter2',
+        'NJS_VERSION=0.9.4',
+      ],
+    },
+  };
+  const imageWith = (env: string[]) => ({
+    inspectImage: jest.fn().mockResolvedValue({ Config: { Env: env } }),
+  });
+
+  it('drops entries identical to the image env, so image versions stay readable', async () => {
+    const engine = imageWith([
+      'NGINX_VERSION=1.31.9',
+      'PKG_RELEASE=1~trixie',
+      'NJS_VERSION=0.9.4',
+    ]);
+    const env = await envWithoutImageDefaults(engine, info);
+    expect(engine.inspectImage).toHaveBeenCalledWith('sha256:abc');
+    expect(env).toEqual(['DB_PASSWORD=hunter2hunter2']);
+    expect(redactorForEnv(env).apply('nginx/1.31.9 hunter2hunter2')).toBe(
+      'nginx/1.31.9 ***',
+    );
+  });
+
+  it('still returns a variable the user overrode with another value', async () => {
+    const engine = imageWith(['NGINX_VERSION=1.0.0', 'PKG_RELEASE=1~trixie']);
+    const env = await envWithoutImageDefaults(engine, info);
+    expect(env).toContain('NGINX_VERSION=1.31.9');
+    expect(env).not.toContain('PKG_RELEASE=1~trixie');
+  });
+
+  it('falls back to the full env when the image cannot be inspected', async () => {
+    const failing = {
+      inspectImage: jest.fn().mockRejectedValue(new Error('boom')),
+    };
+    expect(await envWithoutImageDefaults(failing, info)).toEqual(
+      info.Config.Env,
+    );
+    const missing = { inspectImage: jest.fn().mockResolvedValue(null) };
+    expect(await envWithoutImageDefaults(missing, info)).toEqual(
+      info.Config.Env,
+    );
+  });
+
+  it('uses the config image reference when the id is absent', async () => {
+    const engine = imageWith([]);
+    await envWithoutImageDefaults(engine, {
+      Config: { Image: 'nginx:latest', Env: ['A=bbbbbbbb'] },
+    });
+    expect(engine.inspectImage).toHaveBeenCalledWith('nginx:latest');
   });
 });

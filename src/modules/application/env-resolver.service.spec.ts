@@ -353,6 +353,22 @@ describe('EnvResolverService application references', () => {
     );
   });
 
+  it('resolves the own name of an application that is not saved yet (create)', async () => {
+    const draft = owner('U=${{app.self.url}}', {
+      appName: 'self',
+      containerPort: 8080,
+    });
+    delete (draft as { id?: string }).id;
+    const r = await svc.resolve(draft);
+    expect(r.env).toEqual(['U=http://aoox-app-self:8080']);
+    // A different name is still looked up in the project only.
+    const other = owner('U=${{app.nope.url}}', { appName: 'self' });
+    delete (other as { id?: string }).id;
+    await expect(svc.resolve(other)).rejects.toThrow(
+      'no application "nope" in this project',
+    );
+  });
+
   it('allows a self reference', async () => {
     const r = await svc.resolve(owner('U=${{app.api.url}}'));
     expect(r.env).toEqual(['U=http://aoox-app-api:3000']);

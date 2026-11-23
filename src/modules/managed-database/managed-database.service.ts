@@ -535,7 +535,7 @@ export class ManagedDatabaseService implements OnApplicationBootstrap {
     const image = `${imageNameFor(db.engine, db.variant)}:${db.imageTag}`;
     const statements = POSTGRES_VARIANTS[db.variant].extensionSql;
     const script = [
-      'for i in $(seq 1 30); do pg_isready -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" >/dev/null 2>&1 && break; sleep 1; done',
+      'for i in $(seq 1 30); do pg_isready -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" >/dev/null 2>&1 && break; sleep 1; done',
       ...statements.map(
         (stmt) =>
           `PGPASSWORD="$DB_PASSWORD" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -v ON_ERROR_STOP=1 -c ${shellQuote(stmt)}`,

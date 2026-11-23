@@ -11,7 +11,11 @@ import {
   WebSocketServer,
 } from '@nestjs/websockets';
 import type { Server, Socket } from 'socket.io';
-import { redactorForEnv, StreamRedactor } from './log-redaction';
+import {
+  envWithoutImageDefaults,
+  redactorForEnv,
+  StreamRedactor,
+} from './log-redaction';
 import { RemoteDockerService } from '../server/remote-docker.service';
 import { ApplicationService, containerNameFor } from './application.service';
 import { SwarmDeployService } from './swarm-deploy.service';
@@ -261,7 +265,7 @@ export class LogsGateway
     } else {
       try {
         const info = await docker.engine.inspectContainer(c!.Id);
-        env = info?.Config?.Env ?? [];
+        env = await envWithoutImageDefaults(docker.engine, info);
       } catch (err) {
         this.logger.warn(`inspect failed: ${String(err)}`);
         if (this.isStale(client, generation)) return;
@@ -316,7 +320,10 @@ export class LogsGateway
       }
       if (this.isStale(client, generation)) return;
       if (!info) return client.emit('error', 'no container');
-      masker = new StreamRedactor(redactorForEnv(info.Config?.Env ?? []));
+      masker = new StreamRedactor(
+        redactorForEnv(await envWithoutImageDefaults(docker.engine, info)),
+      );
+      if (this.isStale(client, generation)) return;
     }
 
     const onData = (text: string) => {

@@ -82,6 +82,8 @@ export interface ContainerInspect {
   Id: string;
   /** `/name` */
   Name?: string;
+  /** Id (`sha256:…`) of the image the container was created from. */
+  Image?: string;
   State: {
     Status: string;
     Running: boolean;

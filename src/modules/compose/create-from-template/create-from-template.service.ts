@@ -90,9 +90,9 @@ export class CreateFromTemplateService {
     await this.compose.assertHostPortsFree(draft);
     const links = (dto.variableSetLinks ?? []).map((l) => l.environmentId);
     const owner = { kind: 'compose' as const, projectId: project.id };
-    if (links.length > 0) {
-      await this.variableSets.check(owner, asTarget(draft), links, ownerId);
-    }
+    // Always validated (also without links): the env holds user-supplied
+    // template variables, and a bad reference should be a 400, not a failed deploy.
+    await this.variableSets.check(owner, asTarget(draft), links, ownerId);
     const app = await this.compose.repo.save(draft);
     if (links.length > 0) {
       await this.variableSets.replace(

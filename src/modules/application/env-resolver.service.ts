@@ -271,9 +271,15 @@ export class EnvResolverService {
     whole: string,
     opts: ResolveOptions,
   ): Promise<Record<AppField, string>> {
-    const target = await this.applications.repo.findOne({
-      where: { projectId: owner.projectId, appName },
-    });
+    // An application that is being created has no row yet: its own name must
+    // still resolve (a self reference is allowed, as on update).
+    const target =
+      (await this.applications.repo.findOne({
+        where: { projectId: owner.projectId, appName },
+      })) ??
+      (!owner.id && opts.owner !== 'compose' && owner.appName === appName
+        ? owner
+        : null);
     if (!target) {
       throw new EnvReferenceError(
         `${key}: ${whole} — no application "${appName}" in this project`,
