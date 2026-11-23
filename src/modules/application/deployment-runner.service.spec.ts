@@ -851,6 +851,7 @@ describe('DeploymentRunnerService', () => {
       await runAndWait(deployment(), app());
       expect(envResolve).toHaveBeenLastCalledWith(expect.anything(), {
         secretSource: true,
+        plainContainer: false,
       });
       await runner.replaceContainer(
         app(),
@@ -865,6 +866,7 @@ describe('DeploymentRunnerService', () => {
       );
       expect(envResolve).toHaveBeenLastCalledWith(expect.anything(), {
         secretSource: false,
+        plainContainer: true,
       });
     });
   });

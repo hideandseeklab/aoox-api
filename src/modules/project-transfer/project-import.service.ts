@@ -21,7 +21,10 @@ import { isJobNotify } from '../job/job-notify';
 import { JobService } from '../job/job.service';
 import { defaultTagFor, ENGINES } from '../managed-database/engines';
 import { ManagedDatabaseService } from '../managed-database/managed-database.service';
-import { rewriteProjectReferences } from '../variable-set/env-text';
+import {
+  rewriteProjectReferences,
+  rewriteRenamedReferences,
+} from '../variable-set/env-text';
 import { VariableSetTransferService } from '../variable-set/variable-set-transfer.service';
 import { ProjectService } from '../project/project.service';
 import { RegistryService } from '../registry/registry.service';
@@ -152,6 +155,13 @@ export class ProjectImportService {
       warnings,
     );
 
+    // Applications whose appName was taken get another one: `${{app.<old>.…}}`
+    // in the imported env must name the new one (the reference only resolves
+    // inside the new project).
+    const appRenames = new Map<string, string>();
+    // Same for databases whose slug was taken: `${{database.<old>.…}}`.
+    const dbRenames = new Map<string, string>();
+    const importedApps: Array<{ id: string; env: string }> = [];
     for (const a of file.applications ?? []) {
       const where = `application "${a.name}"`;
       // Untrusted file: an invalid folder is dropped (repository root) with a warning.
@@ -170,6 +180,8 @@ export class ProjectImportService {
         where,
         warnings,
       );
+      if (a.appName && a.appName !== appName)
+        appRenames.set(a.appName, appName);
       const app = await this.applications.repo.save(
         this.applications.repo.create({
           projectId: project.id,
@@ -239,6 +251,7 @@ export class ProjectImportService {
         }),
       );
       created.applications++;
+      importedApps.push({ id: app.id, env: app.env });
       await sets.save(
         'application',
         app.id,
@@ -384,6 +397,7 @@ export class ProjectImportService {
         }),
       );
       created.databases++;
+      if (d.slug && d.slug !== slug) dbRenames.set(d.slug, slug);
       if (d.resourceAlerts)
         await this.resourceAlerts.importConfig(
           { kind: 'database', id: db.id },
@@ -409,6 +423,17 @@ export class ProjectImportService {
       // Mounts are read by provision, so they must exist before it starts.
       this.databases.provisionInBackground(db, password);
     }
+
+    // Renames are all known now: applications and the sets this import
+    // created follow them (compose stacks below use the same maps).
+    const renames = { apps: appRenames, databases: dbRenames };
+    for (const imported of importedApps) {
+      const env = rewriteRenamedReferences(imported.env, renames);
+      if (env !== imported.env) {
+        await this.applications.repo.update(imported.id, { env });
+      }
+    }
+    await sets.rewriteReferences(renames);
 
     for (const c of file.composeApps ?? []) {
       const where = `compose "${c.name}"`;
@@ -438,7 +463,10 @@ export class ProjectImportService {
             where,
           ),
           composePath: c.composePath || 'docker-compose.yml',
-          env: rewriteProjectReferences(c.env ?? ''),
+          env: rewriteRenamedReferences(
+            rewriteProjectReferences(c.env ?? ''),
+            renames,
+          ),
           serviceDomains: c.serviceDomains ?? [],
           servicePorts: await this.freeServicePorts(
             c.servicePorts ?? [],

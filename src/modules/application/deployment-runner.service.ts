@@ -676,6 +676,7 @@ export class DeploymentRunnerService {
     // Previews (override) run arbitrary PR code: no secret source for them.
     const { env, secrets } = await this.envResolver.resolve(app, {
       secretSource: !override,
+      plainContainer: !!override,
     });
     for (const s of secrets) log?.redact(s);
     // Railpack's generated servers listen on $PORT (Railway's convention,

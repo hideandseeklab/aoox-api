@@ -14,6 +14,10 @@ import {
   summarizeChange,
   validateEnvironmentText,
   rewriteProjectReferences,
+  rewriteDatabaseReferences,
+  rewriteRenamedReferences,
+  isWholeAppReference,
+  referencesRenamed,
 } from './env-text';
 
 describe('env text helpers', () => {
@@ -43,6 +47,9 @@ describe('env text helpers', () => {
       ['A=${{project.NOPE}}', /renamed to/],
       ['A=${{vars.X.url}}', /not a valid reference/],
       ['A=${{database.pg.nope}}', /use url, host/],
+      ['A=${{app.api.nope}}', /use url, host, port/],
+      ['A=${{app.api}}', /use url, host, port/],
+      ['A=${{app.api.url:x}}', /not a valid reference/],
       ['A=${{weird.X}}', /unknown scope/],
       ['A=${{vars.}}', /malformed/],
     ])('rejects %j', (text, message) => {
@@ -274,5 +281,46 @@ describe('variable notes', () => {
     expect(setValues('A=1', [['N', '3']], { N: 'a\nb' })).toBe(
       'A=1\n# a\n# b\nN=3',
     );
+  });
+});
+
+describe('renamed resource references', () => {
+  const dbs = new Map([['db', 'db-2']]);
+  it('rewrites only the exact database slug, with spaces and the :name form', () => {
+    expect(
+      rewriteDatabaseReferences(
+        'A=${{database.db.url}}\nB=${{ database.db.host:other }}\nC=${{database.db2.url}}\nD=${{database.mydb.url}}\nE=${{app.db.url}}',
+        dbs,
+      ),
+    ).toBe(
+      'A=${{database.db-2.url}}\nB=${{ database.db-2.host:other }}\nC=${{database.db2.url}}\nD=${{database.mydb.url}}\nE=${{app.db.url}}',
+    );
+  });
+  it('is one pass (swaps are not rewritten twice) and a no-op without renames', () => {
+    const swap = new Map([
+      ['a', 'b'],
+      ['b', 'a'],
+    ]);
+    expect(
+      rewriteDatabaseReferences('${{database.a.url}}${{database.b.url}}', swap),
+    ).toBe('${{database.b.url}}${{database.a.url}}');
+    expect(rewriteDatabaseReferences('${{database.a.url}}', new Map())).toBe(
+      '${{database.a.url}}',
+    );
+  });
+  it('rewrites apps and databases together and detects references', () => {
+    const r = { apps: new Map([['api', 'api-2']]), databases: dbs };
+    expect(
+      rewriteRenamedReferences('${{app.api.url}} ${{database.db.url}}', r),
+    ).toBe('${{app.api-2.url}} ${{database.db-2.url}}');
+    expect(referencesRenamed('${{app.api.url}}', r)).toBe(true);
+    expect(referencesRenamed('${{app.apix.url}} ${{vars.api}}', r)).toBe(false);
+  });
+  it('isWholeAppReference matches a value that is exactly one app reference', () => {
+    expect(isWholeAppReference('${{app.api.url}}')).toBe(true);
+    expect(isWholeAppReference(' ${{ app.api.url }} ')).toBe(true);
+    expect(isWholeAppReference('${{app.api.url}}/v1')).toBe(false);
+    expect(isWholeAppReference('${{app.api.url}}${{app.b.url}}')).toBe(false);
+    expect(isWholeAppReference('${{database.db.url}}')).toBe(false);
   });
 });

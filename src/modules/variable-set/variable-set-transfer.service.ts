@@ -3,7 +3,9 @@ import { In } from 'typeorm';
 import {
   ENV_TEXT_MAX,
   normalizeEnvText,
+  ReferenceRenames,
   rewriteProjectReferences,
+  rewriteRenamedReferences,
 } from './env-text';
 import { VariableSetAccessService } from './variable-set-access.service';
 import {
@@ -60,6 +62,13 @@ export interface ImportedSets {
     id: string,
     environmentIds: string[],
   ): Promise<void>;
+  /**
+   * Call once after the applications and databases are created: the texts of
+   * the sets this import CREATED follow the renamed applications/databases
+   * (`${{app.<old>.…}}`, `${{database.<old>.…}}`); reused sets are never
+   * touched, but a warning names those that still hold such a reference.
+   */
+  rewriteReferences(renames: ReferenceRenames): Promise<void>;
 }
 
 /**
@@ -183,6 +192,9 @@ export class VariableSetTransferService {
     const envIndex = new Map<string, Map<string, string>>();
     const sharedWithProject = new Set<string>();
     const createdNames = new Map<string, VariableSet>();
+    const createdEnvIds: string[] = [];
+    /** Existing sets the file or a link pointed to (never overwritten). */
+    const reusedSets = new Map<string, VariableSet>();
 
     const indexEnvironments = async (setId: string) => {
       if (envIndex.has(setId)) return;
@@ -276,6 +288,7 @@ export class VariableSetTransferService {
       }
       sharedWithProject.add(set.id);
       envIndex.set(set.id, new Map(rows.map((r) => [r.name, r.id])));
+      createdEnvIds.push(...rows.map((r) => r.id));
       return set;
     };
 
@@ -288,6 +301,7 @@ export class VariableSetTransferService {
       const where = `variable set "${name.slice(0, 60)}"`;
       const found = byName.get(name.toLowerCase());
       if (found) {
+        reusedSets.set(found.id, found);
         warnings.push(
           `${where}: already exists on this instance, linked as it is (not overwritten from the file)`,
         );
@@ -356,6 +370,7 @@ export class VariableSetTransferService {
         warnings.push(`${where}: variable set "${name}" not found, not linked`);
         return null;
       }
+      if (!createdNames.has(key)) reusedSets.set(set.id, set);
       if (set.sharedWithAll || sharedWithProject.has(set.id)) return set;
       if (ctx.platform) {
         shareNow.add(set.id);
@@ -376,6 +391,25 @@ export class VariableSetTransferService {
     for (const s of existing) await indexEnvironments(s.id);
 
     return {
+      rewriteReferences: async (renames) => {
+        if (renames.apps.size === 0 && renames.databases.size === 0) return;
+        await this.environments.rewriteTexts(createdEnvIds, (t) =>
+          rewriteRenamedReferences(t, renames),
+        );
+        for (const set of reusedSets.values()) {
+          const ids = [...(envIndex.get(set.id)?.values() ?? [])];
+          const stale = await this.environments.rewriteTexts(
+            ids,
+            (t) => rewriteRenamedReferences(t, renames),
+            true,
+          );
+          if (stale.length > 0) {
+            warnings.push(
+              `variable set "${set.name}" already existed and was not changed, but it refers to an application or database that was renamed by this import: its \${{app.…}} / \${{database.…}} references may not resolve`,
+            );
+          }
+        }
+      },
       linksFor: (links, legacyEnvironment, where) => {
         const out: string[] = [];
         if (Array.isArray(links)) {

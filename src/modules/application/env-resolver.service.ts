@@ -1,7 +1,9 @@
 import { Injectable } from '@nestjs/common';
 import {
+  APP_FIELDS,
   DATABASE_FIELDS,
   isSecretValue,
+  isWholeAppReference,
   MIN_REDACT_LENGTH,
   parseEnvLines,
   REFERENCE,
@@ -16,7 +18,14 @@ import { ManagedDatabaseService } from '../managed-database/managed-database.ser
 import { SecretSourceError } from '../secret-source/infisical.client';
 import { ENV_KEY_PATTERN } from '../secret-source/secret-selection';
 import { SecretSourceService } from '../secret-source/secret-source.service';
+import {
+  AppField,
+  appReferenceFields,
+  appReferenceProblem,
+  isAppField,
+} from './app-reference';
 import { Application } from './application.entity';
+import { ApplicationService } from './application.service';
 
 export { parseEnvLines };
 
@@ -53,6 +62,11 @@ export interface ResolveOptions {
    * links: validating a new link list, or an owner that is not saved yet.
    */
   environmentIds?: string[];
+  /**
+   * The container is a plain container on the `aoox` bridge even if the
+   * application is in Swarm service mode (PR previews), for `${{app.…}}`.
+   */
+  plainContainer?: boolean;
 }
 
 export class EnvReferenceError extends Error {}
@@ -78,6 +92,7 @@ export class EnvResolverService {
     private readonly secretSource: SecretSourceService,
     private readonly environments: VariableSetEnvironmentService,
     private readonly links: VariableSetLinkService,
+    private readonly applications: ApplicationService,
   ) {}
 
   async resolve(
@@ -107,6 +122,7 @@ export class EnvResolverService {
     const appEnv = parseEnvLines(app.env);
     const own = new Set(appEnv.map(([k]) => k));
     const dbCache = new Map<string, Record<DatabaseField, string>>();
+    const appCache = new Map<string, Record<AppField, string>>();
 
     // ---- external secret source ----
     const sourceActive =
@@ -204,9 +220,20 @@ export class EnvResolverService {
             secrets.add(fields.password);
           }
           resolved += fields[field];
+        } else if (
+          scope === 'app' &&
+          isAppField(field) &&
+          dbName === undefined
+        ) {
+          let fields = appCache.get(name);
+          if (!fields) {
+            fields = await this.appFields(app, name, key, whole, opts);
+            appCache.set(name, fields);
+          }
+          resolved += fields[field];
         } else {
           throw new EnvReferenceError(
-            `${key}: ${whole} — use \${{vars.KEY}}, \${{secret.KEY}} or \${{database.<slug>.(${DATABASE_FIELDS.join('|')})}}`,
+            `${key}: ${whole} — use \${{vars.KEY}}, \${{secret.KEY}}, \${{database.<slug>.(${DATABASE_FIELDS.join('|')})}} or \${{app.<appName>.(${APP_FIELDS.join('|')})}}`,
           );
         }
       }
@@ -218,11 +245,52 @@ export class EnvResolverService {
       // A flag of the set layer applies only while the value still comes from
       // that layer; the application's own env and source secrets are unmarked.
       const fromSet = vars.has(key) && !own.has(key) && !literal.has(key);
-      if (isSecretValue(key, resolved, fromSet ? flags : {})) {
+      // A value that is exactly one `${{app.…}}` reference is an internal
+      // address (`http://aoox-app-x:3000`), not a secret: masking it would
+      // turn every mention in a log into `***`. Only an explicit `true` flag
+      // of the set layer overrides that. Database references keep the rule
+      // (the URL carries the password).
+      const addressOnly =
+        isWholeAppReference(value) && !(fromSet && flags[key] === true);
+      if (!addressOnly && isSecretValue(key, resolved, fromSet ? flags : {})) {
         secrets.add(resolved);
       }
     }
     return { env, secrets: [...secrets] };
+  }
+
+  /**
+   * Applications are looked up within the referencing owner's project only
+   * (app names are global). The address is the CURRENT container port, read
+   * at container create like database references.
+   */
+  private async appFields(
+    owner: Application,
+    appName: string,
+    key: string,
+    whole: string,
+    opts: ResolveOptions,
+  ): Promise<Record<AppField, string>> {
+    const target = await this.applications.repo.findOne({
+      where: { projectId: owner.projectId, appName },
+    });
+    if (!target) {
+      throw new EnvReferenceError(
+        `${key}: ${whole} — no application "${appName}" in this project`,
+      );
+    }
+    const kind = opts.owner ?? 'application';
+    const problem = appReferenceProblem(
+      {
+        kind,
+        deployMode: kind === 'application' ? owner.deployMode : null,
+        serverId: kind === 'application' ? owner.serverId : null,
+        plainContainer: opts.plainContainer,
+      },
+      target,
+    );
+    if (problem) throw new EnvReferenceError(`${key}: ${whole} — ${problem}`);
+    return appReferenceFields(target);
   }
 
   /** Databases are looked up within the app's project only (slugs are global). */

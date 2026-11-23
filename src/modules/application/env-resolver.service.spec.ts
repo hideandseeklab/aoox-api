@@ -3,6 +3,7 @@ import type { VariableSetLinkService } from '../variable-set/variable-set-link.s
 import { ManagedDatabaseService } from '../managed-database/managed-database.service';
 import { SecretSourceService } from '../secret-source/secret-source.service';
 import { Application } from './application.entity';
+import type { ApplicationService } from './application.service';
 import {
   EnvReferenceError,
   EnvResolverService,
@@ -64,6 +65,7 @@ describe('EnvResolverService', () => {
     { fetch: fetchSecrets } as unknown as SecretSourceService,
     fakeEnvironments,
     fakeLinks,
+    { repo: { findOne: jest.fn() } } as unknown as ApplicationService,
   );
 
   beforeEach(() => {
@@ -159,6 +161,7 @@ describe('EnvResolverService with variable set links', () => {
     { fetch: jest.fn() } as unknown as SecretSourceService,
     fakeEnvironments,
     fakeLinks,
+    { repo: { findOne: jest.fn() } } as unknown as ApplicationService,
   );
   const owner = (env: string, envIds: string[]) => {
     const id = `o${++seq}`;
@@ -273,5 +276,183 @@ describe('EnvResolverService with variable set links', () => {
     expect(r.secrets).toContain('own-token-val');
     expect(r.secrets).not.toContain('8080');
     expect(r.secrets).not.toContain('production');
+  });
+});
+
+describe('EnvResolverService application references', () => {
+  const findOne = jest.fn();
+  const svc = new EnvResolverService(
+    { repo: { findOne: jest.fn() } } as unknown as ManagedDatabaseService,
+    { fetch: jest.fn() } as unknown as SecretSourceService,
+    fakeEnvironments,
+    fakeLinks,
+    { repo: { findOne } } as unknown as ApplicationService,
+  );
+  const target = (over: Record<string, unknown> = {}) => ({
+    id: 't1',
+    appName: 'api',
+    projectId: 'p1',
+    containerPort: 3000,
+    deployMode: 'container',
+    serverId: null,
+    ...over,
+  });
+  const owner = (env: string, over: Record<string, unknown> = {}) =>
+    ({
+      id: `w${++seq}`,
+      projectId: 'p1',
+      env,
+      deployMode: 'container',
+      serverId: null,
+      ...over,
+    }) as unknown as Application;
+
+  beforeEach(() => {
+    findOne.mockReset();
+    findOne.mockImplementation(
+      ({ where }: { where: { projectId: string; appName: string } }) =>
+        Promise.resolve(
+          where.appName === 'api' && where.projectId === 'p1' ? target() : null,
+        ),
+    );
+  });
+
+  it('resolves url, host and port from the current container port', async () => {
+    const r = await svc.resolve(
+      owner(
+        'U=${{app.api.url}}\nH=${{app.api.host}}\nP=${{app.api.port}}\nX=${{ app.api.url }}/v1',
+      ),
+    );
+    expect(r.env).toEqual([
+      'U=http://aoox-app-api:3000',
+      'H=aoox-app-api',
+      'P=3000',
+      'X=http://aoox-app-api:3000/v1',
+    ]);
+  });
+
+  it('only looks inside the referencing project', async () => {
+    await svc.resolve(owner('U=${{app.api.url}}'));
+    expect(findOne).toHaveBeenCalledWith({
+      where: { projectId: 'p1', appName: 'api' },
+    });
+    await expect(
+      svc.resolve(owner('U=${{app.api.url}}', { projectId: 'p2' })),
+    ).rejects.toThrow('no application "api" in this project');
+  });
+
+  it('rejects unknown applications, unknown fields and a :name suffix', async () => {
+    await expect(svc.resolve(owner('U=${{app.nope.url}}'))).rejects.toThrow(
+      EnvReferenceError,
+    );
+    await expect(svc.resolve(owner('U=${{app.api.secret}}'))).rejects.toThrow(
+      EnvReferenceError,
+    );
+    await expect(svc.resolve(owner('U=${{app.api.url:x}}'))).rejects.toThrow(
+      EnvReferenceError,
+    );
+  });
+
+  it('allows a self reference', async () => {
+    const r = await svc.resolve(owner('U=${{app.api.url}}'));
+    expect(r.env).toEqual(['U=http://aoox-app-api:3000']);
+  });
+
+  it('refuses a swarm service target from a plain container and the reverse', async () => {
+    findOne.mockResolvedValue(target({ deployMode: 'service' }));
+    await expect(svc.resolve(owner('U=${{app.api.url}}'))).rejects.toThrow(
+      /different Docker networks/,
+    );
+    findOne.mockResolvedValue(target());
+    await expect(
+      svc.resolve(owner('U=${{app.api.url}}', { deployMode: 'service' })),
+    ).rejects.toThrow(/different Docker networks/);
+  });
+
+  it('allows service to service on the host', async () => {
+    findOne.mockResolvedValue(target({ deployMode: 'service' }));
+    const r = await svc.resolve(
+      owner('U=${{app.api.url}}', { deployMode: 'service' }),
+    );
+    expect(r.env).toEqual(['U=http://aoox-app-api:3000']);
+  });
+
+  it('a preview of a service-mode app is a plain container', async () => {
+    await expect(
+      svc.resolve(owner('U=${{app.api.url}}', { deployMode: 'service' }), {
+        plainContainer: true,
+      }),
+    ).resolves.toBeDefined();
+  });
+
+  it('refuses another daemon, accepts the same remote server', async () => {
+    findOne.mockResolvedValue(target({ serverId: 's1' }));
+    await expect(svc.resolve(owner('U=${{app.api.url}}'))).rejects.toThrow(
+      /different Docker daemons/,
+    );
+    const r = await svc.resolve(
+      owner('U=${{app.api.host}}', { serverId: 's1' }),
+    );
+    expect(r.env).toEqual(['U=aoox-app-api']);
+    await expect(
+      svc.resolve(owner('U=${{app.api.url}}', { serverId: 's2' })),
+    ).rejects.toThrow(/different Docker daemons/);
+  });
+
+  it('compose stacks reach host container-mode applications only', async () => {
+    const stack = { id: 'c1', projectId: 'p1', env: 'U=${{app.api.url}}' };
+    const r = await svc.resolve(stack as unknown as Application, {
+      owner: 'compose',
+    });
+    expect(r.env).toEqual(['U=http://aoox-app-api:3000']);
+    findOne.mockResolvedValue(target({ deployMode: 'service' }));
+    await expect(
+      svc.resolve(stack as unknown as Application, { owner: 'compose' }),
+    ).rejects.toThrow(/different Docker networks/);
+    findOne.mockResolvedValue(target({ serverId: 's1' }));
+    await expect(
+      svc.resolve(stack as unknown as Application, { owner: 'compose' }),
+    ).rejects.toThrow(/different Docker daemons/);
+  });
+
+  it('does not register a whole app reference as a secret, but a mixed value keeps the rule', async () => {
+    const r = await svc.resolve(
+      owner('U=${{app.api.url}}\nX=${{app.api.url}}/v1\nP=${{app.api.port}}'),
+    );
+    expect(r.secrets).not.toContain('http://aoox-app-api:3000');
+    expect(r.secrets).toContain('http://aoox-app-api:3000/v1');
+  });
+
+  it('a set-layer secret flag of true still masks an app address; unflagged does not', async () => {
+    layers.set('eflag', { text: 'U=${{app.api.url}}', flags: { U: true } });
+    linksOf.set('own2', ['eflag']);
+    const r = await svc.resolve({
+      id: 'own2',
+      projectId: 'p1',
+      env: '',
+      deployMode: 'container',
+    } as unknown as Application);
+    expect(r.secrets).toContain('http://aoox-app-api:3000');
+    layers.set('eflag2', { text: 'U=${{app.api.url}}', flags: {} });
+    linksOf.set('own3', ['eflag2']);
+    const r2 = await svc.resolve({
+      id: 'own3',
+      projectId: 'p1',
+      env: '',
+      deployMode: 'container',
+    } as unknown as Application);
+    expect(r2.secrets).not.toContain('http://aoox-app-api:3000');
+  });
+
+  it('resolves references that come from a linked variable set', async () => {
+    layers.set('eapp', { text: 'API=${{app.api.url}}/x', flags: {} });
+    linksOf.set('own1', ['eapp']);
+    const r = await svc.resolve({
+      id: 'own1',
+      projectId: 'p1',
+      env: '',
+      deployMode: 'container',
+    } as unknown as Application);
+    expect(r.env).toContain('API=http://aoox-app-api:3000/x');
   });
 });

@@ -4,6 +4,7 @@ import { ManagedDatabaseService } from '../managed-database/managed-database.ser
 import { SecretSourceError } from '../secret-source/infisical.client';
 import { SecretSourceService } from '../secret-source/secret-source.service';
 import { Application } from './application.entity';
+import type { ApplicationService } from './application.service';
 import { EnvReferenceError, EnvResolverService } from './env-resolver.service';
 
 /** The text of the one variable set environment each app is linked to. */
@@ -46,6 +47,7 @@ describe('EnvResolverService with a secret source', () => {
     {
       environmentIdsFor: (_kind: string, id: string) => Promise.resolve([id]),
     } as unknown as VariableSetLinkService,
+    { repo: { findOne: jest.fn() } } as unknown as ApplicationService,
   );
   const SECRETS = new Map([
     ['DB_PASSWORD', 'infisical-db-password'],

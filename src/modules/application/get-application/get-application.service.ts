@@ -4,6 +4,7 @@ import { Application } from '../application.entity';
 import { ApplicationService, containerNameFor } from '../application.service';
 import { ProjectAccessService } from '../../project/project-access.service';
 import type { ProjectRole } from '../../project/project-member.entity';
+import { type InternalAddress, internalAddressOf } from '../app-reference';
 import { readExposedPorts } from '../exposed-ports';
 import {
   daemonUnreachableReason,
@@ -43,6 +44,8 @@ interface ApplicationExtras {
   daemonError: string | null;
   /** Linked variable set environments in merge order (no values), with per-key conflicts. */
   variableSets: LinkView[];
+  /** Name other applications of the project reach this one by (see `${{app.<appName>.url}}`). */
+  internalAddress: InternalAddress;
 }
 
 @Injectable()
@@ -107,6 +110,7 @@ export class GetApplicationService {
         exposedPorts,
         daemonError,
         variableSets,
+        internalAddress: internalAddressOf(app),
       };
     }
     const docker = await this.remote.forServer(app.serverId);
@@ -130,6 +134,7 @@ export class GetApplicationService {
       exposedPorts,
       daemonError,
       variableSets,
+      internalAddress: internalAddressOf(app),
     };
   }
 

@@ -14,6 +14,10 @@ function fakeRepo(existing: Array<Record<string, unknown>> = []) {
       rows.push(row);
       return Promise.resolve(row);
     }),
+    update: jest.fn((id: string, patch: Record<string, unknown>) => {
+      Object.assign(rows.find((r) => r.id === id) ?? {}, patch);
+      return Promise.resolve();
+    }),
     find: jest.fn(() => Promise.resolve(rows)),
     findOne: jest.fn(({ where }: { where: Record<string, unknown> }) =>
       Promise.resolve(
@@ -56,7 +60,10 @@ function build(
         : [`legacy:${legacy ?? 'production'}`],
   );
   const saveLinks = jest.fn().mockResolvedValue(undefined);
-  const importFor = jest.fn().mockResolvedValue({ linksFor, save: saveLinks });
+  const rewriteReferences = jest.fn().mockResolvedValue(undefined);
+  const importFor = jest
+    .fn()
+    .mockResolvedValue({ linksFor, save: saveLinks, rewriteReferences });
   const variableSets = { importFor };
   const service = new ProjectImportService(
     { repo: projects } as never,
@@ -98,6 +105,7 @@ function build(
     service,
     projects,
     apps,
+    stacks,
     domains,
     appMounts,
     dbs,
@@ -107,6 +115,7 @@ function build(
     scheduler,
     importMonitor,
     importFor,
+    rewriteReferences,
     linksFor,
     saveLinks,
   };
@@ -305,6 +314,72 @@ describe('ProjectImportService', () => {
       'application "api": git credential "gh" not found, left empty',
     ]);
     expect(report.created.applications).toBe(1);
+  });
+
+  it('follows a renamed application in ${{app.<name>.…}} references (apps and stacks)', async () => {
+    const { service, apps, stacks } = build({
+      apps: [{ id: 'other', appName: 'api' }],
+    });
+    await service.import(
+      {
+        ...base,
+        applications: [
+          { name: 'web', appName: 'web', env: 'API=${{app.api.url}}' },
+          { name: 'api', appName: 'api', env: 'SELF=${{ app.api.host }}' },
+        ],
+        composeApps: [
+          {
+            name: 's',
+            slug: 's',
+            env: 'A=${{app.api.port}}\nB=${{app.other.url}}',
+          },
+        ],
+      },
+      options,
+    );
+    const newApi = apps.rows.find((r) => r.name === 'api' && r.id !== 'other');
+    const newName = newApi?.appName as string;
+    expect(newName).not.toBe('api');
+    expect(apps.rows.find((r) => r.name === 'web')?.env).toBe(
+      `API=\${{app.${newName}.url}}`,
+    );
+    expect(newApi?.env).toBe(`SELF=\${{ app.${newName}.host }}`);
+    expect(stacks.rows[0].env).toBe(
+      `A=\${{app.${newName}.port}}` + '\n' + `B=\${{app.other.url}}`,
+    );
+  });
+
+  it('follows a renamed database slug in ${{database.<slug>.…}} references (apps, stacks, sets)', async () => {
+    const { service, apps, stacks, dbs, rewriteReferences } = build();
+    dbs.rows.push({ id: 'taken', slug: 'db' });
+    await service.import(
+      {
+        ...base,
+        applications: [
+          {
+            name: 'web',
+            appName: 'web',
+            env: 'A=${{database.db.url}}\nB=${{ database.db.url:other }}\nC=${{database.db2.url}}',
+          },
+        ],
+        databases: [
+          { name: 'db', slug: 'db', engine: 'postgres' },
+          { name: 'db2', slug: 'db2', engine: 'postgres' },
+        ],
+        composeApps: [{ name: 's', slug: 's', env: 'D=${{database.db.host}}' }],
+      },
+      options,
+    );
+    const renamed = dbs.rows.find((r) => r.name === 'db')?.slug as string;
+    expect(renamed).not.toBe('db');
+    expect(apps.rows.find((r) => r.name === 'web')?.env).toBe(
+      `A=\${{database.${renamed}.url}}\nB=\${{ database.${renamed}.url:other }}\nC=\${{database.db2.url}}`,
+    );
+    expect(stacks.rows[0].env).toBe(`D=\${{database.${renamed}.host}}`);
+    const arg = (rewriteReferences.mock.calls as unknown[][])[0][0] as {
+      databases: Map<string, string>;
+    };
+    expect([...arg.databases]).toEqual([['db', renamed]]);
   });
 
   it('a domain that carries middlewares (not part of the format) still imports, without them', async () => {

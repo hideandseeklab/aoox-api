@@ -145,6 +145,13 @@ function build(platform = false) {
       }),
   };
   const envRepo = {
+    update: (id: string, patch: Record<string, unknown>) => {
+      Object.assign(
+        rows(VariableSetEnvironment).find((r) => r.id === id) ?? {},
+        patch,
+      );
+      return Promise.resolve();
+    },
     find: ({ where }: { where: Record<string, unknown> }) =>
       Promise.resolve(
         rows(VariableSetEnvironment).filter((r) => matchesWhere(r, where)),
@@ -271,6 +278,71 @@ describe('VariableSetTransferService', () => {
         composeAppId: null,
       },
     ]);
+  });
+
+  it('rewrites renamed app/database references in created sets only; a reused set gets a warning', async () => {
+    const { svc, rows } = build();
+    const shop = rows(VariableSetEnvironment).find((e) => e.id === 'shop-stg')!;
+    const original = encryptSecret(
+      '# where\nA=${{app.api.url}}\nD=${{database.db.url}}',
+      KEY,
+    );
+    shop.variablesEncrypted = original;
+    const warnings: string[] = [];
+    const sets = await svc.importFor(
+      'new',
+      'Copy',
+      'member-user',
+      [
+        {
+          name: 'Shop',
+          environments: [
+            { name: 'staging', protected: false, variables: 'X=1' },
+          ],
+        },
+        {
+          name: 'Fresh',
+          environments: [
+            {
+              name: 'production',
+              protected: false,
+              variables:
+                '# the api\nA=${{app.api.url}}\nB=${{ database.db.url:other }}\nC=${{database.db2.url}}\nD=${{app.api2.host}}\nE=${{vars.A}}',
+              secretKeys: ['B'],
+              plainKeys: ['A'],
+            },
+          ],
+        },
+      ],
+      {},
+      warnings,
+    );
+    await sets.rewriteReferences({
+      apps: new Map([['api', 'api-2']]),
+      databases: new Map([['db', 'db-2']]),
+    });
+    const fresh = rows(VariableSet).find((s) => s.name === 'Fresh')!;
+    const env = rows(VariableSetEnvironment).find(
+      (e) => e.variableSetId === fresh.id,
+    )!;
+    expect(decryptSecret(env.variablesEncrypted as string, KEY)).toBe(
+      '# the api\nA=${{app.api-2.url}}\nB=${{ database.db-2.url:other }}\nC=${{database.db2.url}}\nD=${{app.api2.host}}\nE=${{vars.A}}',
+    );
+    expect(env.keys).toEqual(['A', 'B', 'C', 'D', 'E']);
+    expect(env.notes).toEqual({ A: 'the api' });
+    expect(env.secretFlags).toMatchObject({ B: true, A: false });
+    expect(shop.variablesEncrypted).toBe(original);
+    expect(warnings.join(' | ')).toMatch(
+      /"Shop" already existed and was not changed, but it refers to an application or database that was renamed/,
+    );
+  });
+
+  it('no renames: nothing is read or written', async () => {
+    const { svc } = build();
+    const sets = await svc.importFor('new', 'Copy', 'u', [], {}, []);
+    await expect(
+      sets.rewriteReferences({ apps: new Map(), databases: new Map() }),
+    ).resolves.toBeUndefined();
   });
 
   it('an instance admin importer shares an existing set with the new project', async () => {

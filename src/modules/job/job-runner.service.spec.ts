@@ -230,6 +230,24 @@ describe('JobRunnerService', () => {
     expect(patch.output).toBe('echo ***\n');
   });
 
+  it('a run job resolves env with the plain-container rule; an exec job does not', async () => {
+    engine.execWithCode.mockResolvedValue({ output: '', code: 0 });
+    await svc.start(job({ target: 'container' }), 'manual');
+    await flush();
+    expect(
+      (envResolve.mock.calls as unknown[][]).map((c) => c[1]),
+    ).not.toContainEqual({
+      plainContainer: true,
+    });
+    envResolve.mockClear();
+    await svc.start(job({ target: 'run' }), 'manual');
+    await flush();
+    // First call = redaction pre-resolve (default rule), second = the run spec.
+    const resolveCalls = envResolve.mock.calls as unknown[][];
+    expect(resolveCalls[0][1]).toBeUndefined();
+    expect(resolveCalls[1][1]).toEqual({ plainContainer: true });
+  });
+
   it('notify=all: started on the run row, then success, with owner and project', async () => {
     engine.execWithCode.mockResolvedValue({ output: 'secret-out', code: 0 });
     await svc.start(job({ notify: 'all' }), 'scheduled');

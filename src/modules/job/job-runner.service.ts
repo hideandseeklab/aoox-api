@@ -257,7 +257,13 @@ export class JobRunnerService {
           if (!app.currentImage) {
             throw new Error('Application was never deployed');
           }
-          const { env, secrets } = await this.envResolver.resolve(app);
+          // A one-off container is a plain container on the `aoox` bridge even
+          // for a Swarm service application: `${{app.…}}` follows that rule
+          // (the `container` target above execs inside the service's own task,
+          // so the default service rule is right there).
+          const { env, secrets } = await this.envResolver.resolve(app, {
+            plainContainer: true,
+          });
           redact.push(...secrets);
           const mounts = await this.applications.mounts.find({
             where: { applicationId: app.id },

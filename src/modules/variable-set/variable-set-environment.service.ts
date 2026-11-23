@@ -774,6 +774,38 @@ export class VariableSetEnvironmentService {
   }
 
   /**
+   * Import only: applies `rewrite` to the text of these environments (used
+   * for references to resources the import renamed). Keys and flags stay as
+   * they are (only reference targets change); notes are recomputed from the
+   * new text. Returns the ids that changed. With `dryRun` nothing is written.
+   */
+  async rewriteTexts(
+    envIds: string[],
+    rewrite: (text: string) => string,
+    dryRun = false,
+  ): Promise<string[]> {
+    if (envIds.length === 0) return [];
+    const rows = await this.repo.find({
+      where: { id: In(envIds) },
+      select: { id: true, variablesEncrypted: true },
+    });
+    const changed: string[] = [];
+    for (const r of rows) {
+      if (!r.variablesEncrypted) continue;
+      const text = decryptSecret(r.variablesEncrypted, this.key);
+      const next = rewrite(text);
+      if (next === text) continue;
+      changed.push(r.id);
+      if (dryRun) continue;
+      await this.repo.update(r.id, {
+        variablesEncrypted: encryptSecret(next, this.key),
+        notes: extractNotes(next),
+      });
+    }
+    return changed;
+  }
+
+  /**
    * Puts imported text (already normalized) on a new environment row. No
    * version is stored, like any other freshly imported content.
    */

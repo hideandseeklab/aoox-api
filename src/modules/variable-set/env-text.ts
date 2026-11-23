@@ -24,8 +24,9 @@ export const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 /**
  * `${{vars.KEY}}` (a key of the linked variable sets), `${{secret.KEY}}`
  * (external secret source),
- * `${{database.<slug>.<field>}}`, or `${{database.<slug>.<field>:<name>}}`
- * for another database on the same server.
+ * `${{database.<slug>.<field>}}`, `${{database.<slug>.<field>:<name>}}`
+ * for another database on the same server, or `${{app.<appName>.<field>}}`
+ * (internal address of another application of the same project).
  */
 export const REFERENCE =
   /\$\{\{\s*([a-z]+)\.([A-Za-z0-9_-]+)(?:\.([a-z]+))?(?::([A-Za-z0-9_$-]+))?\s*\}\}/g;
@@ -38,6 +39,9 @@ export const DATABASE_FIELDS = [
   'password',
   'database',
 ] as const;
+
+/** Fields of `${{app.<appName>.<field>}}`: internal host, container port, `http://host:port`. */
+export const APP_FIELDS = ['url', 'host', 'port'] as const;
 
 /** Max size of one environment's text (same limit the old `Project.env` had). */
 export const ENV_TEXT_MAX = 20_000;
@@ -82,12 +86,17 @@ export function validateEnvironmentText(text: string): string | null {
     const opens = (value.match(/\$\{\{/g) ?? []).length;
     const good = [...value.matchAll(REFERENCE)].length;
     if (opens !== good) {
-      return 'A ${{...}} reference is malformed; use ${{vars.KEY}}, ${{secret.KEY}} or ${{database.<slug>.<field>}}';
+      return 'A ${{...}} reference is malformed; use ${{vars.KEY}}, ${{secret.KEY}}, ${{database.<slug>.<field>}} or ${{app.<appName>.<field>}}';
     }
     for (const m of value.matchAll(REFERENCE)) {
       const [whole, scope, , field] = m;
       if (scope === 'vars' || scope === 'secret') {
         if (field !== undefined) return `${whole} is not a valid reference`;
+      } else if (scope === 'app') {
+        if (!(APP_FIELDS as readonly string[]).includes(field ?? '')) {
+          return `${whole}: use ${APP_FIELDS.join(', ')}`;
+        }
+        if (m[4] !== undefined) return `${whole} is not a valid reference`;
       } else if (scope === 'project') {
         return `${whole}: \${{project.KEY}} was renamed to \${{vars.KEY}}`;
       } else if (scope === 'database') {
@@ -380,4 +389,78 @@ export function setValues(
  */
 export function rewriteProjectReferences(text: string): string {
   return text.replace(/\$\{\{(\s*)project\./g, '$${{$1vars.');
+}
+
+/**
+ * Project import renames an application whose `appName` is taken; its
+ * `${{app.<old>.…}}` references in the imported env must follow. One pass, so
+ * a name that is both an old and a new name is never rewritten twice.
+ */
+export function rewriteAppReferences(
+  text: string,
+  renames: ReadonlyMap<string, string>,
+): string {
+  if (renames.size === 0) return text;
+  return text.replace(
+    /\$\{\{(\s*)app\.([A-Za-z0-9_-]+)\./g,
+    (whole, ws: string, name: string) => {
+      const next = renames.get(name);
+      return next === undefined ? whole : `\${{${ws}app.${next}.`;
+    },
+  );
+}
+
+/**
+ * Same for `${{database.<slug>.<field>}}` (and the `:<name>` form, whose name
+ * is a database on the server, not a slug, so it is left alone) when the
+ * import re-slugified a database whose slug was taken. Only the exact slug
+ * token is matched: renaming `db` never touches `db2`.
+ */
+export function rewriteDatabaseReferences(
+  text: string,
+  renames: ReadonlyMap<string, string>,
+): string {
+  if (renames.size === 0) return text;
+  return text.replace(
+    /\$\{\{(\s*)database\.([A-Za-z0-9_-]+)\./g,
+    (whole, ws: string, slug: string) => {
+      const next = renames.get(slug);
+      return next === undefined ? whole : `\${{${ws}database.${next}.`;
+    },
+  );
+}
+
+/** What an import renamed: old name -> new name. */
+export interface ReferenceRenames {
+  apps: ReadonlyMap<string, string>;
+  databases: ReadonlyMap<string, string>;
+}
+
+export function rewriteRenamedReferences(
+  text: string,
+  renames: ReferenceRenames,
+): string {
+  return rewriteDatabaseReferences(
+    rewriteAppReferences(text, renames.apps),
+    renames.databases,
+  );
+}
+
+/**
+ * True when the text has a `${{app.<old>.…}}` or `${{database.<old>.…}}`
+ * reference to a name the import renamed (used to warn about reused sets).
+ */
+export function referencesRenamed(
+  text: string,
+  renames: ReferenceRenames,
+): boolean {
+  return rewriteRenamedReferences(text, renames) !== text;
+}
+
+/**
+ * True when the whole value is exactly one `${{app.<name>.<field>}}`
+ * reference and nothing else.
+ */
+export function isWholeAppReference(value: string): boolean {
+  return /^\$\{\{\s*app\.[A-Za-z0-9_-]+\.[a-z]+\s*\}\}$/.test(value.trim());
 }
