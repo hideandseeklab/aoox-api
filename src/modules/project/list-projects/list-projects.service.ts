@@ -1,7 +1,9 @@
 import { Injectable } from '@nestjs/common';
 import { ILike } from 'typeorm';
 import { Project } from '../project.entity';
+import { isDaemonConnectError } from '../../docker/daemon-unreachable';
 import {
+  ProjectResourceUsage,
   ProjectResourceUsageSummary,
   toResourceUsageSummary,
 } from '../project-resource-usage/project-resource-usage.util';
@@ -84,7 +86,16 @@ export class ListProjectsService {
       byProject.set(projectId, [...(byProject.get(projectId) ?? []), instance]);
     }
     // One Docker/label lookup for every project's card, not one per card.
-    const usageByProject = await this.resourceUsage.usageByProject(ids);
+    // The cards come from the database: with the Docker daemon down the list
+    // still answers, only without the live usage line.
+    const usageByProject = await this.resourceUsage
+      .usageByProject(ids)
+      .catch((err: unknown) => {
+        if (isDaemonConnectError(err)) {
+          return new Map<string, ProjectResourceUsage>();
+        }
+        throw err;
+      });
     return projects.map((p) => ({
       ...p,
       instances: byProject.get(p.id) ?? [],
