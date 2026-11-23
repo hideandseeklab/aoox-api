@@ -47,7 +47,7 @@ export class InboxService {
           event,
           level: message.level,
           title: message.title,
-          summary: inboxSummary(message.fields),
+          summary: inboxSummary(message.fields, message.channelOnlyFields),
           params: inboxParams(message.params),
           link: inboxLink(event, resource),
           projectId,

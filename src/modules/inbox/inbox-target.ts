@@ -46,9 +46,12 @@ export function inboxLink(
 const SUMMARY_MAX = 280;
 
 /** `Label: value · Label: value`, cut to a short line. */
-export function inboxSummary(fields: Array<[string, string]>): string {
+export function inboxSummary(
+  fields: Array<[string, string]>,
+  omit: readonly string[] = [],
+): string {
   const text = fields
-    .filter(([, v]) => v !== '')
+    .filter(([k, v]) => v !== '' && !omit.includes(k))
     .map(([k, v]) => `${k}: ${v}`)
     .join(' · ')
     .replace(/\s+/g, ' ')

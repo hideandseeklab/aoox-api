@@ -203,6 +203,7 @@ export function finishMessage(
         title: `Job ${input.status === 'timeout' ? 'timed out' : 'failed'}: ${input.job.name}`,
         level: 'failure',
         fields: [...fields, ['Output', input.output.slice(-500)]],
+        channelOnlyFields: ['Output'],
         url: input.url,
         params: { variant: 'failure', ...params },
         data: { ...data, event: 'job.failure' },

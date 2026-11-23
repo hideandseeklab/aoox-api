@@ -98,6 +98,19 @@ describe('inboxSummary', () => {
     ).toBe('Application: web · Project: blog site');
   });
 
+  it('leaves out channel-only fields such as job output', () => {
+    expect(
+      inboxSummary(
+        [
+          ['Job', 'backup'],
+          ['Output', 'secret log line'],
+          ['Example 1', 'Error: boom'],
+        ],
+        ['Output', 'Example 1'],
+      ),
+    ).toBe('Job: backup');
+  });
+
   it('cuts long text with an ellipsis', () => {
     const out = inboxSummary([['Error', 'x'.repeat(600)]]);
     expect(out.length).toBe(280);

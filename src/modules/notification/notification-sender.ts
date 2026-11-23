@@ -21,6 +21,11 @@ export interface NotificationMessage {
    * secrets, raw logs or log excerpts.
    */
   params?: InboxParams;
+  /**
+   * Labels of `fields` that carry log text (job output, log excerpts): sent to
+   * channels, never stored in the inbox summary.
+   */
+  channelOnlyFields?: string[];
 }
 
 /** Flat, JSON-safe values; `variant` is the reserved key naming the event's meaning. */

@@ -162,6 +162,10 @@ export class AppErrorWatcherService {
         title: `Application error detected: ${app.name}`,
         level: 'failure',
         fields,
+        // The log excerpts go to channels only, never into the inbox summary.
+        channelOnlyFields: fields
+          .map(([label]) => label)
+          .filter((label) => label.startsWith('Example')),
         url: origin ? `${origin}/applications/${app.id}` : undefined,
         // Only the count: the log excerpts stay in the channel messages.
         params: {

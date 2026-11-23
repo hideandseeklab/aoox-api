@@ -119,6 +119,7 @@ describe('job messages', () => {
     expect(message.title).toBe('Job failed: nightly');
     expect(message.level).toBe('failure');
     expect(message.fields).toContainEqual(['Output', 'line1\nERROR boom']);
+    expect(message.channelOnlyFields).toEqual(['Output']);
     expect(message.fields).toContainEqual(['Duration', '1m 15s']);
     expect(message.fields).toContainEqual(['Exit code', '2']);
     expect(message.params).toEqual({

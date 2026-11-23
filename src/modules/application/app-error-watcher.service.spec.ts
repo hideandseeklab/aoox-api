@@ -14,7 +14,13 @@ describe('AppErrorWatcherService', () => {
   const taskContainers = jest.fn();
   const resolve = jest.fn();
   const broadcast = jest
-    .fn<Promise<void>, [string, { fields: Array<[string, string]> }]>()
+    .fn<
+      Promise<void>,
+      [
+        string,
+        { fields: Array<[string, string]>; channelOnlyFields?: string[] },
+      ]
+    >()
     .mockResolvedValue(undefined);
 
   let svc: AppErrorWatcherService;
@@ -107,6 +113,7 @@ describe('AppErrorWatcherService', () => {
     await svc.tick();
     const call = broadcast.mock.calls[0][1];
     const example = call.fields.find((f) => f[0] === 'Example 1')![1];
+    expect(call.channelOnlyFields).toContain('Example 1');
     expect(example).not.toContain('hunter2');
     expect(example).not.toContain('db-secret-pw');
     expect(example).toContain('***');
