@@ -29,6 +29,26 @@ export const COMPOSE_FILES_SCRIPT = [
 ];
 
 /**
+ * The panel's own app services. Every helper that re-runs compose from the
+ * dashboard (update, domain, instance env) only ever changes api/web, so it
+ * names them instead of touching the whole project: `postgres` (the panel
+ * database, `postgres:16-alpine`) must not be pulled or recreated by an
+ * update, which would silently move its minor version and restart the DB.
+ * `--no-deps` stops `up` from walking `depends_on` back to postgres.
+ */
+export const PANEL_SERVICES = 'api web';
+
+/** `docker compose <files> --env-file .env.dist pull api web` (never postgres). */
+export function composePullPanelLine(files: string): string {
+  return `docker compose ${files} --env-file .env.dist pull ${PANEL_SERVICES}`;
+}
+
+/** `docker compose <files> --env-file .env.dist up -d --no-deps api web`. */
+export function composeUpPanelLine(files: string): string {
+  return `docker compose ${files} --env-file .env.dist up -d --no-deps ${PANEL_SERVICES}`;
+}
+
+/**
  * Runs `script` inside a throwaway `docker:29-cli` container with
  * `installDir` bind-mounted at the same host path (so relative paths inside
  * compose files resolve the same way on the daemon side) plus the docker

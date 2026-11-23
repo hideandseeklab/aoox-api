@@ -1,5 +1,4 @@
 import { Module } from '@nestjs/common';
-import { ScheduleModule } from '@nestjs/schedule';
 import { ApplicationModule } from '../application/application.module';
 import { ComposeModule } from '../compose/compose.module';
 import { DockerModule } from '../docker/docker.module';
@@ -14,7 +13,6 @@ import { RunCleanupController } from './run-cleanup/run-cleanup.controller';
 
 @Module({
   imports: [
-    ScheduleModule.forRoot(),
     ApplicationModule,
     ComposeModule,
     ManagedDatabaseModule,

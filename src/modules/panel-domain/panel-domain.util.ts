@@ -1,4 +1,5 @@
 import { BadGatewayException, BadRequestException } from '@nestjs/common';
+import { composeUpPanelLine } from '../docker/compose-apply.util';
 import { ProxyService } from '../proxy/proxy.service';
 
 /**
@@ -175,7 +176,7 @@ export function renderClearDomainScript(installDir: string): string {
     set('WEB_ORIGIN', 'http://$IP:$WP'),
     set('PUBLIC_API_URL', 'http://$IP:$AP'),
     'rm -f docker-compose.override.yml',
-    'docker compose -f docker-compose.dist.yml --env-file .env.dist up -d',
+    composeUpPanelLine('-f docker-compose.dist.yml'),
   ].join('\n');
 }
 

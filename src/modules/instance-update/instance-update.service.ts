@@ -13,6 +13,8 @@ import { Repository } from 'typeorm';
 import { parseImageRef } from '../application/image-reference';
 import {
   COMPOSE_FILES_SCRIPT,
+  composePullPanelLine,
+  composeUpPanelLine,
   runComposeHelper,
 } from '../docker/compose-apply.util';
 import { DockerService } from '../docker/docker.service';
@@ -367,8 +369,8 @@ export class InstanceUpdateService {
       'set -e',
       `cd ${installDir}`,
       ...COMPOSE_FILES_SCRIPT,
-      'docker compose $FILES --env-file .env.dist pull',
-      'docker compose $FILES --env-file .env.dist up -d',
+      composePullPanelLine('$FILES'),
+      composeUpPanelLine('$FILES'),
     ].join('\n');
 
     await runComposeHelper(this.docker, installDir, script);

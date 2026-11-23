@@ -1,6 +1,5 @@
 import { Module } from '@nestjs/common';
 import { ProjectModule } from '../project/project.module';
-import { ScheduleModule } from '@nestjs/schedule';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { BackupDestinationModule } from '../backup-destination/backup-destination.module';
 import { DockerModule } from '../docker/docker.module';
@@ -22,7 +21,6 @@ import { UpdateBackupScheduleController } from './update-backup-schedule/update-
 @Module({
   imports: [
     TypeOrmModule.forFeature([DatabaseBackup]),
-    ScheduleModule.forRoot(),
     DockerModule,
     ManagedDatabaseModule,
     NotificationModule,

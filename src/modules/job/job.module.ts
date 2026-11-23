@@ -1,6 +1,5 @@
 import { Module } from '@nestjs/common';
 import { ProjectModule } from '../project/project.module';
-import { ScheduleModule } from '@nestjs/schedule';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ApplicationModule } from '../application/application.module';
 import { ComposeModule } from '../compose/compose.module';
@@ -27,7 +26,6 @@ import { UpdateJobController } from './update-job/update-job.controller';
 @Module({
   imports: [
     TypeOrmModule.forFeature([Job, JobRun]),
-    ScheduleModule.forRoot(),
     ApplicationModule,
     ManagedDatabaseModule,
     ComposeModule,

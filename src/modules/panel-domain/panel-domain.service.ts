@@ -2,7 +2,11 @@ import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { envUpsertLine, runComposeHelper } from '../docker/compose-apply.util';
+import {
+  composeUpPanelLine,
+  envUpsertLine,
+  runComposeHelper,
+} from '../docker/compose-apply.util';
 import { DockerService } from '../docker/docker.service';
 import { ProxyService } from '../proxy/proxy.service';
 import {
@@ -335,7 +339,7 @@ export class PanelDomainService {
       // file is named exactly docker-compose.yml — with -f docker-compose.dist.yml
       // given explicitly, the override must be listed explicitly too, or the
       // Traefik labels below are silently never applied.
-      `docker compose -f docker-compose.dist.yml -f ${OVERRIDE_FILE} --env-file .env.dist up -d`,
+      composeUpPanelLine(`-f docker-compose.dist.yml -f ${OVERRIDE_FILE}`),
     ].join('\n');
 
     await runComposeHelper(this.docker, installDir, script, [

@@ -1,5 +1,4 @@
 import { Module } from '@nestjs/common';
-import { ScheduleModule } from '@nestjs/schedule';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Application } from '../application/application.entity';
 import { ApplicationModule } from '../application/application.module';
@@ -29,7 +28,6 @@ import { UpdateHttpMonitorService } from './update-http-monitor/update-http-moni
       Deployment,
       Server,
     ]),
-    ScheduleModule.forRoot(),
     ApplicationModule,
     NotificationModule,
     ProxyModule,

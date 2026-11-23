@@ -1,5 +1,4 @@
 import { Module } from '@nestjs/common';
-import { ScheduleModule } from '@nestjs/schedule';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ApplicationModule } from '../application/application.module';
 import { Deployment } from '../application/deployment.entity';
@@ -17,7 +16,6 @@ import { ResourceAlertService } from './resource-alert.service';
 @Module({
   imports: [
     TypeOrmModule.forFeature([ResourceAlertRule, MetricSample, Deployment]),
-    ScheduleModule.forRoot(),
     ApplicationModule,
     ManagedDatabaseModule,
     NotificationModule,

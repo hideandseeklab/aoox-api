@@ -1,5 +1,4 @@
 import { Module } from '@nestjs/common';
-import { ScheduleModule } from '@nestjs/schedule';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { DockerModule } from '../docker/docker.module';
 import { ServerModule } from '../server/server.module';
@@ -14,7 +13,6 @@ import { MonitoringService } from './monitoring.service';
 @Module({
   imports: [
     TypeOrmModule.forFeature([MetricSample]),
-    ScheduleModule.forRoot(),
     DockerModule,
     ServerModule,
   ],

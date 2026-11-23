@@ -1,6 +1,5 @@
 import { Global, Module } from '@nestjs/common';
 import { APP_INTERCEPTOR } from '@nestjs/core';
-import { ScheduleModule } from '@nestjs/schedule';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuditLog } from './audit-log.entity';
 import { AuditLogInterceptor } from './audit-log.interceptor';
@@ -10,7 +9,7 @@ import { ListAuditLogsController } from './list-audit-logs/list-audit-logs.contr
 /** Global: the sign-in service logs attempts itself, so it needs the service too. */
 @Global()
 @Module({
-  imports: [TypeOrmModule.forFeature([AuditLog]), ScheduleModule.forRoot()],
+  imports: [TypeOrmModule.forFeature([AuditLog])],
   controllers: [ListAuditLogsController],
   providers: [
     AuditLogService,

@@ -8,6 +8,11 @@ Versions below 1.0.0 may include breaking changes in a minor release.
 
 ## [Unreleased]
 
+### Fixed
+
+- Every scheduled job (`@Cron`) ran several times per tick: twelve modules each called `ScheduleModule.forRoot()` and Nest keys a dynamic module by reference, so there were twelve schedulers each firing every cron. The nightly disk cleanup therefore logged `Nightly cleanup failed: Error: Cleanup is already running` (the first run won, the others hit the guard). There is now one `ScheduleModule.forRoot()` in `AppModule`; a spec fails if another one is added.
+- Updating the panel (`POST /instance/update/apply`, `aoox update panel --apply`) no longer pulls or recreates the panel's own PostgreSQL container: it pulls and recreates only `api` and `web` (`--no-deps`). The panel domain and instance environment apply flows also name only `api web`, so they never touch postgres either.
+
 ## [0.1.1] - 2026-11-23
 
 Adds a way for applications of a project to reach each other by internal address (`${{app.<appName>.url|host|port}}`), restoring a database backup into a new database, log and shell tickets for databases and stack services (used by the new `aoox logs` and `aoox exec`), disk use per resource, and job run notifications. Fixes include masking of application container logs, pages that failed while the Docker daemon was down, and restoring TimescaleDB backups.

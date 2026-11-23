@@ -1,6 +1,5 @@
 import { Module } from '@nestjs/common';
 import { ProjectModule } from '../project/project.module';
-import { ScheduleModule } from '@nestjs/schedule';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ApplicationModule } from '../application/application.module';
 import { BackupDestinationModule } from '../backup-destination/backup-destination.module';
@@ -21,7 +20,6 @@ import { VolumeBackupService } from './volume-backup.service';
 @Module({
   imports: [
     TypeOrmModule.forFeature([VolumeBackup]),
-    ScheduleModule.forRoot(),
     ApplicationModule,
     DockerModule,
     BackupDestinationModule,

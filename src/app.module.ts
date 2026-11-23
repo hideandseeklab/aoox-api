@@ -2,6 +2,7 @@ import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_FILTER, APP_GUARD } from '@nestjs/core';
 import { DaemonUnreachableFilter } from './modules/docker/daemon-unreachable.filter';
+import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
@@ -56,6 +57,10 @@ import { VolumeBackupModule } from './modules/volume-backup/volume-backup.module
     ConfigModule.forRoot({ isGlobal: true }),
     // Global baseline; auth endpoints tighten this with @Throttle().
     ThrottlerModule.forRoot({ throttlers: [{ ttl: 60_000, limit: 300 }] }),
+    // The ONLY ScheduleModule.forRoot() (global). Nest keys dynamic modules by
+    // reference, so one forRoot() per feature module created one ScheduleExplorer
+    // each and every @Cron fired once per copy. See schedule-registration.spec.ts.
+    ScheduleModule.forRoot(),
     DatabaseModule,
     UserModule,
     AuthModule,

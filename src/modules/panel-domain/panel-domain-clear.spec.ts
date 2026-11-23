@@ -24,7 +24,7 @@ describe('renderClearDomainScript', () => {
     expect(rm).toBeGreaterThan(-1);
     expect(up).toBeGreaterThan(rm);
     expect(lines[up]).toBe(
-      'docker compose -f docker-compose.dist.yml --env-file .env.dist up -d',
+      'docker compose -f docker-compose.dist.yml --env-file .env.dist up -d --no-deps api web',
     );
     expect(lines[up]).not.toContain('override');
   });

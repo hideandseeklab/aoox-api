@@ -1,5 +1,4 @@
 import { Module } from '@nestjs/common';
-import { ScheduleModule } from '@nestjs/schedule';
 import { DockerModule } from '../docker/docker.module';
 import { InboxModule } from '../inbox/inbox.module';
 import { TypeOrmModule } from '@nestjs/typeorm';
@@ -18,7 +17,6 @@ import { TestNotificationService } from './test-notification/test-notification.s
 @Module({
   imports: [
     TypeOrmModule.forFeature([Notification]),
-    ScheduleModule.forRoot(),
     DockerModule,
     InboxModule,
   ],

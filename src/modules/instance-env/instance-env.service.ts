@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
   COMPOSE_FILES_SCRIPT,
+  composeUpPanelLine,
   envUpsertLine,
   runComposeHelper,
 } from '../docker/compose-apply.util';
@@ -111,7 +112,7 @@ export class InstanceEnvService {
       `cd ${installDir}`,
       ...upserts,
       ...COMPOSE_FILES_SCRIPT,
-      'docker compose $FILES --env-file .env.dist up -d',
+      composeUpPanelLine('$FILES'),
     ].join('\n');
 
     await runComposeHelper(this.docker, installDir, script);
