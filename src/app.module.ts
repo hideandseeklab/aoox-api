@@ -39,6 +39,7 @@ import { ManagedDatabaseModule } from './modules/managed-database/managed-databa
 import { PanelDomainModule } from './modules/panel-domain/panel-domain.module';
 import { ProjectModule } from './modules/project/project.module';
 import { ProjectDeleteModule } from './modules/project-delete/project-delete.module';
+import { ResourceStorageModule } from './modules/resource-storage/resource-storage.module';
 import { ProjectTransferModule } from './modules/project-transfer/project-transfer.module';
 import { VariableSetModule } from './modules/variable-set/variable-set.module';
 import { ProxyModule } from './modules/proxy/proxy.module';
@@ -62,6 +63,7 @@ import { VolumeBackupModule } from './modules/volume-backup/volume-backup.module
     AuditLogModule,
     ProjectModule,
     ProjectDeleteModule,
+    ResourceStorageModule,
     VariableSetModule,
     ProjectTransferModule,
     TerminalModule,

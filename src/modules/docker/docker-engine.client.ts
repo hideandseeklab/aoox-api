@@ -287,8 +287,21 @@ export interface SwarmTask {
 /** Subset of `GET /system/df` (spec: System > Get data usage information). */
 export interface SystemDataUsage {
   LayersSize: number;
-  Images: Array<{ Size: number; SharedSize: number }>;
-  Containers: Array<{ SizeRw?: number }>;
+  Images: Array<{
+    Id?: string;
+    RepoTags?: string[] | null;
+    RepoDigests?: string[] | null;
+    Size: number;
+    SharedSize: number;
+  }>;
+  Containers: Array<{
+    Id?: string;
+    Names?: string[];
+    ImageID?: string;
+    Labels?: Record<string, string> | null;
+    /** Writable layer size; -1 or missing when the daemon could not compute it. */
+    SizeRw?: number;
+  }>;
   Volumes: Array<{
     Name: string;
     Driver?: string;
