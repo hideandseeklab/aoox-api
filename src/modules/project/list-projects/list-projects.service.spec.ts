@@ -7,12 +7,20 @@ describe('ListProjectsService', () => {
   const find = jest.fn();
   const query = jest.fn();
   const usageByProject = jest.fn();
+  const roles = jest.fn<'all' | Map<string, 'developer'>, []>(
+    () => new Map([['p1', 'developer']]),
+  );
 
   const service = () =>
     new ListProjectsService(
       {
         repo: { find, query },
-        access: { whereAccessible: jest.fn().mockResolvedValue({}) },
+        access: {
+          whereAccessible: jest.fn().mockResolvedValue({}),
+          projectRoles: jest
+            .fn()
+            .mockResolvedValue({ platform: false, roles: roles() }),
+        },
       } as unknown as ProjectService,
       { usageByProject } as unknown as ProjectResourceUsageService,
     );
@@ -32,7 +40,17 @@ describe('ListProjectsService', () => {
       }),
     );
     const list = await service().execute('u1', {});
-    expect(list).toEqual([{ ...project, instances: [], resourceUsage: null }]);
+    expect(list).toEqual([
+      { ...project, instances: [], myRole: 'developer', resourceUsage: null },
+    ]);
+  });
+
+  it('reports the caller role per project: admin for platform admins, viewer when unknown', async () => {
+    usageByProject.mockResolvedValue(new Map());
+    roles.mockReturnValueOnce('all');
+    expect((await service().execute('u1', {}))[0].myRole).toBe('admin');
+    roles.mockReturnValueOnce(new Map());
+    expect((await service().execute('u1', {}))[0].myRole).toBe('viewer');
   });
 
   it('does not hide other failures', async () => {

@@ -38,6 +38,40 @@ function gzipped(dumpCommand: string): string {
   );
 }
 
+/**
+ * TimescaleDB (postgres variant `timescaledb`): a dump with hypertables must be
+ * restored between `timescaledb_pre_restore()` and `timescaledb_post_restore()`
+ * (Tiger Data docs, "Migrate with pg_dump and psql": pre, restore dump.sql,
+ * post). pre_restore stores `timescaledb.restoring` on the DATABASE, so it runs
+ * in its own psql session before the restore session, which then sees it. The
+ * dump's `DROP/CREATE EXTENSION` (from --clean) runs in restoring mode, as the
+ * docs expect for a dump that carries CREATE EXTENSION. post_restore always
+ * runs, even when the restore failed, so the database never stays in restore
+ * mode; the exit code of the restore (else of post_restore) is preserved.
+ * Single database only: a `pg_dumpall` restore (scope all) keeps the plain
+ * script, a known limit (the databases are only named inside the dump).
+ */
+export const TIMESCALE_RESTORE =
+  'P="psql -v ON_ERROR_STOP=1 -q -h $DB_HOST -p $DB_PORT -U $DB_USER"; export PGPASSWORD="$DB_PASSWORD"; ' +
+  '$P "$DB_NAME" -c "SELECT timescaledb_pre_restore();" > /dev/null || exit $?; ' +
+  'gunzip -c "$BACKUP_FILE" | $P "$DB_NAME" > /dev/null; s=$?; ' +
+  '$P "$DB_NAME" -c "SELECT timescaledb_post_restore();" > /dev/null; p=$?; ' +
+  '[ "$s" -eq 0 ] || exit "$s"; exit "$p"';
+
+/** The restore script for a single-database (or whole-server) backup. */
+export function restoreScriptFor(
+  engine: DatabaseEngine,
+  variant: string | null | undefined,
+  scope: 'database' | 'all',
+): string {
+  const recipe = BACKUP_RECIPES[engine];
+  if (scope === 'all' && recipe.restoreAll) return recipe.restoreAll;
+  if (engine === 'postgres' && variant === 'timescaledb') {
+    return TIMESCALE_RESTORE;
+  }
+  return recipe.restore;
+}
+
 export const BACKUP_RECIPES: Record<DatabaseEngine, BackupRecipe> = {
   postgres: {
     extension: 'sql.gz',

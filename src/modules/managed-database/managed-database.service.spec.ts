@@ -574,4 +574,51 @@ describe('ManagedDatabaseService.dataMountPath', () => {
     const none = build({ image: null });
     await expect(none.svc.dataMountPath(db)).resolves.toBeNull();
   });
+
+  it('runs afterProvision before the row goes running', async () => {
+    const { svc, update } = build();
+    const order: string[] = [];
+    update.mockImplementation((_id: string, patch: Record<string, unknown>) => {
+      order.push(patch.status ? 'status' : 'other');
+      return Promise.resolve();
+    });
+    svc.provisionInBackground({ ...db }, 'pw', {
+      afterProvision: () => {
+        order.push('after');
+        return Promise.resolve();
+      },
+    });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(order).toEqual(['other', 'after', 'status']);
+    expect(update).toHaveBeenLastCalledWith('db1', {
+      status: 'running',
+      errorMessage: null,
+    });
+  });
+
+  it('a failing afterProvision ends in error with its own message', () => {
+    const { svc, update } = build();
+    svc.provisionInBackground({ ...db }, 'pw', {
+      afterProvision: () =>
+        Promise.reject(new Error('Restore of backup x failed: boom')),
+    });
+    return new Promise((r) => setTimeout(r, 20)).then(() => {
+      expect(update).toHaveBeenLastCalledWith('db1', {
+        status: 'error',
+        errorMessage: 'Restore of backup x failed: boom',
+      });
+    });
+  });
+
+  it('refuses to retry a database whose restore never finished', async () => {
+    const { svc } = build();
+    await expect(
+      svc.retryProvisioning({
+        ...db,
+        status: 'error',
+        restorePending: true,
+        errorMessage: 'connect ENOENT',
+      }),
+    ).rejects.toBeInstanceOf(ConflictException);
+  });
 });

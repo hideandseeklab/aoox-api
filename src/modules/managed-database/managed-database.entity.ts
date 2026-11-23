@@ -120,6 +120,14 @@ export class ManagedDatabase {
   @Column({ name: 'history_tracked', default: true })
   historyTracked: boolean;
 
+  /**
+   * True from the creation of a database made by "restore a backup into a new
+   * database" until its restore finished. While true a failed row is not
+   * retryable: a retry would start an empty engine and report `running`.
+   */
+  @Column({ name: 'restore_pending', default: false })
+  restorePending: boolean;
+
   @Column({ name: 'error_message', type: 'text', nullable: true })
   errorMessage: string | null;
 

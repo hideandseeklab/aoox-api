@@ -15,6 +15,8 @@ import { DeleteBackupController } from './delete-backup/delete-backup.controller
 import { DownloadBackupController } from './download-backup/download-backup.controller';
 import { ListBackupsController } from './list-backups/list-backups.controller';
 import { RestoreBackupController } from './restore-backup/restore-backup.controller';
+import { RestoreToNewController } from './restore-to-new/restore-to-new.controller';
+import { RestoreToNewService } from './restore-to-new/restore-to-new.service';
 import { UpdateBackupScheduleController } from './update-backup-schedule/update-backup-schedule.controller';
 
 @Module({
@@ -31,6 +33,7 @@ import { UpdateBackupScheduleController } from './update-backup-schedule/update-
     CreateBackupController,
     ListBackupsController,
     RestoreBackupController,
+    RestoreToNewController,
     DownloadBackupController,
     DeleteBackupController,
     UpdateBackupScheduleController,
@@ -39,6 +42,7 @@ import { UpdateBackupScheduleController } from './update-backup-schedule/update-
     DatabaseBackupService,
     BackupSchedulerService,
     BackupFilesService,
+    RestoreToNewService,
   ],
   exports: [BackupFilesService, BackupSchedulerService],
 })

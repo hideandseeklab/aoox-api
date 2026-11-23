@@ -14,7 +14,8 @@ import {
 } from '../managed-database/managed-database.service';
 import { NotificationService } from '../notification/notification.service';
 import { APP_NETWORK } from '../proxy/proxy.service';
-import { BACKUP_RECIPES } from './backup-recipes';
+import { BACKUP_RECIPES, restoreScriptFor } from './backup-recipes';
+import { restorePlanForNew } from './restore-to-new';
 import { BACKUPS_MOUNT as MOUNT, BACKUPS_VOLUME } from './backups-volume';
 import {
   BackupScope,
@@ -153,18 +154,49 @@ export class DatabaseBackupService {
 
   /** Restores a successful backup into its database (data is overwritten). */
   async restore(backup: DatabaseBackup, db: ManagedDatabase): Promise<void> {
+    const script = restoreScriptFor(db.engine, db.variant, backup.scope);
+    await this.runRestore(backup, db, script, []);
+  }
+
+  /**
+   * Restores a successful backup into a NEW database (`target`, freshly
+   * provisioned and answering) of the same engine. `source` only supplies the
+   * database name the dump was taken from; it is never touched.
+   */
+  async restoreToNew(
+    backup: DatabaseBackup,
+    source: ManagedDatabase,
+    target: ManagedDatabase,
+  ): Promise<void> {
+    const plan = restorePlanForNew(
+      target.engine,
+      backup.scope,
+      source.databaseName,
+      target.variant,
+    );
+    await this.runRestore(backup, target, plan.script, plan.env);
+    // The engine was restarted on the restored data: `running` must mean it answers.
+    if (BACKUP_RECIPES[target.engine].restoreMode === 'offline-volume') {
+      await this.databases.awaitReady(target);
+    }
+  }
+
+  private async runRestore(
+    backup: DatabaseBackup,
+    db: ManagedDatabase,
+    script: string,
+    extraEnv: string[],
+  ): Promise<void> {
     if (backup.status !== 'success')
       throw new Error('Only successful backups can be restored');
     const recipe = BACKUP_RECIPES[db.engine];
     if (recipe.restoreMode === 'online') {
-      const script =
-        backup.scope === 'all' && recipe.restoreAll
-          ? recipe.restoreAll
-          : recipe.restore;
       const { code, output } = await this.runRecipe(
         db,
         script,
         backup.filename,
+        [],
+        extraEnv,
       );
       if (code !== 0) throw new Error(lastLine(output) || `exit ${code}`);
       return;
@@ -176,9 +208,10 @@ export class DatabaseBackupService {
     try {
       const { code, output } = await this.runRecipe(
         db,
-        recipe.restore,
+        script,
         backup.filename,
         [`${volumeNameForDb(db)}:/data`],
+        extraEnv,
       );
       if (code !== 0) throw new Error(lastLine(output) || `exit ${code}`);
     } finally {
@@ -244,6 +277,7 @@ export class DatabaseBackupService {
     script: string,
     filename: string,
     extraBinds: string[] = [],
+    extraEnv: string[] = [],
   ): Promise<{ code: number; output: string }> {
     const spec = ENGINES[db.engine];
     const image = `${imageNameFor(db.engine, db.variant)}:${db.imageTag}`;
@@ -260,6 +294,7 @@ export class DatabaseBackupService {
         `DB_PASSWORD=${password}`,
         `DB_NAME=${db.databaseName}`,
         `BACKUP_FILE=${MOUNT}/${filename}`,
+        ...extraEnv,
       ],
       Labels: {
         'aoox.component': 'backup',

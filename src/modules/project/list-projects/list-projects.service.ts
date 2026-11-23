@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { ILike } from 'typeorm';
+import type { ProjectRole } from '../project-member.entity';
 import { Project } from '../project.entity';
 import { isDaemonConnectError } from '../../docker/daemon-unreachable';
 import {
@@ -33,6 +34,8 @@ export interface ProjectInstanceDto {
 
 export type ProjectListItemDto = Project & {
   instances: ProjectInstanceDto[];
+  /** The caller's role in this project (the web offers only projects where it can write). */
+  myRole: ProjectRole;
   /** CPU/RAM/network summary from the live sampler; null = nothing running. */
   resourceUsage: ProjectResourceUsageSummary | null;
 };
@@ -59,6 +62,7 @@ export class ListProjectsService {
     });
     if (projects.length === 0) return [];
     const ids = projects.map((p) => p.id);
+    const { roles } = await this.projectService.access.projectRoles(ownerId);
     // Raw SQL like the summary counter: ProjectModule cannot import the
     // application/database/compose modules (they import it).
     const rows = await this.projectService.repo.query<
@@ -99,6 +103,7 @@ export class ListProjectsService {
     return projects.map((p) => ({
       ...p,
       instances: byProject.get(p.id) ?? [],
+      myRole: roles === 'all' ? 'admin' : (roles.get(p.id) ?? 'viewer'),
       resourceUsage: toResourceUsageSummary(
         usageByProject.get(p.id)?.current ?? null,
       ),

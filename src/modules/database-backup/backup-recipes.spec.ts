@@ -1,4 +1,12 @@
-import { BACKUP_RECIPES } from './backup-recipes';
+import { execFileSync } from 'child_process';
+import { mkdtempSync, readFileSync, writeFileSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
+import {
+  BACKUP_RECIPES,
+  restoreScriptFor,
+  TIMESCALE_RESTORE,
+} from './backup-recipes';
 
 describe('backup recipes', () => {
   const engines = Object.keys(
@@ -41,5 +49,97 @@ describe('backup recipes', () => {
     );
     expect(r.restore).toContain('appendonly.aof.manifest');
     expect(r.restore).toContain('rm -rf /data/appendonlydir /data/dump.rdb');
+  });
+
+  describe('timescaledb restore', () => {
+    it('only the timescaledb variant of a single-database postgres backup uses it', () => {
+      expect(restoreScriptFor('postgres', 'timescaledb', 'database')).toBe(
+        TIMESCALE_RESTORE,
+      );
+      expect(restoreScriptFor('postgres', 'pgvector', 'database')).toBe(
+        BACKUP_RECIPES.postgres.restore,
+      );
+      expect(restoreScriptFor('postgres', null, 'database')).toBe(
+        BACKUP_RECIPES.postgres.restore,
+      );
+      // Whole-server pg_dumpall restores keep the plain script (known limit).
+      expect(restoreScriptFor('postgres', 'timescaledb', 'all')).toBe(
+        BACKUP_RECIPES.postgres.restoreAll,
+      );
+      expect(restoreScriptFor('mysql', null, 'database')).toBe(
+        BACKUP_RECIPES.mysql.restore,
+      );
+    });
+
+    it('runs pre_restore, the restore and post_restore in separate sessions, secrets via env', () => {
+      const s = TIMESCALE_RESTORE;
+      const pre = s.indexOf('timescaledb_pre_restore()');
+      const body = s.indexOf('gunzip -c "$BACKUP_FILE"');
+      const post = s.indexOf('timescaledb_post_restore()');
+      expect(pre).toBeGreaterThan(-1);
+      expect(body).toBeGreaterThan(pre);
+      expect(post).toBeGreaterThan(body);
+      expect(s).toContain('ON_ERROR_STOP=1');
+      expect(s).toContain('PGPASSWORD="$DB_PASSWORD"');
+    });
+
+    // Runs the script with a fake psql/gunzip to prove ordering and exit codes.
+    function run(restoreExit: number, postExit: number, preExit = 0) {
+      const dir = mkdtempSync(join(tmpdir(), 'ts-'));
+      const log = join(dir, 'log');
+      writeFileSync(
+        join(dir, 'psql'),
+        `#!/bin/sh\ncat > /dev/null 2>&1 < /dev/null\ncase "$*" in\n*pre_restore*) echo pre >> "${log}"; exit ${preExit};;\n*post_restore*) echo post >> "${log}"; exit ${postExit};;\n*) echo restore >> "${log}"; exit ${restoreExit};;\nesac\n`,
+        { mode: 0o755 },
+      );
+      writeFileSync(join(dir, 'gunzip'), '#!/bin/sh\necho x\n', {
+        mode: 0o755,
+      });
+      let code = 0;
+      try {
+        execFileSync('sh', ['-c', TIMESCALE_RESTORE], {
+          env: {
+            PATH: `${dir}:${process.env.PATH}`,
+            DB_HOST: 'h',
+            DB_PORT: '5432',
+            DB_USER: 'u',
+            DB_PASSWORD: 'p',
+            DB_NAME: 'd',
+            BACKUP_FILE: '/b',
+          },
+        });
+      } catch (e) {
+        code = (e as { status: number }).status;
+      }
+      return { code, calls: readFileSync(log, 'utf8').trim().split('\n') };
+    }
+    const shAvailable = (() => {
+      try {
+        execFileSync('sh', ['-c', 'true']);
+        return true;
+      } catch {
+        return false;
+      }
+    })();
+    const maybe = shAvailable ? it : it.skip;
+
+    maybe('success: pre, restore, post, exit 0', () => {
+      expect(run(0, 0)).toEqual({ code: 0, calls: ['pre', 'restore', 'post'] });
+    });
+    maybe(
+      'a failed restore still runs post_restore and keeps its exit code',
+      () => {
+        expect(run(3, 0)).toEqual({
+          code: 3,
+          calls: ['pre', 'restore', 'post'],
+        });
+      },
+    );
+    maybe('a failed post_restore fails the restore', () => {
+      expect(run(0, 5)).toEqual({ code: 5, calls: ['pre', 'restore', 'post'] });
+    });
+    maybe('a failed pre_restore stops before restoring', () => {
+      expect(run(0, 0, 4)).toEqual({ code: 4, calls: ['pre'] });
+    });
   });
 });

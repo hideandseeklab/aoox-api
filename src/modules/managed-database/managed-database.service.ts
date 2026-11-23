@@ -248,6 +248,11 @@ export class ManagedDatabaseService implements OnApplicationBootstrap {
     if (db.errorMessage === INTERRUPTED_MESSAGE) {
       throw new ConflictException(INTERRUPTED_MESSAGE);
     }
+    if (db.restorePending) {
+      throw new ConflictException(
+        `A database created from a backup cannot be retried before its restore finished: that would only start an empty database. Delete it and restore the backup again. (${db.errorMessage ?? ''})`,
+      );
+    }
     const mode = retryModeFor(db);
     const password = await this.password(db);
     await this.repo.update(db.id, { status: 'creating', errorMessage: null });
@@ -317,6 +322,11 @@ export class ManagedDatabaseService implements OnApplicationBootstrap {
     } catch {
       return null;
     }
+  }
+
+  /** Waits until the engine answers again (after its container was restarted). */
+  async awaitReady(db: ManagedDatabase): Promise<void> {
+    await this.waitUntilReady(db, await this.password(db));
   }
 
   /** Pulls the image, creates the volume and starts the container. Async caller. */
@@ -618,11 +628,16 @@ export class ManagedDatabaseService implements OnApplicationBootstrap {
   provisionInBackground(
     db: ManagedDatabase,
     password: string,
-    opts: { freshVolumes?: boolean } = {},
+    opts: {
+      freshVolumes?: boolean;
+      /** Runs after the engine answers and before the row becomes `running`; a throw ends in `error`. */
+      afterProvision?: () => Promise<void>;
+    } = {},
   ): void {
     const run = async () => {
       if (opts.freshVolumes) await this.wipeNeverReady(db);
       await this.provision(db, password);
+      await opts.afterProvision?.();
     };
     void run()
       .then(() =>
