@@ -9,6 +9,15 @@ describe('isWriteRequest', () => {
     expect(
       isWriteRequest({ method: 'POST', path: '/applications/1/log-ticket' }),
     ).toBe(false);
+    for (const kind of ['databases', 'compose-apps']) {
+      expect(
+        isWriteRequest({ method: 'POST', path: `/${kind}/1/log-ticket` }),
+      ).toBe(false);
+      // A shell is a write: viewers and read-only tokens are refused.
+      expect(
+        isWriteRequest({ method: 'POST', path: `/${kind}/1/console-ticket` }),
+      ).toBe(true);
+    }
   });
 
   it('treats only the variable set environment reveal POST as a read, not PUT or deletes', () => {

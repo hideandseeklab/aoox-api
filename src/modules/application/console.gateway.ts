@@ -56,7 +56,8 @@ interface ExecState {
  * One exec per socket; the ticket pins it to a specific already-resolved
  * container (see `create-console-ticket.service.ts`) so the handshake can
  * never redirect it. Access control (developer+/no read-only API token) is
- * entirely enforced when the ticket is issued — the gateway only has to
+ * entirely enforced when the ticket is issued (the same gateway serves
+ * database and compose-service tickets: only `containerId`/`serverId` count) — the gateway only has to
  * verify the ticket itself.
  */
 @WebSocketGateway({

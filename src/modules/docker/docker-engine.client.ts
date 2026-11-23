@@ -790,9 +790,10 @@ export class DockerEngineClient {
     tail: number,
     onData: (text: string) => void,
     onEnd: (err?: Error) => void,
+    follow = true,
   ): () => void {
     return this.followLogStream(
-      `/services/${id}/logs?follow=true&stdout=true&stderr=true&timestamps=true&tail=${tail}`,
+      `/services/${id}/logs?follow=${follow}&stdout=true&stderr=true&timestamps=true&tail=${tail}`,
       onData,
       onEnd,
     );
@@ -1112,9 +1113,10 @@ export class DockerEngineClient {
     tail: number,
     onData: (text: string) => void,
     onEnd: (err?: Error) => void,
+    follow = true,
   ): () => void {
     return this.followLogStream(
-      `/containers/${id}/logs?follow=true&stdout=true&stderr=true&timestamps=true&tail=${tail}`,
+      `/containers/${id}/logs?follow=${follow}&stdout=true&stderr=true&timestamps=true&tail=${tail}`,
       onData,
       onEnd,
     );

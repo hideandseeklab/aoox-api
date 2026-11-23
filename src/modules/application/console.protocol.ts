@@ -28,7 +28,13 @@ export interface ConsoleHandshakeAuth {
 export interface ConsoleTicketPayload {
   sub: string;
   scope: 'console';
-  applicationId: string;
+  /** Absent = `application`. Only informational: the gateway uses `containerId` alone. */
+  ownerKind?: 'application' | 'database' | 'compose';
+  applicationId?: string;
+  databaseId?: string;
+  composeAppId?: string;
+  /** Compose only. */
+  service?: string;
   /** Resolved and bound at ticket creation — the handshake never chooses it. */
   containerId: string;
   /** Remote server the container's daemon is on; absent = the aoox host. */

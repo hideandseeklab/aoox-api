@@ -150,6 +150,13 @@ export function envValuesToRedact(
   return [...out];
 }
 
+/** A `Redactor` for a container's or service's `KEY=VALUE` env list. */
+export function redactorForEnv(env: string[]): Redactor {
+  const redactor = new Redactor();
+  redactor.addAll(envValuesToRedact(env));
+  return redactor;
+}
+
 function splitEntry(entry: string): [string, string] {
   const eq = entry.indexOf('=');
   return eq < 0 ? ['', ''] : [entry.slice(0, eq), entry.slice(eq + 1)];

@@ -2,6 +2,7 @@ import { BackupPurgeModule } from '../backup-purge/backup-purge.module';
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Mount } from '../application/mount.entity';
+import { AuthModule } from '../auth/auth.module';
 import { DockerModule } from '../docker/docker.module';
 import { HostPortModule } from '../host-port/host-port.module';
 import { MonitoringModule } from '../monitoring/monitoring.module';
@@ -9,6 +10,10 @@ import { SwarmModule } from '../swarm/swarm.module';
 import { ProjectModule } from '../project/project.module';
 import { CreateDatabaseController } from './create-database/create-database.controller';
 import { CreateDatabaseService } from './create-database/create-database.service';
+import { CreateDatabaseLogTicketController } from './create-database-log-ticket/create-database-log-ticket.controller';
+import { CreateDatabaseLogTicketService } from './create-database-log-ticket/create-database-log-ticket.service';
+import { CreateDatabaseConsoleTicketController } from './create-database-console-ticket/create-database-console-ticket.controller';
+import { CreateDatabaseConsoleTicketService } from './create-database-console-ticket/create-database-console-ticket.service';
 import { DatabaseMetricsController } from './database-metrics/database-metrics.controller';
 import { DatabaseCredentialsController } from './database-credentials/database-credentials.controller';
 import { DeleteDatabaseController } from './delete-database/delete-database.controller';
@@ -31,6 +36,8 @@ import { StopDatabaseController } from './stop-database/stop-database.controller
 
 @Module({
   imports: [
+    // JwtService, for the log and console tickets.
+    AuthModule,
     TypeOrmModule.forFeature([ManagedDatabase, Mount, QueryHistoryEntry]),
     DockerModule,
     HostPortModule,
@@ -53,6 +60,8 @@ import { StopDatabaseController } from './stop-database/stop-database.controller
     SchemasController,
     StopDatabaseController,
     DatabaseMetricsController,
+    CreateDatabaseLogTicketController,
+    CreateDatabaseConsoleTicketController,
   ],
   providers: [
     ManagedDatabaseService,
@@ -61,6 +70,8 @@ import { StopDatabaseController } from './stop-database/stop-database.controller
     DatabaseQueryService,
     QueryHistoryService,
     SchemasService,
+    CreateDatabaseLogTicketService,
+    CreateDatabaseConsoleTicketService,
   ],
   exports: [ManagedDatabaseService],
 })

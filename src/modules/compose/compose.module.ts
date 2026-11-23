@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ApplicationModule } from '../application/application.module';
+import { AuthModule } from '../auth/auth.module';
 import { ComposeVariableSetsController } from './compose-variable-sets/compose-variable-sets.controller';
 import { Mount } from '../application/mount.entity';
 import { DockerModule } from '../docker/docker.module';
@@ -33,11 +34,17 @@ import { GetComposeAppController } from './get-compose-app/get-compose-app.contr
 import { ListComposeAppsController } from './list-compose-apps/list-compose-apps.controller';
 import { StartComposeAppController } from './start-compose-app/start-compose-app.controller';
 import { StopComposeAppController } from './stop-compose-app/stop-compose-app.controller';
+import { CreateComposeLogTicketController } from './create-compose-log-ticket/create-compose-log-ticket.controller';
+import { CreateComposeLogTicketService } from './create-compose-log-ticket/create-compose-log-ticket.service';
+import { CreateComposeConsoleTicketController } from './create-compose-console-ticket/create-compose-console-ticket.controller';
+import { CreateComposeConsoleTicketService } from './create-compose-console-ticket/create-compose-console-ticket.service';
 import { UpdateComposeAppController } from './update-compose-app/update-compose-app.controller';
 import { UpdateComposeAppService } from './update-compose-app/update-compose-app.service';
 
 @Module({
   imports: [
+    // JwtService, for the log and console tickets.
+    AuthModule,
     TypeOrmModule.forFeature([ComposeApp, ComposeDeployment, Mount]),
     DockerModule,
     // Live per-service metrics read from the background sampler.
@@ -68,6 +75,8 @@ import { UpdateComposeAppService } from './update-compose-app/update-compose-app
     ComposeMetricsController,
     ComposeWebhookController,
     WebhookDeployComposeController,
+    CreateComposeLogTicketController,
+    CreateComposeConsoleTicketController,
   ],
   providers: [
     ComposeService,
@@ -78,6 +87,8 @@ import { UpdateComposeAppService } from './update-compose-app/update-compose-app
     ComposeWebhookService,
     WebhookDeployComposeService,
     ComposeDownNotifierService,
+    CreateComposeLogTicketService,
+    CreateComposeConsoleTicketService,
   ],
   exports: [ComposeService, ComposeRunnerService],
 })
