@@ -27,6 +27,26 @@ describe('BackupFilesService', () => {
     expect(runOnceWithOutput).toHaveBeenCalledTimes(1);
   });
 
+  it('marks local as unknown when the daemon cannot be reached, instead of failing the list', async () => {
+    const down = Object.assign(
+      new Error('connect ENOENT //./pipe/docker_engine'),
+      { code: 'ENOENT', syscall: 'connect', address: '//./pipe/docker_engine' },
+    );
+    const offline = new BackupFilesService(
+      {
+        ensureImage: jest.fn().mockRejectedValue(down),
+        engine: { createVolume: jest.fn() },
+        runOnceWithOutput: jest.fn(),
+      } as unknown as DockerService,
+      { download } as unknown as BackupDestinationService,
+    );
+    const rows = await offline.annotate([{ filename: 'db1/a.sql.gz' }]);
+    expect(rows).toEqual([{ filename: 'db1/a.sql.gz', local: null }]);
+    expect(await svc.annotate([{ filename: 'db1/a.sql.gz' }], null)).toEqual([
+      { filename: 'db1/a.sql.gz', local: null },
+    ]);
+  });
+
   it('ensureLocal pulls from the destination only when missing, and fails without a copy', async () => {
     expect(
       await svc.ensureLocal({

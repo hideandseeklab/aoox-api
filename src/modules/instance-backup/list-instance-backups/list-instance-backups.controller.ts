@@ -17,7 +17,7 @@ export class ListInstanceBackupsController {
 
   /** Newest first, with `local` = file still on this server. */
   @Get()
-  async list(): Promise<Array<InstanceBackup & { local: boolean }>> {
+  async list(): Promise<Array<InstanceBackup & { local: boolean | null }>> {
     const rows = await this.backups.repo.find({
       order: { createdAt: 'DESC' },
       take: 100,

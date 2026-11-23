@@ -21,7 +21,7 @@ export class ListBackupsController {
   async list(
     @CurrentUser() user: JwtPayload,
     @Param() params: DatabaseParamsDto,
-  ): Promise<Array<DatabaseBackup & { local: boolean }>> {
+  ): Promise<Array<DatabaseBackup & { local: boolean | null }>> {
     const db = await this.databases.findOwnedOrFail(params.id, user.sub);
     const rows = await this.backups.repo.find({
       where: { databaseId: db.id },

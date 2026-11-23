@@ -23,12 +23,16 @@ export class ListVolumeBackupsController {
   async list(
     @CurrentUser() user: JwtPayload,
     @Param() params: ApplicationParamsDto,
-  ): Promise<Array<VolumeBackup & { local: boolean }>> {
+  ): Promise<Array<VolumeBackup & { local: boolean | null }>> {
     const app = await this.applications.findOwnedOrFail(params.id, user.sub);
     const rows = await this.backups.repo.find({
       where: { applicationId: app.id },
       order: { createdAt: 'DESC' },
     });
-    return this.files.annotate(rows, await this.remote.forServer(app.serverId));
+    // A remote server that cannot be reached only makes `local` unknown.
+    const docker = rows.length
+      ? await this.remote.forServer(app.serverId).catch(() => null)
+      : null;
+    return this.files.annotate(rows, docker);
   }
 }
