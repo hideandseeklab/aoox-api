@@ -315,7 +315,7 @@ describe('LogsGateway', () => {
       );
       const client = fakeClient({ ticket: ticket('app1') });
       g.handleConnection(client as never);
-      return { g, client, docker, follows };
+      return { g, client, docker, follows, swarm };
     }
 
     const logText = (client: ReturnType<typeof fakeClient>) =>
@@ -355,6 +355,17 @@ describe('LogsGateway', () => {
       expect(client.emit).toHaveBeenCalledWith(
         'error',
         'could not read the container',
+      );
+    });
+
+    it('fails closed when the service cannot be inspected', async () => {
+      const { g, client, swarm, follows } = setup({ service: true });
+      swarm.inspect.mockRejectedValue(new Error('boom'));
+      await g.subscribeContainer(client as never, 50);
+      expect(follows).toHaveLength(0);
+      expect(client.emit).toHaveBeenCalledWith(
+        'error',
+        'could not read the service',
       );
     });
 

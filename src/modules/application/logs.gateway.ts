@@ -248,8 +248,18 @@ export class LogsGateway
     if (this.isStale(client, generation)) return;
     const lines = tail;
     // Service mode: one stream for all tasks, straight from the daemon.
-    const svc =
-      app.deployMode === 'service' ? await this.swarmDeploy.inspect(app) : null;
+    // Fail closed: the spec env is what masks the stream, so an inspect error
+    // opens no stream (same as container mode below).
+    let svc: Awaited<ReturnType<SwarmDeployService['inspect']>> = null;
+    if (app.deployMode === 'service') {
+      try {
+        svc = await this.swarmDeploy.inspect(app);
+      } catch (err) {
+        this.logger.warn(`service inspect failed: ${String(err)}`);
+        if (this.isStale(client, generation)) return;
+        return client.emit('error', 'could not read the service');
+      }
+    }
     if (this.isStale(client, generation)) return;
     const c = svc
       ? null

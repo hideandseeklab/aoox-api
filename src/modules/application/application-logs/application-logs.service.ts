@@ -21,7 +21,15 @@ export class ApplicationLogsService {
   ): Promise<ApplicationLogsResponseDto> {
     const app = await this.applications.findOwnedOrFail(id, ownerId);
     if (app.deployMode === 'service') {
-      const svc = await this.swarmDeploy.inspect(app);
+      // Fail closed: without the service spec env the output cannot be masked.
+      let svc: Awaited<ReturnType<SwarmDeployService['inspect']>>;
+      try {
+        svc = await this.swarmDeploy.inspect(app);
+      } catch {
+        throw new BadGatewayException(
+          'Could not read the service, so its logs cannot be masked.',
+        );
+      }
       if (!svc) return { logs: '' };
       const logs = await this.swarmDeploy.docker.engine.serviceLogs(
         svc.ID,

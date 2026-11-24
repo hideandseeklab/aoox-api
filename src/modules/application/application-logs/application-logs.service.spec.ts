@@ -42,7 +42,7 @@ function build(
     remote as never,
     swarm as never,
   );
-  return { service, engine };
+  return { service, engine, swarm };
 }
 
 describe('ApplicationLogsService', () => {
@@ -92,5 +92,14 @@ describe('ApplicationLogsService', () => {
       BadGatewayException,
     );
     expect(engine.containerLogs).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when the service cannot be inspected', async () => {
+    const { service, engine, swarm } = build({ service: true });
+    swarm.inspect.mockRejectedValue(new Error('boom'));
+    await expect(service.execute('u1', 'a1', 100)).rejects.toBeInstanceOf(
+      BadGatewayException,
+    );
+    expect(engine.serviceLogs).not.toHaveBeenCalled();
   });
 });

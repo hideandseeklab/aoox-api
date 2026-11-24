@@ -12,6 +12,7 @@ Versions below 1.0.0 may include breaking changes in a minor release.
 
 - Every scheduled job (`@Cron`) ran several times per tick: twelve modules each called `ScheduleModule.forRoot()` and Nest keys a dynamic module by reference, so there were twelve schedulers each firing every cron. The nightly disk cleanup therefore logged `Nightly cleanup failed: Error: Cleanup is already running` (the first run won, the others hit the guard). There is now one `ScheduleModule.forRoot()` in `AppModule`; a spec fails if another one is added.
 - Updating the panel (`POST /instance/update/apply`, `aoox update panel --apply`) no longer pulls or recreates the panel's own PostgreSQL container: it pulls and recreates only `api` and `web` (`--no-deps`). The panel domain and instance environment apply flows also name only `api web`, so they never touch postgres either.
+- Following application container logs in Docker Swarm service mode (`subscribe:container` on the logs socket and `GET /applications/:id/logs`) no longer lets a failed service lookup through: like container mode it fails closed. The socket emits `error` `could not read the service` and opens no stream, the HTTP route answers 502, because the output cannot be masked without the service spec env.
 
 ## [0.1.1] - 2026-11-23
 
