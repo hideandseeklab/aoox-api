@@ -99,6 +99,28 @@ describe('BackupPurgeService', () => {
     expect(r.remoteObjects).toBe(1);
   });
 
+  it('stops trying a destination after its first failed delete', async () => {
+    const t = make(
+      [
+        row('pg-1/a.sql.gz', 'k/a'),
+        row('pg-1/b.sql.gz', 'k/b'),
+        row('pg-1/c.sql.gz', 'k/c'),
+      ],
+      [],
+    );
+    t.destinations.remove.mockResolvedValue(false);
+    const r = await t.svc.purgeDatabase('d1');
+    expect(t.destinations.remove).toHaveBeenCalledTimes(1);
+    expect(r.remoteObjects).toBe(0);
+    expect(r.failures).toEqual([
+      'S3 copy k/a: delete failed',
+      'S3 copy k/b: skipped, the destination did not answer',
+      'S3 copy k/c: skipped, the destination did not answer',
+    ]);
+    // Local files are still removed.
+    expect(r.localFiles).toBe(3);
+  });
+
   it('volume backups use the daemon of the application server', async () => {
     const t = make([], [row('web/data/x.tar.gz', 'k')]);
     await t.svc.purgeApplication('a1', 'srv1');

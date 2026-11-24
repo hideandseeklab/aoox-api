@@ -23,6 +23,14 @@ export function composeLabels(service: string): Record<string, string> {
   };
 }
 
+/** A one-shot helper container exceeded its wall-clock cap and was removed. */
+export class OneShotTimeoutError extends Error {
+  constructor(readonly timeoutMs: number) {
+    super(`helper container did not finish within ${timeoutMs / 1000}s`);
+    this.name = 'OneShotTimeoutError';
+  }
+}
+
 /**
  * Helpers over one Docker engine — the local daemon (DockerService) or a
  * remote server's daemon reached over SSH (DockerHandle built by
@@ -67,15 +75,43 @@ export class DockerHandle {
   /** Runs a throwaway container to completion, returning exit code and combined output. */
   async runOnceWithOutput(
     body: ContainerCreateBody,
+    /**
+     * Optional wall-clock cap. When it passes, the container is force-removed
+     * (with its anonymous volumes) and `OneShotTimeoutError` is thrown.
+     * Without it the call waits for the container as long as it runs.
+     */
+    timeoutMs?: number,
   ): Promise<{ code: number; output: string }> {
     const id = await this.engine.createContainer(body);
     try {
       await this.engine.startContainer(id);
-      const code = await this.engine.waitContainer(id);
+      const code = await this.waitWithin(id, timeoutMs);
       const output = await this.engine.containerLogs(id, 200).catch(() => '');
       return { code, output };
     } finally {
       await this.engine.removeContainer(id, true, true).catch(() => undefined);
+    }
+  }
+
+  private async waitWithin(id: string, timeoutMs?: number): Promise<number> {
+    if (!timeoutMs) return this.engine.waitContainer(id);
+    let timer: NodeJS.Timeout | undefined;
+    const wait = this.engine.waitContainer(id);
+    // The wait request is abandoned on timeout; its later failure (container
+    // removed) must not become an unhandled rejection.
+    wait.catch(() => undefined);
+    try {
+      return await Promise.race([
+        wait,
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () => reject(new OneShotTimeoutError(timeoutMs)),
+            timeoutMs,
+          );
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
     }
   }
 

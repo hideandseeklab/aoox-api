@@ -7,6 +7,7 @@ import {
   composeLabels,
   DockerHandle,
   DockerService,
+  OneShotTimeoutError,
 } from '../docker/docker.service';
 import {
   BACKUPS_MOUNT,
@@ -64,6 +65,62 @@ export function rcloneEnv(c: DestinationConfig): string[] {
     `RCLONE_CONFIG_S3_FORCE_PATH_STYLE=${c.forcePathStyle}`,
     // Never try to create the bucket: that needs extra permissions and hides typos.
     `RCLONE_CONFIG_S3_NO_CHECK_BUCKET=true`,
+  ];
+}
+
+/**
+ * Bounds for one rclone helper. rclone has no overall deadline: against an
+ * endpoint that accepts nothing (a stack that was just deleted, a blackholed
+ * address) it retries for many minutes, which used to hang `DELETE
+ * /projects/:id?purge=true` for 16+ minutes.
+ *  - `connectSeconds` (RCLONE_CONTIMEOUT) bounds each TCP connect;
+ *  - `idleSeconds` (RCLONE_TIMEOUT) bounds a connection that stops moving
+ *    data, NOT the total time, so a large upload keeps going while bytes flow;
+ *  - one retry pass only for the short operations (a dead endpoint should
+ *    fail fast), rclone's defaults (3 / 10) for transfers;
+ *  - `capMs` is the hard wall-clock cap enforced on the container itself.
+ */
+export interface RcloneLimits {
+  connectSeconds: number;
+  idleSeconds: number;
+  retries: number;
+  lowLevelRetries: number;
+  capMs: number;
+}
+
+export const RCLONE_LIMITS = {
+  /** test, remove: answer quickly, never block a request. */
+  quick: {
+    connectSeconds: 10,
+    idleSeconds: 20,
+    retries: 1,
+    lowLevelRetries: 1,
+    capMs: 60_000,
+  },
+  /** purgeDir may delete many objects: longer cap, same stall detection. */
+  purge: {
+    connectSeconds: 10,
+    idleSeconds: 30,
+    retries: 1,
+    lowLevelRetries: 2,
+    capMs: 300_000,
+  },
+  /** backup upload/download: only stalls are bounded; 2 h backstop. */
+  transfer: {
+    connectSeconds: 15,
+    idleSeconds: 60,
+    retries: 3,
+    lowLevelRetries: 5,
+    capMs: 7_200_000,
+  },
+} satisfies Record<string, RcloneLimits>;
+
+export function rcloneLimitEnv(l: RcloneLimits): string[] {
+  return [
+    `RCLONE_CONTIMEOUT=${l.connectSeconds}s`,
+    `RCLONE_TIMEOUT=${l.idleSeconds}s`,
+    `RCLONE_RETRIES=${l.retries}`,
+    `RCLONE_LOW_LEVEL_RETRIES=${l.lowLevelRetries}`,
   ];
 }
 
@@ -156,6 +213,7 @@ export class BackupDestinationService {
       ],
       [`${BACKUPS_VOLUME}:${BACKUPS_MOUNT}:ro`],
       docker,
+      RCLONE_LIMITS.transfer,
     );
     return key;
   }
@@ -177,6 +235,7 @@ export class BackupDestinationService {
       ],
       [`${BACKUPS_VOLUME}:${BACKUPS_MOUNT}`],
       docker,
+      RCLONE_LIMITS.transfer,
     );
   }
 
@@ -188,7 +247,7 @@ export class BackupDestinationService {
     id: string,
     key: string,
     docker: DockerHandle = this.docker,
-  ): Promise<void> {
+  ): Promise<boolean> {
     try {
       const { config } = await this.resolve(id);
       await this.rclone(
@@ -196,9 +255,12 @@ export class BackupDestinationService {
         ['deletefile', '--ignore-errors', `${REMOTE}:${config.bucket}/${key}`],
         [],
         docker,
+        RCLONE_LIMITS.quick,
       );
+      return true;
     } catch (err) {
       this.logger.warn(`Remote delete of ${key} failed: ${String(err)}`);
+      return false;
     }
   }
 
@@ -219,6 +281,7 @@ export class BackupDestinationService {
         ['purge', `${REMOTE}:${config.bucket}/${dir}`],
         [],
         docker,
+        RCLONE_LIMITS.purge,
       );
     } catch (err) {
       if (!/directory not found/i.test(String(err))) throw err;
@@ -229,12 +292,13 @@ export class BackupDestinationService {
   async test(id: string): Promise<{ objects: number }> {
     const { config } = await this.resolve(id);
     const prefix = remoteKey(config, '');
-    const output = await this.rclone(config, [
-      'lsjson',
-      '--max-depth',
-      '1',
-      `${REMOTE}:${config.bucket}/${prefix}`,
-    ]);
+    const output = await this.rclone(
+      config,
+      ['lsjson', '--max-depth', '1', `${REMOTE}:${config.bucket}/${prefix}`],
+      [],
+      this.docker,
+      RCLONE_LIMITS.quick,
+    );
     // Log lines carry a timestamp prefix; the (pretty-printed, multi-line)
     // JSON array starts at the first line that is just `[`.
     const lines = output
@@ -251,18 +315,33 @@ export class BackupDestinationService {
     args: string[],
     binds: string[] = [],
     docker: DockerHandle = this.docker,
+    limits: RcloneLimits = RCLONE_LIMITS.quick,
   ): Promise<string> {
     await docker.ensureImage(RCLONE_IMAGE);
     // Same network as the databases so a self-hosted MinIO next to them
     // is reachable by container name; the internet is reachable either way.
     await docker.ensureNetwork(APP_NETWORK);
-    const { code, output: raw } = await docker.runOnceWithOutput({
-      Image: RCLONE_IMAGE,
-      Cmd: [...args, '--s3-upload-concurrency', '4', '--stats', '0'],
-      Env: rcloneEnv(config),
-      Labels: composeLabels('backup-helper'),
-      HostConfig: { NetworkMode: APP_NETWORK, Binds: binds },
-    });
+    let result: { code: number; output: string };
+    try {
+      result = await docker.runOnceWithOutput(
+        {
+          Image: RCLONE_IMAGE,
+          Cmd: [...args, '--s3-upload-concurrency', '4', '--stats', '0'],
+          Env: [...rcloneEnv(config), ...rcloneLimitEnv(limits)],
+          Labels: composeLabels('backup-helper'),
+          HostConfig: { NetworkMode: APP_NETWORK, Binds: binds },
+        },
+        limits.capMs,
+      );
+    } catch (err) {
+      if (err instanceof OneShotTimeoutError) {
+        throw new Error(
+          `S3 did not answer within ${Math.round(limits.capMs / 1000)}s`,
+        );
+      }
+      throw err;
+    }
+    const { code, output: raw } = result;
     // Error text ends up in the backup row and in notification channels;
     // never let the secret key travel with it (cf. DeploymentLog.redact).
     const output = raw.split(config.secretAccessKey).join('***');

@@ -114,15 +114,30 @@ export class BackupPurgeService {
     } catch (err) {
       report.failures.push(`Docker is not reachable: ${describe(err)}`);
     }
+    // A destination that failed once (unreachable, e.g. its stack was torn
+    // down earlier in the same project purge) is not retried for the
+    // remaining rows: each attempt can take up to the helper cap.
+    const failedDestinations = new Set<string>();
     for (const r of rows) {
       if (!r.destinationId || !r.remoteKey) continue;
+      if (failedDestinations.has(r.destinationId)) {
+        report.failures.push(
+          `S3 copy ${r.remoteKey}: skipped, the destination did not answer`,
+        );
+        continue;
+      }
       try {
         // Never throws itself (it logs); the catch covers a bad handle.
-        await this.destinations.remove(
+        const ok = await this.destinations.remove(
           r.destinationId,
           r.remoteKey,
           docker ?? undefined,
         );
+        if (ok === false) {
+          failedDestinations.add(r.destinationId);
+          report.failures.push(`S3 copy ${r.remoteKey}: delete failed`);
+          continue;
+        }
         report.remoteObjects++;
       } catch (err) {
         report.failures.push(`S3 copy ${r.remoteKey}: ${describe(err)}`);

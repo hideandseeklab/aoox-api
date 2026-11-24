@@ -1,13 +1,19 @@
 import { ConfigService } from '@nestjs/config';
 import { Repository } from 'typeorm';
 import { ContainerCreateBody } from '../docker/docker-engine.client';
-import { DockerService } from '../docker/docker.service';
+import {
+  DockerHandle,
+  DockerService,
+  OneShotTimeoutError,
+} from '../docker/docker.service';
 import { encryptSecret } from '../docker/secret.util';
 import { BackupDestination } from './backup-destination.entity';
 import {
   BackupDestinationService,
   RCLONE_IMAGE,
+  RCLONE_LIMITS,
   rcloneEnv,
+  rcloneLimitEnv,
   remoteKey,
 } from './backup-destination.service';
 
@@ -69,7 +75,7 @@ describe('BackupDestinationService', () => {
     ensureNetwork: jest.fn().mockResolvedValue(undefined),
     runOnceWithOutput: jest.fn<
       Promise<{ code: number; output: string }>,
-      [ContainerCreateBody]
+      [ContainerCreateBody, number?]
     >(),
   };
   const svc = new BackupDestinationService(
@@ -130,11 +136,68 @@ describe('BackupDestinationService', () => {
       docker as unknown as DockerService,
       { getOrThrow: () => KEY } as unknown as ConfigService,
     );
-    await expect(broken.remove('d1', 'k')).resolves.toBeUndefined();
+    await expect(broken.remove('d1', 'k')).resolves.toBe(false);
   });
 
   it('remove never throws (prune must not get stuck)', async () => {
     docker.runOnceWithOutput.mockResolvedValue({ code: 1, output: 'boom' });
-    await expect(svc.remove('d1', 'ik/db/a.sql.gz')).resolves.toBeUndefined();
+    await expect(svc.remove('d1', 'ik/db/a.sql.gz')).resolves.toBe(false);
+  });
+
+  it('passes bounded rclone limits and a hard cap per operation', async () => {
+    docker.runOnceWithOutput.mockResolvedValue({ code: 0, output: '[]' });
+    await svc.test('d1');
+    let [body, cap] = docker.runOnceWithOutput.mock.calls[0] as unknown as [
+      ContainerCreateBody,
+      number,
+    ];
+    expect(body.Env).toEqual(
+      expect.arrayContaining([
+        'RCLONE_CONTIMEOUT=10s',
+        'RCLONE_TIMEOUT=20s',
+        'RCLONE_RETRIES=1',
+      ]),
+    );
+    expect(cap).toBe(RCLONE_LIMITS.quick.capMs);
+    await svc.upload('d1', 'db/a.sql.gz');
+    [body, cap] = docker.runOnceWithOutput.mock.calls[1] as unknown as [
+      ContainerCreateBody,
+      number,
+    ];
+    expect(cap).toBe(RCLONE_LIMITS.transfer.capMs);
+    expect(body.Env).toContain('RCLONE_TIMEOUT=60s');
+    await svc.purgeDir('d1', 'x');
+    expect(docker.runOnceWithOutput.mock.calls[2][1]).toBe(
+      RCLONE_LIMITS.purge.capMs,
+    );
+    expect(rcloneLimitEnv(RCLONE_LIMITS.quick)).toHaveLength(4);
+  });
+
+  it('turns a helper timeout into a readable error; remove stays silent', async () => {
+    docker.runOnceWithOutput.mockRejectedValue(new OneShotTimeoutError(60000));
+    await expect(svc.test('d1')).rejects.toThrow(
+      'S3 did not answer within 60s',
+    );
+    await expect(svc.remove('d1', 'k')).resolves.toBe(false);
+  });
+});
+
+describe('DockerHandle.runOnceWithOutput timeout', () => {
+  it('removes the container and throws when the cap passes', async () => {
+    jest.useFakeTimers();
+    const engine = {
+      createContainer: jest.fn().mockResolvedValue('c1'),
+      startContainer: jest.fn().mockResolvedValue(undefined),
+      waitContainer: jest.fn(() => new Promise<number>(() => undefined)),
+      containerLogs: jest.fn().mockResolvedValue(''),
+      removeContainer: jest.fn().mockResolvedValue(undefined),
+    };
+    const handle = new DockerHandle(engine as never, '/sock');
+    const p = handle.runOnceWithOutput({ Image: 'x' }, 5000);
+    const assertion = expect(p).rejects.toBeInstanceOf(OneShotTimeoutError);
+    await jest.advanceTimersByTimeAsync(5001);
+    await assertion;
+    expect(engine.removeContainer).toHaveBeenCalledWith('c1', true, true);
+    jest.useRealTimers();
   });
 });
