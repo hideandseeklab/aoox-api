@@ -8,6 +8,10 @@ Versions below 1.0.0 may include breaking changes in a minor release.
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-11-24
+
+Fixes scheduled jobs running several times per tick, stops panel updates from pulling or recreating the panel's own PostgreSQL, makes application logs in Docker Swarm service mode fail closed, and bounds the backup destination helpers so an unreachable S3 destination can no longer hang deletes or tests.
+
 ### Fixed
 
 - `DELETE /projects/:id?purge=true` could block for 16+ minutes when the project's database backed up to an S3 destination served by a stack of the same project: the stack was already gone, and the `rclone` helper deleting the remote copy retried against the dead endpoint with no deadline. Every `rclone` helper of the backup destinations is now bounded (connect and idle timeouts, a single retry pass for quick operations, and a hard wall-clock cap that removes the helper container), so a dead endpoint fails within about a minute; destination test answers `{ok: false}` with `S3 did not answer within 60s`, and the best-effort deletes just log and continue. A purge that hits an unreachable destination stops trying it for the rest of its backups (one failed attempt, not one per file).
@@ -816,7 +820,8 @@ Read before upgrading; back up first (Settings → Infrastructure → Instance b
 - Monitoring with metrics history, disk cleanup tooling, and project/instance export-import for
   backup and migration between hosts.
 
-[Unreleased]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-rc.1...v0.1.0
 [0.1.0-rc.1]: https://github.com/hideandseeklab/aoox-api/compare/v0.1.0-beta.2...v0.1.0-rc.1

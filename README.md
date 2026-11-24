@@ -2,7 +2,7 @@
 
 Self-hosted PaaS — deploy from Git or images on your own server, with databases, domains and monitoring in one dashboard.
 
-> **Status: 0.1.1, stable.** aoox is pre-1.0: a minor release may still include breaking changes, so read the changelog before upgrading. Please report bugs at [aoox-api issues](https://github.com/hideandseeklab/aoox-api/issues/new/choose) (one place for the API, dashboard, CLI and docs).
+> **Status: 0.1.2, stable.** aoox is pre-1.0: a minor release may still include breaking changes, so read the changelog before upgrading. Please report bugs at [aoox-api issues](https://github.com/hideandseeklab/aoox-api/issues/new/choose) (one place for the API, dashboard, CLI and docs).
 
 Website: [aoox.dev](https://aoox.dev) · Docs: [aoox.dev/docs](https://aoox.dev/docs) · Changelog: [aoox.dev/changelog](https://aoox.dev/changelog)
 
